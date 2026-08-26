@@ -3,8 +3,18 @@ let currentFilter = null;
 
 function renderLines() {
 
-    const grid = document.getElementById("linesGrid");
-    const search = document.getElementById("searchInput").value.toLowerCase();
+    const grid =
+        document.getElementById(
+            "linesGrid"
+        );
+
+    const search =
+        document
+            .getElementById(
+                "searchInput"
+            )
+            .value
+            .toLowerCase();
 
     grid.innerHTML = "";
 
@@ -16,98 +26,291 @@ function renderLines() {
         metro: 5
     };
 
-    const sortedLines = [...lines].sort((a, b) => {
+    const sortedLines =
+        [...lines].sort(
+            (a, b) => {
 
-        const orderA = typeOrder[a.type] || 99;
-        const orderB = typeOrder[b.type] || 99;
+                const orderA =
+                    typeOrder[
+                        a.type
+                    ] || 99;
 
-        if (orderA !== orderB) {
-            return orderA - orderB;
-        }
+                const orderB =
+                    typeOrder[
+                        b.type
+                    ] || 99;
 
-        return String(a.number || "").localeCompare(
-            String(b.number || ""),
-            undefined,
-            {
-                numeric: true,
-                sensitivity: "base"
+                if (
+                    orderA !==
+                    orderB
+                ) {
+
+                    return (
+                        orderA -
+                        orderB
+                    );
+
+                }
+
+                return String(
+                    a.number || ""
+                ).localeCompare(
+                    String(
+                        b.number || ""
+                    ),
+                    undefined,
+                    {
+                        numeric: true,
+                        sensitivity:
+                            "base"
+                    }
+                );
+
             }
         );
-    });
 
     sortedLines
-        .filter(l =>
-            (!currentFilter || l.type === currentFilter) &&
-            l.number.toLowerCase().includes(search)
+        .filter(
+            l =>
+                (
+                    !currentFilter
+                    || l.type ===
+                       currentFilter
+                )
+                &&
+                l.number
+                    .toLowerCase()
+                    .includes(
+                        search
+                    )
         )
-        .forEach(line => {
+        .forEach(
+            line => {
 
-            if (line.type === "metro") {
+                if (
+                    line.type ===
+                    "metro"
+                ) {
 
-                const el = document.createElement("div");
-                el.className = "metro-pill";
-                el.style.background = line.color;
-                el.style.color = line.textColor;
-                el.innerText = line.number;
-                el.onclick = () => selectLine(line);
-                grid.appendChild(el);
+                    const el =
+                        document.createElement(
+                            "div"
+                        );
 
-            } else {
+                    el.className =
+                        "metro-pill";
 
-                const el = document.createElement("div");
-                el.className = "line-pill";
-                el.style.background = line.color;
-                el.innerText = line.number;
-                el.onclick = () => selectLine(line);
-                grid.appendChild(el);
+                    el.style.background =
+                        line.color;
+
+                    el.style.color =
+                        line.textColor;
+
+                    el.innerText =
+                        line.number;
+
+                    el.onclick =
+                        () =>
+                            selectLine(
+                                line
+                            );
+
+                    grid.appendChild(
+                        el
+                    );
+
+                } else {
+
+                    const el =
+                        document.createElement(
+                            "div"
+                        );
+
+                    el.className =
+                        "line-pill";
+
+                    el.style.background =
+                        line.color;
+
+                    el.innerText =
+                        line.number;
+
+                    el.onclick =
+                        () =>
+                            selectLine(
+                                line
+                            );
+
+                    grid.appendChild(
+                        el
+                    );
+
+                }
 
             }
-
-        });
+        );
 
 }
 
-function selectLine(line) {
 
-    const activeDirection =
-        line.activeDirection === "A"
-            ? line.directionA
-            : line.directionB;
+function getActiveDirection(
+    line
+) {
 
     /*
-     * directionA / directionB вече са обекти:
+     * Новият модел използва:
      *
-     * {
-     *     headsign,
-     *     stops,
-     *     shape_id
-     * }
-     *
-     * Това запазва съществуващия интерфейс,
-     * но позволява и на map.js да използва shape_id.
+     * line.directions = [
+     *   {
+     *     key: "D1",
+     *     headsign: "...",
+     *     stops: [...]
+     *   },
+     *   ...
+     * ]
      */
+
+    if (
+        Array.isArray(
+            line?.directions
+        )
+        &&
+        line.directions.length
+    ) {
+
+        const selected =
+            line.directions.find(
+                direction =>
+                    direction.key ===
+                    line.activeDirection
+            );
+
+        if (selected) {
+            return selected;
+        }
+
+        return (
+            line.directions[0]
+            || null
+        );
+
+    }
+
+
+    /*
+     * Стар A/B fallback.
+     *
+     * Това не пречи на новия формат,
+     * но позволява на стари данни да
+     * продължат да работят.
+     */
+
+    if (
+        line?.activeDirection ===
+        "B"
+    ) {
+
+        return (
+            line.directionB
+            || null
+        );
+
+    }
+
+    return (
+        line.directionA
+        || null
+    );
+
+}
+
+
+function selectLine(
+    line
+) {
+
+    /*
+     * Уверяваме се, че винаги има
+     * валидно избрано направление.
+     */
+
+    if (
+        Array.isArray(
+            line?.directions
+        )
+        &&
+        line.directions.length
+    ) {
+
+        const exists =
+            line.directions.some(
+                direction =>
+                    direction.key ===
+                    line.activeDirection
+            );
+
+        if (!exists) {
+
+            line.activeDirection =
+                line.directions[0].key;
+
+        }
+
+    } else {
+
+        if (
+            line.activeDirection !==
+                "A"
+            &&
+            line.activeDirection !==
+                "B"
+        ) {
+
+            line.activeDirection =
+                "A";
+
+        }
+
+    }
+
+
+    const activeDirection =
+        getActiveDirection(
+            line
+        );
+
+
     const direction =
         activeDirection
             ? activeDirection.headsign
             : "";
 
+
     const stops =
-        activeDirection &&
-        Array.isArray(activeDirection.stops)
+        activeDirection
+        &&
+        Array.isArray(
+            activeDirection.stops
+        )
             ? activeDirection.stops
             : [];
+
 
     const content =
         document.getElementById(
             "contentArea"
         );
 
+
     const pill =
-        line.type === "metro"
+        line.type ===
+        "metro"
             ? `
               <div class="details-pill">
                 <div class="details-icon">
-                  <img src="${line.icon}" />
+                  <img
+                    src="${line.icon}"
+                  />
                 </div>
 
                 <div
@@ -124,17 +327,22 @@ function selectLine(line) {
             : `
               <div class="details-pill">
                 <div class="details-icon">
-                  <img src="${line.icon}" />
+                  <img
+                    src="${line.icon}"
+                  />
                 </div>
 
                 <div
                   class="details-number"
-                  style="background:${line.color}"
+                  style="
+                    background:${line.color}
+                  "
                 >
                   ${line.number}
                 </div>
               </div>
             `;
+
 
     content.innerHTML = `
         <div class="line-header">
@@ -158,6 +366,7 @@ function selectLine(line) {
 
             </div>
 
+
             <button
                 class="switch-btn"
                 onclick="switchDirection('${line.type}', '${line.number}')"
@@ -167,115 +376,209 @@ function selectLine(line) {
 
         </div>
 
+
         <!-- 🚧 ALERT SLOT -->
+
         <div id="lineAlerts"></div>
+
 
         <div class="stops-card">
 
             <div class="stops-line">
 
-                ${stops.map(s => `
-                    <div class="stop-item">
+                ${stops.map(
+                    stop => `
+                        <div class="stop-item">
 
-                        <div class="stop-dot"></div>
+                            <div class="stop-dot"></div>
 
-                        <div class="stop-name">
-                            ${s.name}
+                            <div class="stop-name">
+                                ${stop.name}
+                            </div>
+
                         </div>
-
-                    </div>
-                `).join("")}
+                    `
+                ).join("")}
 
             </div>
 
         </div>
 
+
         <!-- 🗺️ MAP -->
+
         <div class="map-card">
-    <div class="map-title">Маршрут на линията</div>
-    <div id="lineMap"></div>
-</div>
+
+            <div class="map-title">
+                Маршрут на линията
+            </div>
+
+            <div id="lineMap"></div>
+
+        </div>
     `;
+
 
     /*
      * Съществуващата система за известия
      * остава непроменена.
      */
+
     if (
-        typeof showLineAlerts === "function"
+        typeof showLineAlerts ===
+        "function"
     ) {
+
         showLineAlerts(
             line.number,
             line.type
         );
+
     }
 
+
     /*
-     * Нова част:
+     * map.js вече използва
+     * line.activeDirection:
      *
-     * map.js използва shape_id от активното
-     * направление и чертае реалния GTFS shape.
+     * D1 / D2 / D3...
+     *
+     * вместо само A/B.
      */
+
     if (
-        typeof renderLineMap === "function"
+        typeof renderLineMap ===
+        "function"
     ) {
-        renderLineMap(line);
+
+        renderLineMap(
+            line,
+            stops
+        );
+
     }
+
 }
+
 
 function switchDirection(
     type,
     number
 ) {
 
-    const line = lines.find(
-        l =>
-            l.type === type &&
-            l.number === number
-    );
+    const line =
+        lines.find(
+            l =>
+                l.type ===
+                    type
+                &&
+                l.number ===
+                    number
+        );
+
 
     if (!line) {
         return;
     }
 
-    line.activeDirection =
-        line.activeDirection === "A"
-            ? "B"
-            : "A";
 
     /*
-     * selectLine() ще:
+     * Новият модел:
      *
-     * 1. покаже новото направление;
-     * 2. покаже новите спирки;
-     * 3. премахне старата карта;
-     * 4. начертае shape-а на новото направление.
+     * D1 → D2 → D3 → ...
+     *
+     * Така не ограничаваме
+     * линията изкуствено до A/B.
      */
-    selectLine(line);
+
+    if (
+        Array.isArray(
+            line.directions
+        )
+        &&
+        line.directions.length
+    ) {
+
+        const currentIndex =
+            line.directions.findIndex(
+                direction =>
+                    direction.key ===
+                    line.activeDirection
+            );
+
+
+        const nextIndex =
+            currentIndex < 0
+                ? 0
+                : (
+                    currentIndex + 1
+                )
+                  %
+                  line.directions.length;
+
+
+        line.activeDirection =
+            line.directions[
+                nextIndex
+            ].key;
+
+
+    } else {
+
+        /*
+         * Стар A/B fallback.
+         */
+
+        line.activeDirection =
+            line.activeDirection ===
+                "A"
+                ? "B"
+                : "A";
+
+    }
+
+
+    selectLine(
+        line
+    );
+
 }
+
 
 function setFilter(
     type,
     el
 ) {
 
-    currentFilter = type;
+    currentFilter =
+        type;
+
 
     document
-        .querySelectorAll(".filter-btn")
+        .querySelectorAll(
+            ".filter-btn"
+        )
         .forEach(
-            b =>
-                b.classList.remove(
+            button =>
+                button.classList.remove(
                     "active"
                 )
         );
 
+
     if (el) {
-        el.classList.add("active");
+
+        el.classList.add(
+            "active"
+        );
+
     }
 
+
     renderLines();
+
 }
+
 
 async function initializeTransportPage() {
 
@@ -284,46 +587,120 @@ async function initializeTransportPage() {
         const gtfsLines =
             await loadTransportLines();
 
+
         /*
          * Запазваме съществуващата логика:
          *
          * старият масив lines се изчиства,
          * след което се зареждат актуалните GTFS линии.
          */
+
         lines.length = 0;
+
 
         lines.push(
             ...gtfsLines
         );
 
+
+        /*
+         * Уверяваме се, че всяка линия
+         * има валидно начално направление.
+         */
+
+        lines.forEach(
+            line => {
+
+                if (
+                    Array.isArray(
+                        line.directions
+                    )
+                    &&
+                    line.directions.length
+                ) {
+
+                    const hasCurrent =
+                        line.directions.some(
+                            direction =>
+                                direction.key ===
+                                line.activeDirection
+                        );
+
+                    if (!hasCurrent) {
+
+                        line.activeDirection =
+                            line.directions[0].key;
+
+                    }
+
+                } else {
+
+                    if (
+                        line.activeDirection !==
+                            "A"
+                        &&
+                        line.activeDirection !==
+                            "B"
+                    ) {
+
+                        line.activeDirection =
+                            "A";
+
+                    }
+
+                }
+
+            }
+        );
+
+
         renderLines();
+
 
         const params =
             new URLSearchParams(
                 window.location.search
             );
 
+
         const selectedLine =
-            params.get("line");
+            params.get(
+                "line"
+            );
+
 
         if (selectedLine) {
 
             const [
                 type,
                 number
-            ] = selectedLine.split(":");
+            ] =
+                selectedLine.split(
+                    ":"
+                );
+
 
             const line =
                 lines.find(
                     l =>
-                        l.type === type &&
-                        l.number === number
+                        l.type ===
+                            type
+                        &&
+                        l.number ===
+                            number
                 );
 
+
             if (line) {
-                selectLine(line);
+
+                selectLine(
+                    line
+                );
+
             }
+
         }
+
 
     } catch (error) {
 
@@ -331,14 +708,20 @@ async function initializeTransportPage() {
             "Неуспешно зареждане на GTFS:",
             error
         );
+
     }
+
 }
 
+
 document
-    .getElementById("searchInput")
+    .getElementById(
+        "searchInput"
+    )
     .addEventListener(
         "input",
         renderLines
     );
+
 
 initializeTransportPage();
