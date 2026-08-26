@@ -443,13 +443,18 @@ function getCourses() {
 
   const schedules =
     window.transportData?.schedules
-    || {};
+      || {};
 
   const routeSchedule =
     schedules[
       selectedScheduleLine.id
     ];
 
+  /*
+   * Новият модел:
+   *
+   * D1 / D2 / D3 / ...
+   */
   if (
     routeSchedule &&
     routeSchedule[
@@ -465,6 +470,9 @@ function getCourses() {
     );
   }
 
+  /*
+   * Стар fallback.
+   */
   const legacyKey =
     selectedDirectionKey === "B"
       ? "B"
@@ -498,12 +506,6 @@ function getStopTime(
  *
  * Частичният курс има поне едно липсващо
  * време след последното реално време.
- *
- * Пример:
- *
- * [08:10, 08:12, 08:15, 08:18, null, null]
- *
- * = частичен курс
  */
 function isPartialCourse(course) {
   const times =
@@ -559,14 +561,9 @@ function isPartialCourse(course) {
 
 
 /*
- * Връща CSS inline стил за минута.
- *
- * Частичните курсове:
- *   фон #dc3545
- *   бял текст
- *
- * Нормалните курсове:
- *   без промяна.
+ * Частичните курсове са с:
+ *   background: #dc3545
+ *   color: white
  */
 function getCourseMinuteStyle(
   course
@@ -605,9 +602,6 @@ function renderSummary(courses) {
   /*
    * Търсим всички реални времена
    * за избраната спирка.
-   *
-   * null часовете след края на
-   * частичен курс не участват.
    */
   const validTimes =
     courses
@@ -833,13 +827,27 @@ function renderTimetable(courses) {
                       entry.course
                     );
 
+                  /*
+                   * КЛЮЧОВАТА ПРОМЯНА:
+                   *
+                   * Не използваме trip_id за намиране
+                   * на курса, защото няколко курса могат
+                   * да имат един и същ trip_id след
+                   * обработката.
+                   *
+                   * Вместо това записваме реалния индекс
+                   * на конкретния course object в courses.
+                   */
+                  const courseIndex =
+                    courses.indexOf(
+                      entry.course
+                    );
+
                   return `
                     <button
                       class="schedule-minute"
                       type="button"
-                      data-trip-id="${escapeHtml(
-                        entry.course.trip_id
-                      )}"
+                      data-course-index="${courseIndex}"
                       style="${partialStyle}"
                     >
                       ${label}
@@ -874,16 +882,20 @@ function renderTimetable(courses) {
       button.addEventListener(
         "click",
         () => {
-          const course =
-            courses.find(
-              item =>
-                String(
-                  item.trip_id
-                ) ===
-                String(
-                  button.dataset.tripId
-                )
+
+          /*
+           * Вече взимаме точно курса,
+           * който е представен от този бутон.
+           */
+          const courseIndex =
+            Number(
+              button.dataset.courseIndex
             );
+
+          const course =
+            courses[
+              courseIndex
+            ];
 
           if (course) {
             showCourse(course);
@@ -915,12 +927,9 @@ function showCourse(course) {
     direction?.stops || [];
 
   /*
-   * Намираме последната реална спирка
-   * на конкретния курс.
-   *
-   * Всички спирки след нея остават
-   * видими, но вместо час получават
-   * "—".
+   * Намираме последната спирка,
+   * за която конкретният курс има
+   * реално време.
    */
   let lastRealIndex = -1;
 
@@ -930,21 +939,32 @@ function showCourse(course) {
     index++
   ) {
     const time =
-      course.times?.[index];
+      course.times?.[
+        index
+      ];
 
     if (
       time !== null &&
       time !== undefined &&
       String(time).trim() !== ""
     ) {
-      lastRealIndex = index;
+      lastRealIndex =
+        index;
     }
   }
 
+  /*
+   * Показваме ВСИЧКИ спирки на
+   * редовното направление.
+   *
+   * След последната обслужена спирка
+   * конкретният курс получава "—".
+   */
   container.innerHTML =
     stops
       .map(
         (stop, index) => {
+
           const rawTime =
             course.times?.[
               index
@@ -955,10 +975,6 @@ function showCourse(course) {
             rawTime !== undefined &&
             String(rawTime).trim() !== "";
 
-          /*
-           * Всички спирки след последната
-           * реална спирка получават "—".
-           */
           const displayTime =
             hasRealTime
               ? formatTime(
@@ -1079,6 +1095,7 @@ async function initializeSchedules() {
 document.addEventListener(
   "DOMContentLoaded",
   () => {
+
     document
       .getElementById(
         "lineDropdownButton"
@@ -1091,13 +1108,17 @@ document.addEventListener(
     document.addEventListener(
       "click",
       event => {
+
         if (
           !event.target.closest(
             "#lineDropdown"
           )
         ) {
+
           closeLineDropdown();
+
         }
+
       }
     );
 
@@ -1108,6 +1129,7 @@ document.addEventListener(
       .addEventListener(
         "change",
         event => {
+
           selectedDirectionKey =
             event.target.value;
 
@@ -1118,6 +1140,7 @@ document.addEventListener(
             null;
 
           renderSchedule();
+
         }
       );
 
@@ -1128,6 +1151,7 @@ document.addEventListener(
       .addEventListener(
         "change",
         event => {
+
           selectedStopIndex =
             Number(
               event.target.value
@@ -1137,6 +1161,7 @@ document.addEventListener(
             null;
 
           renderSchedule();
+
         }
       );
 
@@ -1144,34 +1169,41 @@ document.addEventListener(
       .querySelectorAll(
         ".schedule-day-tab"
       )
-      .forEach(button => {
-        button.addEventListener(
-          "click",
-          () => {
-            document
-              .querySelectorAll(
-                ".schedule-day-tab"
-              )
-              .forEach(item =>
-                item.classList.remove(
-                  "active"
+      .forEach(
+        button => {
+
+          button.addEventListener(
+            "click",
+            () => {
+
+              document
+                .querySelectorAll(
+                  ".schedule-day-tab"
                 )
+                .forEach(
+                  item =>
+                    item.classList.remove(
+                      "active"
+                    )
+                );
+
+              button.classList.add(
+                "active"
               );
 
-            button.classList.add(
-              "active"
-            );
+              selectedDayType =
+                button.dataset.dayType;
 
-            selectedDayType =
-              button.dataset.dayType;
+              selectedCourse =
+                null;
 
-            selectedCourse =
-              null;
+              renderSchedule();
 
-            renderSchedule();
-          }
-        );
-      });
+            }
+          );
+
+        }
+      );
 
     document
       .getElementById(
@@ -1180,15 +1212,18 @@ document.addEventListener(
       .addEventListener(
         "click",
         () => {
+
           document.getElementById(
             "courseSection"
           ).hidden = true;
 
           selectedCourse =
             null;
+
         }
       );
 
     initializeSchedules();
+
   }
 );
