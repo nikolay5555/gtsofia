@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Начало | GTSofia</title>
+
+  <link href="https://fonts.googleapis.com/css2?family=Sofia+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+
+<!-- NAVBAR -->
+<header class="navbar">
+
+  <a href="index.html" class="nav-logo">GTSOFIA</a>
+
+  <button class="nav-toggle" onclick="toggleMenu()">☰</button>
+
+  <nav id="navMenu">
+    <a href="index.html" class="active">Начало</a>
+    <a href="transport.html">Линии</a>
+    <a href="schedules.html">Разписания</a>
+    <a href="rolling-stock.html">Подвижен състав</a>
+    <a href="about.html">За проекта</a>
+  </nav>
+
+</header>
+
+<!-- HOME CONTENT -->
+<main class="home">
+
+  <!-- PROMO CARD -->
+  <div class="promo-card">
+
+    <div class="empty-text">
+      Разписания и информация в реално време
+    </div>
+
+    <img class="promo-logo"
+         src="https://play-lh.googleusercontent.com/kJihhzXg33FMGIpa5Z0FjZaG5wHRpqfv63iG77FD3LmwtSw5SA8unoY0oTt-LDJca0TK2arPOpqpQY8-z-E6PQ=w240-h480-rw"
+         alt="App logo" />
+
+    <div class="promo-title">
+      Sofia Ride
+    </div>
+
+    <div class="promo-text">
+      Преглеждайте пристигания в реално време, разписания и информация за транспорта с помощта на Sofia Ride. Автор на приложението е Pablito86.
+    </div>
+
+    <div class="promo-actions">
+      <a href="https://play.google.com/store/apps/details?id=com.paf.sofiatrafficapp"
+         target="_blank"
+         class="promo-btn secondary">
+        Изтегляне на приложението
+      </a>
+
+      <a href="https://sofiaride.vercel.app/"
+         class="promo-btn secondary">
+        Отваряне на уеб версията
+      </a>
+    </div>
+
+  </div>
+
+    <!-- FAST LINE SEARCH -->
+<div class="info-card">
+
+  <h2>Търсене по линия</h2>
+
+  <div style="position:relative;margin-top:10px;">
+
+<div class="home-search-row">
+
+  <select id="homeTransportType" class="home-type-select">
+    <option value="bus">Автобуси</option>
+    <option value="trolleybus">Тролейбуси</option>
+    <option value="tram">Трамваи</option>
+    <option value="metro">Метро</option>
+    <option value="night">Нощни линии</option>
+  </select>
+
+  <input 
+    id="homeLineSearch"
+    class="search"
+    placeholder="Въведете номер на линия…"
+    autocomplete="off"
+  />
+
+</div>
+
+    <div 
+      id="homeLineResults"
+      style="
+    display:none;
+    position:absolute;
+    top:50px;
+    left:0;
+    right:0;
+    background:white;
+    border-radius:12px;
+    border:1px solid #e5e7eb;
+    overflow:hidden;
+    z-index:20;
+      ">
+    </div>
+
+  </div>
+
+</div>
+
+  <!-- ALERTS SECTION -->
+  <div class="info-card">
+    <h2>Маршрутни промени</h2>
+    <div id="alertsContainer" style="margin-top:10px;">
+      Зареждане...
+    </div>
+  </div>
+
+  <!-- NAV CARDS -->
+  <div class="home-grid">
+
+    <a href="transport.html" class="home-card">
+      <h2>Линии</h2>
+      <p>Списък на всички линии, техните маршрути и спирки</p>
+    </a>
+
+    <a href="schedules.html" class="home-card">
+      <h2>Разписания</h2>
+      <p>Разписания по линия, направление и спирка</p>
+    </a>
+
+    <a href="rolling-stock.html" class="home-card">
+      <h2>Подвижен състав</h2>
+      <p>Списък на целия подвижен състав, обслужващ града</p>
+    </a>
+
+    <a href="about.html" class="home-card">
+      <h2>За проекта</h2>
+      <p>Страница относно проекта и възможности за обратна връзка</p>
+    </a>
+
+  </div>
+
+</main>
+
+<!-- SCRIPTS -->
+<script src="navbar.js"></script>
+<script src="transport-data.js"></script>
+<script src="alerts.js"></script>
+<script src="home-search.js"></script>
+
+<script>
+  document.addEventListener("DOMContentLoaded", () => {
+    loadHomeAlerts();
+  });
+</script>
+  
+</body>
+</html>

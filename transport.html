@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+  <meta charset="UTF-8" />
+
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  />
+
+  <title>Линии | GTSofia</title>
+
+  <link
+    href="https://fonts.googleapis.com/css2?family=Sofia+Sans:wght@400;500;600;700&display=swap"
+    rel="stylesheet"
+  />
+
+  <link
+    rel="stylesheet"
+    href="style.css"
+  />
+
+  <!-- Leaflet map -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  />
+
+</head>
+
+<body>
+
+  <!-- NAVBAR -->
+  <header class="navbar">
+
+    <a
+      href="index.html"
+      class="nav-logo"
+    >
+      GTSOFIA
+    </a>
+
+    <button
+      class="nav-toggle"
+      onclick="toggleMenu()"
+    >
+      ☰
+    </button>
+
+    <nav id="navMenu">
+
+      <a href="index.html">
+        Начало
+      </a>
+
+      <a
+        href="transport.html"
+        class="active"
+      >
+        Линии
+      </a>
+
+      <a href="schedules.html">
+        Разписания
+      </a>
+
+      <a href="rolling-stock.html">
+        Подвижен състав
+      </a>
+
+      <a href="about.html">
+        За проекта
+      </a>
+
+    </nav>
+
+  </header>
+
+
+  <!-- MAIN APP -->
+  <div class="app">
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+
+      <input
+        class="search"
+        id="searchInput"
+        placeholder="Търсене по линия…"
+      />
+
+      <div class="filters">
+
+        <button
+          class="filter-btn active"
+          onclick="setFilter(null, this)"
+        >
+          Всички
+        </button>
+
+        <button
+          class="filter-btn"
+          onclick="setFilter('bus', this)"
+        >
+          Автобуси
+        </button>
+
+        <button
+          class="filter-btn"
+          onclick="setFilter('trolleybus', this)"
+        >
+          Тролейбуси
+        </button>
+
+        <button
+          class="filter-btn"
+          onclick="setFilter('tram', this)"
+        >
+          Трамваи
+        </button>
+
+        <button
+          class="filter-btn"
+          onclick="setFilter('metro', this)"
+        >
+          Метро
+        </button>
+
+        <button
+          class="filter-btn"
+          onclick="setFilter('night', this)"
+        >
+          Нощни линии
+        </button>
+
+      </div>
+
+
+      <h3 class="section-title">
+        Линии
+      </h3>
+
+      <div
+        class="lines-grid"
+        id="linesGrid"
+      ></div>
+
+    </aside>
+
+
+    <!-- CONTENT -->
+    <main class="content">
+
+      <div id="contentArea">
+
+        <div class="empty-state">
+          Изберете линия, за да видите информация за нея.
+        </div>
+
+      </div>
+
+    </main>
+
+  </div>
+
+
+  <!-- SCRIPTS -->
+
+  <!--
+    GTFS transport data loader.
+    Вече НЕ използваме стария data.js
+    за transport страницата.
+  -->
+  <script src="transport-data.js"></script>
+
+
+  <!-- Leaflet -->
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+
+
+  <!-- Route map -->
+  <script src="map.js"></script>
+
+
+  <!-- Main transport application -->
+  <script src="app.js"></script>
+
+
+  <!-- Navbar -->
+  <script src="navbar.js"></script>
+
+
+  <!-- Alerts system -->
+  <script src="alerts.js"></script>
+
+</body>
+
+</html>
