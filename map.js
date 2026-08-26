@@ -27,11 +27,9 @@ async function loadTransportMapData() {
                 .then(response => {
 
                     if (!response.ok) {
-
                         throw new Error(
                             `Неуспешно зареждане на transport.json за картата: ${response.status}`
                         );
-
                     }
 
                     return response.json();
@@ -59,20 +57,22 @@ function getMapColor(line) {
 /*
  * Връща спирките на активното направление.
  *
- * Поддържаме и двата възможни формата:
+ * Новият формат използва:
  *
- * 1. directionA / directionB като обекти:
+ * line.directions = [
+ *     {
+ *         key: "D1",
+ *         headsign: "...",
+ *         stops: [...]
+ *     },
+ *     {
+ *         key: "D2",
+ *         headsign: "...",
+ *         stops: [...]
+ *     }
+ * ]
  *
- *    {
- *        headsign,
- *        stops,
- *        shape_id
- *    }
- *
- * 2. стария формат:
- *
- *    line.stopsA
- *    line.stopsB
+ * Поддържаме и стария A/B формат като fallback.
  */
 function getActiveStops(line, stops) {
 
@@ -85,27 +85,70 @@ function getActiveStops(line, stops) {
     }
 
 
+    /*
+     * Новият модел:
+     *
+     * activeDirection = D1 / D2 / D3...
+     */
     const directionKey =
         line &&
-        line.activeDirection === "B"
-            ? "B"
-            : "A";
+        line.activeDirection
+            ? line.activeDirection
+            : (
+                line &&
+                Array.isArray(
+                    line.directions
+                ) &&
+                line.directions.length
+                    ? line.directions[0].key
+                    : "A"
+            );
 
 
     /*
      * Новият формат.
      */
-    const direction =
-        directionKey === "B"
-            ? line.directionB
-            : line.directionA;
+    if (
+        line &&
+        Array.isArray(
+            line.directions
+        )
+    ) {
 
+        const direction =
+            line.directions.find(
+                item =>
+                    item.key ===
+                    directionKey
+            );
+
+        if (
+            direction &&
+            Array.isArray(
+                direction.stops
+            )
+        ) {
+            return direction.stops;
+        }
+
+    }
+
+
+    /*
+     * Старият A/B формат.
+     */
+    const legacyDirection =
+        directionKey === "B"
+            ? line?.directionB
+            : line?.directionA;
 
     if (
-        direction &&
-        Array.isArray(direction.stops)
+        legacyDirection &&
+        Array.isArray(
+            legacyDirection.stops
+        )
     ) {
-        return direction.stops;
+        return legacyDirection.stops;
     }
 
 
@@ -114,14 +157,18 @@ function getActiveStops(line, stops) {
      */
     if (directionKey === "B") {
 
-        return Array.isArray(line.stopsB)
+        return Array.isArray(
+            line?.stopsB
+        )
             ? line.stopsB
             : [];
 
     }
 
 
-    return Array.isArray(line.stopsA)
+    return Array.isArray(
+        line?.stopsA
+    )
         ? line.stopsA
         : [];
 
@@ -228,7 +275,6 @@ function getStopCoordinates(
                 coordinate
 
             };
-
         })
         .filter(Boolean);
 
@@ -336,24 +382,60 @@ async function renderLineMap(
 
         /*
          * Активно направление.
+         *
+         * Новият модел:
+         *
+         * D1 / D2 / D3 / ...
+         *
+         * Старият A/B формат остава като fallback.
          */
         const directionKey =
-            line.activeDirection === "B"
-                ? "B"
-                : "A";
+            line &&
+            line.activeDirection
+                ? line.activeDirection
+                : (
+                    line &&
+                    Array.isArray(
+                        line.directions
+                    ) &&
+                    line.directions.length
+                        ? line.directions[0].key
+                        : "A"
+                );
 
 
         /*
          * Намираме GTFS информацията
          * за конкретното направление.
          */
-        const directionData =
+        const routeDirections =
             data.directions &&
             data.directions[routeId]
                 ? data.directions[
-                      routeId
-                  ][directionKey]
-                : null;
+                    routeId
+                ]
+                : {};
+
+
+        /*
+         * Новият формат:
+         *
+         * data.directions[routeId][D1]
+         *
+         * Старият формат:
+         *
+         * data.directions[routeId].A/B
+         */
+        const directionData =
+            routeDirections[
+                directionKey
+            ]
+            || (
+                directionKey === "B"
+                    ? routeDirections.B
+                    : routeDirections.A
+            )
+            || null;
 
 
         /*
@@ -362,9 +444,9 @@ async function renderLineMap(
         const shapeId =
             directionData
                 ? String(
-                      directionData.shape_id ||
-                      ""
-                  ).trim()
+                    directionData.shape_id ||
+                    ""
+                ).trim()
                 : "";
 
 
@@ -378,8 +460,8 @@ async function renderLineMap(
                 data.shapes[shapeId]
             )
                 ? data.shapes[
-                      shapeId
-                  ]
+                    shapeId
+                ]
                 : [];
 
 
@@ -499,6 +581,7 @@ async function renderLineMap(
                     L.circleMarker(
                         stop.coordinate,
                         {
+
                             /*
                              * Малка точка,
                              * за да не се превърне картата
