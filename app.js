@@ -355,7 +355,7 @@ function selectLine(
 
                     <img
                         class="direction-arrow"
-                        src="https://raw.githubusercontent.com/nikolay5555/gtsofia/546fec48e624f1eadb3b6676d73d27e92d726e7c/Icons/destinationarrow.svg"
+                        src="https://raw.githubusercontent.com/nikolay5555/gtsofia/fd82ebee531e36adfd1f59f2ba9d5b8dbc33aba4/Icons/destinationarrow.svg"
                     />
 
                     <div class="destination-name">
