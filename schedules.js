@@ -656,7 +656,7 @@ function renderSummary(courses) {
 
         <img
           class="direction-arrow"
-          src="https://raw.githubusercontent.com/nikolay5555/gtsofia/546fec48e624f1eadb3b6676d73d27e92d726e7c/Icons/destinationarrow.svg"
+          src="https://raw.githubusercontent.com/nikolay5555/gtsofia/3f6b5990600fe465c2fed6bd3da2582f31c45860/Icons/destinationarrow.svg"
           alt=""
         />
 
