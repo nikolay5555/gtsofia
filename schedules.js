@@ -62,7 +62,6 @@ function formatTime(value) {
    * 26:xx -> 02:xx
    * 27:xx -> 03:xx
    */
-
   const hour = Number(match[1]) % 24;
 
   return `${String(hour).padStart(2, "0")}:${match[2]}`;
@@ -203,14 +202,6 @@ function selectScheduleLine(line) {
   selectedScheduleLine =
     line;
 
-  /*
-   * Новата структура използва реални
-   * direction keys: D1, D2, D3...
-   *
-   * За съвместимост, ако някой стар line
-   * все още няма directions масив, се
-   * връщаме към A.
-   */
   selectedDirectionKey =
     line.directions?.[0]?.key
       || "A";
@@ -267,19 +258,6 @@ function getSelectedDirection() {
     return null;
   }
 
-  /*
-   * Новият модел:
-   *
-   * line.directions = [
-   *   { key: "D1", ... },
-   *   { key: "D2", ... },
-   *   ...
-   * ]
-   *
-   * Старият A/B модел остава
-   * като fallback.
-   */
-
   const directions =
     Array.isArray(
       selectedScheduleLine.directions
@@ -314,9 +292,6 @@ function renderDirections() {
       "directionSelect"
     );
 
-  /*
-   * Нов модел: всички реални направления.
-   */
   const directions =
     Array.isArray(
       selectedScheduleLine?.directions
@@ -325,10 +300,6 @@ function renderDirections() {
       : [];
 
   if (directions.length) {
-    /*
-     * Ако текущият key вече не съществува,
-     * избираме първото реално направление.
-     */
     if (
       !directions.some(
         direction =>
@@ -370,9 +341,6 @@ function renderDirections() {
     return;
   }
 
-  /*
-   * Fallback за старите A/B данни.
-   */
   const directionA =
     selectedScheduleLine?.directionA;
 
@@ -471,7 +439,7 @@ function getCourses() {
 
   const schedules =
     window.transportData?.schedules
-      || {};
+    || {};
 
   const routeSchedule =
     schedules[
@@ -479,7 +447,9 @@ function getCourses() {
     ];
 
   /*
-   * Новите данни използват D1/D2/D3...
+   * Новият модел:
+   *
+   * D1 / D2 / D3 / ...
    */
   if (
     routeSchedule &&
@@ -543,27 +513,45 @@ function renderSummary(courses) {
   const direction =
     getSelectedDirection();
 
+  /*
+   * Търсим всички реални времена за
+   * избраната спирка.
+   *
+   * Това е важно при partial directions,
+   * където курсът може да има null
+   * за конкретна спирка.
+   */
+  const validTimes = courses
+    .map(
+      course =>
+        getStopTime(
+          course,
+          selectedStopIndex
+        )
+    )
+    .filter(
+      time =>
+        parseTime(time) !== null
+    )
+    .sort(
+      (a, b) =>
+        parseTime(a) -
+        parseTime(b)
+    );
+
   const first =
-    courses[0]
+    validTimes.length
       ? formatTime(
-          getStopTime(
-            courses[0],
-            selectedStopIndex
-          )
+          validTimes[0]
         )
       : "—";
 
   const last =
-    courses[
-      courses.length - 1
-    ]
+    validTimes.length
       ? formatTime(
-          getStopTime(
-            courses[
-              courses.length - 1
-            ],
-            selectedStopIndex
-          )
+          validTimes[
+            validTimes.length - 1
+          ]
         )
       : "—";
 
@@ -571,6 +559,9 @@ function renderSummary(courses) {
     direction.stops?.[
       selectedStopIndex
     ];
+
+  const courseCount =
+    validTimes.length;
 
   summary.innerHTML = `
     <div class="schedule-summary-main">
@@ -581,9 +572,10 @@ function renderSummary(courses) {
 
         <img
           class="direction-arrow"
-          src="https://raw.githubusercontent.com/nikolay5555/gtsofia/fd82ebee531e36adfd1f59f2ba9d5b8dbc33aba4/Icons/destinationarrow.svg"
+          src="https://raw.githubusercontent.com/nikolay5555/gtsofia/546fec48e624f1eadb3b6676d73d27e92d726e7c/Icons/destinationarrow.svg"
           alt=""
         />
+
         <strong class="schedule-summary-destination">
           ${escapeHtml(
             direction.headsign
@@ -611,9 +603,10 @@ function renderSummary(courses) {
 
       <div>
         <span>Общо курсове</span>
-        <strong>${courses.length}</strong>
+        <strong>${courseCount}</strong>
       </div>
-    </div>`;
+    </div>
+  `;
 
   summary.hidden = false;
 }
@@ -695,17 +688,6 @@ function renderTimetable(courses) {
   /*
    * Определяме реалния първи час,
    * в който има курс.
-   *
-   * Например:
-   *
-   * 05, 06, 07 ... 23, 00, 01...
-   *
-   * или:
-   *
-   * 23, 00, 01, 02...
-   *
-   * Вече НЕ фиксираме 23:00 като
-   * начало на таблицата.
    */
 
   const availableHours = [
@@ -737,9 +719,7 @@ function renderTimetable(courses) {
     );
 
   /*
-   * Първият ред показва само часа:
-   *
-   * 5 | 6 | 7 | ... | 23 | 0 | 1 | 2 ...
+   * Първият ред показва само часа.
    */
 
   const header =
@@ -752,9 +732,6 @@ function renderTimetable(courses) {
 
   /*
    * Всеки час е отделна колонка.
-   *
-   * Всички минути в дадената колонка
-   * са задължително една под друга.
    */
 
   const cells =
@@ -822,12 +799,16 @@ function renderTimetable(courses) {
       button.addEventListener(
         "click",
         () => {
-const course =
-  courses.find(
-    item =>
-      String(item.trip_id) ===
-      String(button.dataset.tripId)
-  );
+          const course =
+            courses.find(
+              item =>
+                String(
+                  item.trip_id
+                ) ===
+                String(
+                  button.dataset.tripId
+                )
+            );
 
           if (course) {
             showCourse(course);
