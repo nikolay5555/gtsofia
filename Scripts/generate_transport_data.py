@@ -7,7 +7,7 @@ import shutil
 import urllib.request
 import zipfile
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -33,30 +33,66 @@ def normalize(value):
     return str(value).strip() if value is not None else ""
 
 
-def normalize_stop_id(stop_id):
+def normalize_gtfs_stop_id(value):
     """
-    Exact normalization used by Dimitar5555's 04-schedules.js:
+    Same normalization used by Dimitar5555's 04-schedules.js:
 
         st.stop_id.startsWith('M')
             ? st.stop_id
             : st.stop_id.replace(/\D/g, '').padStart(4, '0')
     """
 
-    stop_id = normalize(stop_id)
+    value = normalize(value)
 
-    if not stop_id:
+    if not value:
         return ""
 
-    if stop_id.startswith("M"):
-        return stop_id
+    if value.startswith("M"):
+        return value
 
     digits = "".join(
-        ch
-        for ch in stop_id
-        if ch.isdigit()
+        character
+        for character in value
+        if character.isdigit()
     )
 
     return digits.zfill(4)
+
+
+def parse_time(value):
+    value = normalize(value)
+
+    if not value:
+        return None
+
+    try:
+        h, m, s = map(
+            int,
+            value.split(":")
+        )
+
+        return h * 3600 + m * 60 + s
+
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_time_to_minutes(value):
+    value = normalize(value)
+
+    if not value:
+        return None
+
+    try:
+        h, m, s = map(
+            int,
+            value.split(":")
+        )
+
+        return h * 60 + m
+
+    except (TypeError, ValueError):
+        return None
 
 
 def parse_gtfs_date(value):
@@ -70,86 +106,49 @@ def parse_gtfs_date(value):
             value,
             "%Y%m%d"
         ).date()
+
     except ValueError:
         return None
 
 
-def parse_time_to_minutes(value):
-    value = normalize(value)
-
-    if not value:
-        return None
-
-    try:
-        hours, minutes, seconds = map(
-            int,
-            value.split(":")
-        )
-
-        return (
-            hours * 60
-            + minutes
-        )
-
-    except (
-        TypeError,
-        ValueError
-    ):
-        return None
-
-
 def get_today():
-    """
-    Dimitar5555 uses JavaScript toISOString(), which is UTC based.
-    """
-
+    # Match Dimitar5555's project:
+    # JavaScript's new Date().toISOString() is UTC-based.
     return datetime.now(
         timezone.utc
     ).date()
 
 
-def is_weekend_date(current):
-    """
-    Same holiday classification as 03-routes.js.
-    """
+def iter_dates(start, days):
+    for offset in range(days):
+        yield start + timedelta(days=offset)
 
-    always_weekend = {
-        "01-01",
-        "03-03",
-        "01-05",
-        "06-05",
-        "24-05",
-        "06-09",
-        "22-09",
-        "01-11",
-        "24-12",
-        "25-12",
-        "26-12",
-    }
 
-    return (
-        current.weekday() >= 5
-        or current.strftime("%m-%d")
-        in always_weekend
-    )
-
+# ============================================================
+# Destination helpers
+# ============================================================
 
 def get_route_destination_labels(route):
     """
-    Match the existing gtsofia frontend fallback:
+    The site's existing A/B fallback is based on route_long_name:
 
-        route_long_name = "FROM - TO"
+        FROM - TO
+
+    therefore:
 
         A = TO
         B = FROM
-
-    This is intentionally NOT taken from the last stop name and
-    NOT taken from trip_headsign.
     """
 
     route_long_name = normalize(
         route.get("route_long_name")
     )
+
+    if not route_long_name:
+        return {
+            "A": "",
+            "B": ""
+        }
 
     parts = [
         part.strip()
@@ -160,19 +159,91 @@ def get_route_destination_labels(route):
     if len(parts) >= 2:
         return {
             "A": parts[1],
-            "B": parts[0],
+            "B": parts[0]
         }
 
     if len(parts) == 1:
         return {
             "A": parts[0],
-            "B": parts[0],
+            "B": parts[0]
         }
 
     return {
         "A": "",
-        "B": "",
+        "B": ""
     }
+
+
+def normalize_destination_text(value):
+    """
+    Normalizes destination/stop names only for comparison.
+
+    It does NOT change anything that is written to transport.json.
+    """
+
+    value = normalize(value).lower()
+
+    prefixes = [
+        "кв.",
+        "кв ",
+        "ж.к.",
+        "ж.к ",
+        "жк.",
+        "жк ",
+    ]
+
+    for prefix in prefixes:
+
+        if value.startswith(prefix):
+            value = value[
+                len(prefix):
+            ].strip()
+
+    value = (
+        value
+        .replace("„", "")
+        .replace("“", "")
+        .replace('"', "")
+        .replace("'", "")
+        .replace("-", " ")
+        .replace("–", " ")
+        .replace("—", " ")
+    )
+
+    return " ".join(
+        value.split()
+    ).strip()
+
+
+def destination_matches_stop(
+    destination,
+    stop_name
+):
+    """
+    Compare route_long_name destination with a real final stop name.
+    """
+
+    destination = normalize_destination_text(
+        destination
+    )
+
+    stop_name = normalize_destination_text(
+        stop_name
+    )
+
+    if not destination or not stop_name:
+        return False
+
+    if destination == stop_name:
+        return True
+
+    if destination in stop_name:
+        return True
+
+    if stop_name in destination:
+        return True
+
+    return False
 
 
 # ============================================================
@@ -224,17 +295,17 @@ def download_gtfs():
         io.BytesIO(payload)
     ) as archive:
 
-        names = {
-            Path(name).name
-            for name in archive.namelist()
-        }
-
         required = {
             "routes.txt",
             "stops.txt",
             "trips.txt",
             "stop_times.txt",
-            "calendar_dates.txt",
+            "calendar_dates.txt"
+        }
+
+        names = {
+            Path(name).name
+            for name in archive.namelist()
         }
 
         missing = required - names
@@ -261,7 +332,7 @@ def download_gtfs():
 # CSV
 # ============================================================
 
-def read_csv(filename):
+def open_csv(filename):
 
     path = GTFS_DIR / filename
 
@@ -271,11 +342,16 @@ def read_csv(filename):
             f"Missing GTFS file: {path}"
         )
 
-    with path.open(
+    return path.open(
         "r",
         encoding="utf-8-sig",
         newline=""
-    ) as file:
+    )
+
+
+def read_csv(filename):
+
+    with open_csv(filename) as file:
 
         return list(
             csv.DictReader(file)
@@ -283,48 +359,140 @@ def read_csv(filename):
 
 
 # ============================================================
-# Active services
-#
-# Python translation of 03-routes.js
+# Shapes
 # ============================================================
 
-def get_active_service_ids(
-    calendar_dates,
-    start_date
-):
+def load_selected_shapes(shape_ids):
 
-    end_date = (
-        start_date
-        + timedelta(days=15)
-    )
+    shapes_path = GTFS_DIR / "shapes.txt"
 
-    stats = defaultdict(
-        lambda: {
-            "weekday_count": 0,
-            "weekend_count": 0,
-        }
-    )
+    if not shapes_path.exists():
 
-    for row in calendar_dates:
-
-        if normalize(
-            row.get("exception_type")
-        ) != "1":
-
-            continue
-
-        current = parse_gtfs_date(
-            row.get("date")
+        print(
+            "WARNING: shapes.txt is not present in the GTFS feed."
         )
 
-        if current is None:
-            continue
+        return {}
 
-        if current < start_date:
-            continue
+    selected_ids = {
+        normalize(shape_id)
+        for shape_id in shape_ids
+        if normalize(shape_id)
+    }
 
-        if current > end_date:
-            continue
+    if not selected_ids:
+        return {}
+
+    shapes = defaultdict(list)
+
+    with shapes_path.open(
+        "r",
+        encoding="utf-8-sig",
+        newline=""
+    ) as file:
+
+        reader = csv.DictReader(
+            file
+        )
+
+        for row in reader:
+
+            shape_id = normalize(
+                row.get("shape_id")
+            )
+
+            if shape_id not in selected_ids:
+                continue
+
+            try:
+
+                lat = float(
+                    row.get("shape_pt_lat")
+                )
+
+                lon = float(
+                    row.get("shape_pt_lon")
+                )
+
+                sequence = int(
+                    row.get(
+                        "shape_pt_sequence",
+                        0
+                    )
+                )
+
+            except (
+                TypeError,
+                ValueError
+            ):
+
+                continue
+
+            shapes[
+                shape_id
+            ].append({
+                "lat":
+                    lat,
+
+                "lon":
+                    lon,
+
+                "sequence":
+                    sequence
+            })
+
+    result = {}
+
+    for shape_id, points in shapes.items():
+
+        points.sort(
+            key=lambda point:
+                point["sequence"]
+        )
+
+        result[
+            shape_id
+        ] = [
+            {
+                "lat":
+                    point["lat"],
+
+                "lon":
+                    point["lon"]
+            }
+            for point in points
+        ]
+
+    print(
+        f"Selected GTFS shapes: {len(result)}"
+    )
+
+    print(
+        "Shape points retained: "
+        f"{sum(len(points) for points in result.values())}"
+    )
+
+    return result
+
+
+# ============================================================
+# Active services
+# ============================================================
+
+def get_active_service_weights(
+    calendar,
+    calendar_dates,
+    start_date,
+    horizon_days=16
+):
+
+    active_by_date = defaultdict(set)
+
+    # --------------------------------------------------------
+    # Optional calendar.txt
+    # --------------------------------------------------------
+
+    for row in calendar:
 
         service_id = normalize(
             row.get("service_id")
@@ -333,166 +501,79 @@ def get_active_service_ids(
         if not service_id:
             continue
 
-        if is_weekend_date(
-            current
+        start = parse_gtfs_date(
+            row.get("start_date")
+        )
+
+        end = parse_gtfs_date(
+            row.get("end_date")
+        )
+
+        if start is None:
+            start = date.min
+
+        if end is None:
+            end = date.max
+
+        weekdays = {
+            0: normalize(row.get("monday")) == "1",
+            1: normalize(row.get("tuesday")) == "1",
+            2: normalize(row.get("wednesday")) == "1",
+            3: normalize(row.get("thursday")) == "1",
+            4: normalize(row.get("friday")) == "1",
+            5: normalize(row.get("saturday")) == "1",
+            6: normalize(row.get("sunday")) == "1",
+        }
+
+        for current in iter_dates(
+            start_date,
+            horizon_days
         ):
 
-            stats[
-                service_id
-            ][
-                "weekend_count"
-            ] += 1
+            if current < start or current > end:
+                continue
 
-        else:
+            if weekdays[
+                current.weekday()
+            ]:
 
-            stats[
-                service_id
-            ][
-                "weekday_count"
-            ] += 1
+                active_by_date[
+                    current
+                ].add(
+                    service_id
+                )
 
-    active_service_ids = {}
+    # --------------------------------------------------------
+    # calendar_dates.txt
+    # --------------------------------------------------------
 
-    for service_id, counts in stats.items():
-
-        # Same rule as 03-routes.js:
-        # tie => weekend.
-        active_service_ids[
-            service_id
-        ] = (
-            counts["weekday_count"]
-            <= counts["weekend_count"]
-        )
-
-    weekday_count = sum(
-        value is False
-        for value in active_service_ids.values()
-    )
-
-    weekend_count = sum(
-        value is True
-        for value in active_service_ids.values()
-    )
-
-    print(
-        "Active service IDs: "
-        f"{len(active_service_ids)}"
-    )
-
-    print(
-        "Service classification: "
-        f"weekday={weekday_count}, "
-        f"weekend={weekend_count}"
-    )
-
-    return active_service_ids
-
-
-# ============================================================
-# Trips
-# ============================================================
-
-def load_trips(
-    trips_data,
-    active_service_ids
-):
-
-    trips_by_id = {}
-
-    for row in trips_data:
-
-        trip_id = normalize(
-            row.get("trip_id")
-        )
-
-        if not trip_id:
-            continue
+    for row in calendar_dates:
 
         service_id = normalize(
             row.get("service_id")
         )
 
-        if service_id not in active_service_ids:
-            continue
-
-        trips_by_id[
-            trip_id
-        ] = {
-            "trip_id":
-                trip_id,
-
-            "route_id":
-                normalize(
-                    row.get("route_id")
-                ),
-
-            "service_id":
-                service_id,
-
-            "trip_headsign":
-                normalize(
-                    row.get(
-                        "trip_headsign"
-                    )
-                ),
-
-            "direction_id":
-                normalize(
-                    row.get(
-                        "direction_id"
-                    )
-                ),
-
-            "shape_id":
-                normalize(
-                    row.get(
-                        "shape_id"
-                    )
-                ),
-
-            "is_weekend":
-                active_service_ids[
-                    service_id
-                ],
-        }
-
-    return trips_by_id
-
-
-# ============================================================
-# Stop times
-# ============================================================
-
-def load_stop_times(
-    stop_times_data,
-    trips_by_id
-):
-
-    stop_times_by_trip = defaultdict(
-        list
-    )
-
-    for row in stop_times_data:
-
-        trip_id = normalize(
-            row.get("trip_id")
+        current = parse_gtfs_date(
+            row.get("date")
         )
 
-        if trip_id not in trips_by_id:
+        if not service_id or current is None:
             continue
 
-        stop_id = normalize_stop_id(
-            row.get("stop_id")
-        )
+        if not (
+            start_date
+            <= current
+            < start_date
+            + timedelta(days=horizon_days)
+        ):
 
-        if not stop_id:
             continue
 
         try:
 
-            sequence = int(
+            exception_type = int(
                 row.get(
-                    "stop_sequence",
+                    "exception_type",
                     0
                 )
             )
@@ -502,71 +583,183 @@ def load_stop_times(
             ValueError
         ):
 
-            sequence = 0
+            exception_type = 0
 
-        stop_times_by_trip[
-            trip_id
-        ].append({
+        if exception_type == 1:
 
-            "stop_id":
-                stop_id,
+            active_by_date[
+                current
+            ].add(
+                service_id
+            )
 
-            "sequence":
-                sequence,
+        elif exception_type == 2:
 
-            "arrival_time":
-                normalize(
-                    row.get(
-                        "arrival_time"
-                    )
-                ),
+            active_by_date[
+                current
+            ].discard(
+                service_id
+            )
 
-            "departure_time":
-                normalize(
-                    row.get(
-                        "departure_time"
-                    )
-                ),
-        })
+    weights = defaultdict(int)
 
-    for trip_id in stop_times_by_trip:
+    for service_ids in active_by_date.values():
 
-        stop_times_by_trip[
-            trip_id
-        ].sort(
-            key=lambda item:
-                item["sequence"]
-        )
+        for service_id in service_ids:
 
-    return stop_times_by_trip
+            weights[
+                service_id
+            ] += 1
+
+    print(
+        "Active service IDs in next "
+        f"{horizon_days} days: "
+        f"{len(weights)}"
+    )
+
+    print(
+        "Service dates considered: "
+        f"{len(active_by_date)}"
+    )
+
+    return dict(weights)
 
 
-# ============================================================
-# Build directions and logical trips
-#
-# Direct translation of 04-schedules.js
-# ============================================================
-
-def build_reference_model(
-    trips_by_id,
-    stop_times_by_trip
+def get_service_day_sets(
+    calendar_dates,
+    start_date,
+    horizon_days=16
 ):
 
-    logical_trips = []
+    service_stats = defaultdict(
+        lambda: {
+            "weekday_count": 0,
+            "weekend_count": 0
+        }
+    )
+
+    always_weekend = {
+        "01-01",
+        "03-03",
+        "01-05",
+        "06-05",
+        "24-05",
+        "06-09",
+        "22-09",
+        "01-11",
+        "24-12",
+        "25-12",
+        "26-12",
+    }
+
+    horizon_end = (
+        start_date
+        + timedelta(
+            days=horizon_days
+        )
+    )
+
+    for row in calendar_dates:
+
+        service_id = normalize(
+            row.get("service_id")
+        )
+
+        current = parse_gtfs_date(
+            row.get("date")
+        )
+
+        if not service_id or current is None:
+            continue
+
+        if not (
+            start_date
+            <= current
+            < horizon_end
+        ):
+            continue
+
+        if normalize(
+            row.get("exception_type")
+        ) != "1":
+
+            continue
+
+        mm_dd = current.strftime(
+            "%m-%d"
+        )
+
+        is_weekend = (
+            current.weekday() >= 5
+            or mm_dd in always_weekend
+        )
+
+        if is_weekend:
+
+            service_stats[
+                service_id
+            ][
+                "weekend_count"
+            ] += 1
+
+        else:
+
+            service_stats[
+                service_id
+            ][
+                "weekday_count"
+            ] += 1
+
+    weekday = set()
+    weekend = set()
+
+    for service_id, counts in (
+        service_stats.items()
+    ):
+
+        if (
+            counts["weekday_count"]
+            > counts["weekend_count"]
+        ):
+
+            weekday.add(
+                service_id
+            )
+
+        else:
+
+            weekend.add(
+                service_id
+            )
+
+    return weekday, weekend
+
+
+# ============================================================
+# Direction model
+# ============================================================
+
+def build_reference_direction_data(
+    trips_by_id,
+    stop_times_by_trip,
+    service_weights
+):
+
+    trips = []
     directions = []
-    logical_stop_times = []
+    stop_times = []
 
     route_direction_map = defaultdict(
         set
     )
 
-    for original_trip_id, trip in (
+    for trip_id, trip in (
         trips_by_id.items()
     ):
 
         trip_stop_times = (
             stop_times_by_trip.get(
-                original_trip_id,
+                trip_id,
                 []
             )
         )
@@ -576,23 +769,17 @@ def build_reference_model(
             for item in trip_stop_times
         ]
 
-        if not trip_stops:
-            continue
-
         route_id = trip[
             "route_id"
         ]
 
-        if not route_id:
+        if not trip_stops or not route_id:
             continue
 
-        is_weekend_trip = trip[
-            "is_weekend"
-        ]
-
-        # --------------------------------------------------------
-        # Exact equivalent of directions.find(...)
-        # --------------------------------------------------------
+        is_weekend_trip = (
+            trip["service_id"]
+            in service_weights
+        )
 
         corresponding_direction = None
 
@@ -607,35 +794,22 @@ def build_reference_model(
                 continue
 
             if (
-                len(
-                    direction[
-                        "stops"
-                    ]
-                )
+                len(direction["stops"])
                 != len(trip_stops)
             ):
 
                 continue
 
-            same = all(
-                direction["stops"][index]
-                == trip_stops[index]
-                for index in range(
-                    len(trip_stops)
-                )
-            )
-
-            if same:
+            if (
+                direction["stops"]
+                == trip_stops
+            ):
 
                 corresponding_direction = (
                     direction
                 )
 
                 break
-
-        # --------------------------------------------------------
-        # Create a new direction exactly as reference.
-        # --------------------------------------------------------
 
         if corresponding_direction is None:
 
@@ -646,6 +820,9 @@ def build_reference_model(
 
                 "stops":
                     list(trip_stops),
+
+                "is_deleted":
+                    False
             }
 
             directions.append(
@@ -666,46 +843,36 @@ def build_reference_model(
             ]
         )
 
-        # --------------------------------------------------------
-        # Exact equivalent of logical trip grouping.
-        # --------------------------------------------------------
-
         corresponding_trip = None
 
-        for logical_trip in logical_trips:
+        for existing_trip in trips:
 
             if (
-                logical_trip[
-                    "cgm_id"
-                ]
+                existing_trip["cgm_id"]
                 != route_id
             ):
                 continue
 
             if (
-                logical_trip[
-                    "direction"
-                ]
+                existing_trip["direction"]
                 != direction_code
             ):
                 continue
 
             if (
-                logical_trip[
-                    "is_weekend"
-                ]
+                existing_trip["is_weekend"]
                 != is_weekend_trip
             ):
                 continue
 
-            if logical_trip.get(
+            if existing_trip.get(
                 "is_deleted",
                 False
             ):
                 continue
 
             corresponding_trip = (
-                logical_trip
+                existing_trip
             )
 
             break
@@ -715,7 +882,7 @@ def build_reference_model(
             corresponding_trip = {
 
                 "id":
-                    len(logical_trips) + 1,
+                    len(trips) + 1,
 
                 "cgm_id":
                     route_id,
@@ -730,67 +897,63 @@ def build_reference_model(
                     False,
 
                 "original_trip_ids":
-                    [],
+                    []
             }
 
-            logical_trips.append(
+            trips.append(
                 corresponding_trip
             )
 
         corresponding_trip[
             "original_trip_ids"
         ].append(
-            original_trip_id
+            trip_id
         )
 
-        # --------------------------------------------------------
-        # Same car extraction as 04-schedules.js.
-        # --------------------------------------------------------
+        if trip_id.startswith("M"):
 
-        if original_trip_id.startswith("M"):
-
-            pieces = (
-                original_trip_id.split("-")
-            )
+            parts = trip_id.split("-")
 
             car = (
-                pieces[2]
-                if len(pieces) > 2
+                parts[2]
+                if len(parts) > 2
                 else ""
             )
 
         else:
 
-            pieces = (
-                original_trip_id.split("-")
-            )
+            parts = trip_id.split("-")
 
             car = (
-                pieces[-3]
-                if len(pieces) >= 3
+                parts[-3]
+                if len(parts) >= 3
                 else ""
             )
-
-        # --------------------------------------------------------
-        # Same time conversion:
-        # departure_time -> minutes from midnight.
-        # --------------------------------------------------------
 
         times = []
 
         for item in trip_stop_times:
 
-            parsed = parse_time_to_minutes(
+            parsed = parse_time(
                 item.get(
                     "departure_time"
                 )
+                or ""
             )
 
-            times.append(
-                parsed
-            )
+            if parsed is None:
 
-        logical_stop_times.append({
+                times.append(
+                    None
+                )
+
+            else:
+
+                times.append(
+                    parsed // 60
+                )
+
+        stop_times.append({
 
             "trip":
                 corresponding_trip[
@@ -804,27 +967,25 @@ def build_reference_model(
                 car,
 
             "original_trip_id":
-                original_trip_id,
+                trip_id
         })
 
     return (
-        logical_trips,
+        trips,
         directions,
-        logical_stop_times
+        stop_times
     )
 
 
 # ============================================================
-# Partial-direction merge
-#
-# Direct translation of 04-schedules.js
+# Partial direction merge
 # ============================================================
 
 def merge_partial_directions(
     routes_data,
-    logical_trips,
+    trips,
     directions,
-    logical_stop_times
+    stop_times
 ):
 
     for route in routes_data:
@@ -837,7 +998,7 @@ def merge_partial_directions(
 
         route_trips = [
             trip
-            for trip in logical_trips
+            for trip in trips
             if trip[
                 "cgm_id"
             ] == route_id
@@ -856,6 +1017,10 @@ def merge_partial_directions(
             if direction[
                 "code"
             ] in direction_ids
+            and not direction.get(
+                "is_deleted",
+                False
+            )
         ]
 
         route_dirs.sort(
@@ -868,19 +1033,9 @@ def merge_partial_directions(
             reverse=True
         )
 
-        # --------------------------------------------------------
-        # Exact partial direction algorithm.
-        # --------------------------------------------------------
-
         for index1, child in enumerate(
             route_dirs
         ):
-
-            if child.get(
-                "is_deleted",
-                False
-            ):
-                continue
 
             child_string = ",".join(
                 child[
@@ -909,7 +1064,10 @@ def merge_partial_directions(
                     ]
                 )
 
-                if child_string in candidate_string:
+                if (
+                    child_string
+                    in candidate_string
+                ):
 
                     parent = candidate
                     break
@@ -917,17 +1075,15 @@ def merge_partial_directions(
             if parent is None:
                 continue
 
-            first_child_stop = child[
-                "stops"
-            ][0]
-
             try:
 
                 begin_slots = (
                     parent[
                         "stops"
                     ].index(
-                        first_child_stop
+                        child[
+                            "stops"
+                        ][0]
                     )
                 )
 
@@ -957,7 +1113,7 @@ def merge_partial_directions(
                 "code"
             ]
 
-            for trip in logical_trips:
+            for trip in trips:
 
                 if (
                     trip[
@@ -969,10 +1125,12 @@ def merge_partial_directions(
 
                 trip_stop_times = [
                     item
-                    for item in logical_stop_times
+                    for item in stop_times
                     if item[
                         "trip"
-                    ] == trip["id"]
+                    ] == trip[
+                        "id"
+                    ]
                 ]
 
                 for item in trip_stop_times:
@@ -995,10 +1153,7 @@ def merge_partial_directions(
                     "code"
                 ]
 
-        # --------------------------------------------------------
         # Delete merged directions.
-        # --------------------------------------------------------
-
         for index in range(
             len(directions) - 1,
             -1,
@@ -1013,7 +1168,6 @@ def merge_partial_directions(
                 "is_deleted",
                 False
             ):
-
                 continue
 
             direction_code = direction[
@@ -1025,13 +1179,8 @@ def merge_partial_directions(
                     "direction"
                 ]
                 == direction_code
-                for trip in logical_trips
+                for trip in trips
             ):
-
-                print(
-                    "WARNING: direction "
-                    f"{direction_code} still has trips."
-                )
 
                 continue
 
@@ -1042,14 +1191,12 @@ def merge_partial_directions(
 
 # ============================================================
 # Merge logical trips
-#
-# Direct translation of 04-schedules.js
 # ============================================================
 
 def merge_logical_trips(
     routes_data,
-    logical_trips,
-    logical_stop_times
+    trips,
+    stop_times
 ):
 
     for route in routes_data:
@@ -1062,7 +1209,7 @@ def merge_logical_trips(
 
         route_trips = [
             trip
-            for trip in logical_trips
+            for trip in trips
             if trip[
                 "cgm_id"
             ] == route_id
@@ -1121,10 +1268,12 @@ def merge_logical_trips(
 
             trip_stop_times = [
                 item
-                for item in logical_stop_times
+                for item in stop_times
                 if item[
                     "trip"
-                ] == trip["id"]
+                ] == trip[
+                    "id"
+                ]
             ]
 
             for item in trip_stop_times:
@@ -1153,17 +1302,13 @@ def merge_logical_trips(
                 "is_deleted"
             ] = True
 
-        # --------------------------------------------------------
-        # Delete merged logical trips.
-        # --------------------------------------------------------
-
         for index in range(
-            len(logical_trips) - 1,
+            len(trips) - 1,
             -1,
             -1
         ):
 
-            trip = logical_trips[
+            trip = trips[
                 index
             ]
 
@@ -1171,7 +1316,6 @@ def merge_logical_trips(
                 "is_deleted",
                 False
             ):
-
                 continue
 
             trip_id = trip[
@@ -1182,23 +1326,18 @@ def merge_logical_trips(
                 item[
                     "trip"
                 ] == trip_id
-                for item in logical_stop_times
+                for item in stop_times
             ):
-
-                print(
-                    "WARNING: trip "
-                    f"{trip_id} still has stop times."
-                )
 
                 continue
 
-            logical_trips.pop(
+            trips.pop(
                 index
             )
 
 
 # ============================================================
-# Stops
+# Stop index
 # ============================================================
 
 def build_stop_index(
@@ -1209,22 +1348,37 @@ def build_stop_index(
 
     for row in stops_data:
 
-        raw_stop_id = normalize(
+        original_stop_id = normalize(
             row.get(
                 "stop_id"
             )
         )
 
-        normalized_id = normalize_stop_id(
-            raw_stop_id
+        normalized_id = normalize_gtfs_stop_id(
+            original_stop_id
         )
 
         if not normalized_id:
             continue
 
+        normalized_row = dict(
+            row
+        )
+
+        normalized_row[
+            "_original_stop_id"
+        ] = original_stop_id
+
+        # IMPORTANT:
+        # Keep the public stop_id normalized so it is identical
+        # to the ID stored in directions.stops.
+        normalized_row[
+            "stop_id"
+        ] = normalized_id
+
         result[
             normalized_id
-        ] = row
+        ] = normalized_row
 
     return result
 
@@ -1260,13 +1414,18 @@ def choose_representative_trip(
         values = []
 
         for item in stop_times_by_trip.get(
-            trip["trip_id"],
+            trip[
+                "trip_id"
+            ],
             []
         ):
 
-            value = parse_time_to_minutes(
+            value = parse_time(
                 item.get(
                     "departure_time"
+                )
+                or item.get(
+                    "arrival_time"
                 )
             )
 
@@ -1276,11 +1435,12 @@ def choose_representative_trip(
                 )
 
         if not values:
-            return 10**9
+            return 10**12
 
         return min(
             abs(
-                value - 12 * 60
+                value
+                - 12 * 3600
             )
             for value in values
         )
@@ -1292,7 +1452,7 @@ def choose_representative_trip(
 
 
 # ============================================================
-# Output directions
+# Direction output
 # ============================================================
 
 def build_output_directions(
@@ -1301,7 +1461,7 @@ def build_output_directions(
     logical_trips,
     trips_by_id,
     stop_times_by_trip,
-    stops_by_code
+    stops_by_id
 ):
 
     directions_by_code = {
@@ -1312,7 +1472,7 @@ def build_output_directions(
         for direction in directions
     }
 
-    output = {}
+    directions_result = {}
 
     for route in routes_data:
 
@@ -1325,16 +1485,21 @@ def build_output_directions(
         route_trips = [
             trip
             for trip in logical_trips
-            if trip[
-                "cgm_id"
-            ] == route_id
+            if (
+                trip[
+                    "cgm_id"
+                ]
+                == route_id
+                and not trip.get(
+                    "is_deleted",
+                    False
+                )
+            )
         ]
 
         if not route_trips:
             continue
 
-        # Preserve the exact direction order resulting from the
-        # reference generator.
         direction_codes = []
 
         for trip in route_trips:
@@ -1374,10 +1539,11 @@ def build_output_directions(
             continue
 
         # --------------------------------------------------------
-        # IMPORTANT:
+        # FIX 1:
+        # Determine which real direction is A and which is B.
         #
-        # We use route_long_name for the visible destination.
-        # This reproduces the existing site's correct A/B behavior.
+        # The GTFS direction order itself is NOT guaranteed to be
+        # the site's A/B order.
         # --------------------------------------------------------
 
         destination_labels = (
@@ -1386,46 +1552,163 @@ def build_output_directions(
             )
         )
 
-        route_result = {
+        def get_last_stop_name(direction):
+
+            stops = direction.get(
+                "stops",
+                []
+            )
+
+            if not stops:
+                return ""
+
+            last_stop_id = stops[-1]
+
+            stop = stops_by_id.get(
+                last_stop_id
+            )
+
+            if stop is None:
+                return ""
+
+            return normalize(
+                stop.get(
+                    "stop_name"
+                )
+            )
+
+        if len(surviving_directions) >= 2:
+
+            first_direction = (
+                surviving_directions[0]
+            )
+
+            second_direction = (
+                surviving_directions[1]
+            )
+
+            first_last = (
+                get_last_stop_name(
+                    first_direction
+                )
+            )
+
+            second_last = (
+                get_last_stop_name(
+                    second_direction
+                )
+            )
+
+            a_label = destination_labels.get(
+                "A",
+                ""
+            )
+
+            b_label = destination_labels.get(
+                "B",
+                ""
+            )
+
+            first_is_a = (
+                destination_matches_stop(
+                    a_label,
+                    first_last
+                )
+            )
+
+            second_is_a = (
+                destination_matches_stop(
+                    a_label,
+                    second_last
+                )
+            )
+
+            first_is_b = (
+                destination_matches_stop(
+                    b_label,
+                    first_last
+                )
+            )
+
+            second_is_b = (
+                destination_matches_stop(
+                    b_label,
+                    second_last
+                )
+            )
+
+            if (
+                second_is_a
+                and first_is_b
+            ):
+
+                surviving_directions = [
+                    second_direction,
+                    first_direction
+                ]
+
+            elif (
+                not first_is_a
+                and second_is_a
+            ):
+
+                surviving_directions = [
+                    second_direction,
+                    first_direction
+                ]
+
+        surviving_directions = (
+            surviving_directions[:2]
+        )
+
+        output = {
             "A": None,
-            "B": None,
+            "B": None
         }
 
-        # The current website supports two direction selectors.
         for index, direction in enumerate(
-            surviving_directions[:2]
+            surviving_directions
         ):
 
             direction_code = direction[
                 "code"
             ]
 
-            stop_records = []
+            route_stops = []
 
             for stop_id in direction[
                 "stops"
             ]:
 
-                stop = stops_by_code.get(
+                stop = stops_by_id.get(
                     stop_id
                 )
 
-                stop_records.append({
+                if stop is None:
+                    continue
+
+                # IMPORTANT:
+                # direction.stop_id and data.stops.stop_id
+                # must be identical for map.js.
+                route_stops.append({
 
                     "stop_id":
-                        stop_id,
+                        normalize(
+                            stop.get(
+                                "stop_id"
+                            )
+                        ),
 
                     "name":
-                        (
-                            normalize(
-                                stop.get(
-                                    "stop_name"
-                                )
+                        normalize(
+                            stop.get(
+                                "stop_name"
                             )
-                            if stop
-                            else stop_id
-                        ),
+                        )
                 })
+
+            if not route_stops:
+                continue
 
             direction_trips = [
                 trip
@@ -1435,11 +1718,11 @@ def build_output_directions(
                 ] == direction_code
             ]
 
-            representative_trip = None
+            representative_original = None
 
             if direction_trips:
 
-                representative_trip = (
+                representative_original = (
                     choose_representative_trip(
                         direction_trips[0],
                         trips_by_id,
@@ -1447,40 +1730,47 @@ def build_output_directions(
                     )
                 )
 
+            destination_labels = (
+                get_route_destination_labels(
+                    route
+                )
+            )
+
             key = (
                 "A"
                 if index == 0
                 else "B"
             )
 
+            # ----------------------------------------------------
+            # The visible name follows the same route_long_name
+            # convention as the existing site.
+            # ----------------------------------------------------
+
             headsign = destination_labels.get(
                 key,
                 ""
             )
 
-            # Fallback hierarchy:
-            # 1. route_long_name
-            # 2. representative trip_headsign
-            # 3. final stop name
-            if not headsign and representative_trip:
+            if not headsign:
 
-                headsign = normalize(
-                    representative_trip.get(
-                        "trip_headsign"
+                if representative_original:
+
+                    headsign = normalize(
+                        representative_original.get(
+                            "trip_headsign"
+                        )
                     )
-                )
 
-            if not headsign and stop_records:
+            if not headsign and route_stops:
 
-                headsign = stop_records[
+                headsign = route_stops[
                     -1
                 ][
                     "name"
                 ]
 
-            route_result[
-                key
-            ] = {
+            direction_record = {
 
                 "headsign":
                     headsign,
@@ -1490,37 +1780,37 @@ def build_output_directions(
 
                 "trip_id":
                     (
-                        representative_trip[
+                        representative_original[
                             "trip_id"
                         ]
-                        if representative_trip
+                        if representative_original
                         else ""
                     ),
 
                 "direction_id":
                     (
-                        representative_trip[
+                        representative_original[
                             "direction_id"
                         ]
-                        if representative_trip
+                        if representative_original
                         else ""
                     ),
 
                 "shape_id":
                     (
-                        representative_trip[
+                        representative_original[
                             "shape_id"
                         ]
-                        if representative_trip
+                        if representative_original
                         else ""
                     ),
 
                 "service_id":
                     (
-                        representative_trip[
+                        representative_original[
                             "service_id"
                         ]
-                        if representative_trip
+                        if representative_original
                         else ""
                     ),
 
@@ -1528,25 +1818,37 @@ def build_output_directions(
                     len(direction_trips),
 
                 "stop_count":
-                    len(stop_records),
+                    len(route_stops),
 
                 "stops":
-                    stop_records,
+                    route_stops,
 
-                "_direction_code":
-                    direction_code,
+                "pattern":
+                    [
+                        stop[
+                            "stop_id"
+                        ]
+                        for stop in route_stops
+                    ],
+
+                "_reference_direction_code":
+                    direction_code
             }
 
+            output[
+                key
+            ] = direction_record
+
         if (
-            route_result["A"]
-            or route_result["B"]
+            output["A"]
+            or output["B"]
         ):
 
-            output[
+            directions_result[
                 route_id
-            ] = route_result
+            ] = output
 
-    return output
+    return directions_result
 
 
 # ============================================================
@@ -1580,7 +1882,7 @@ def build_schedules(
                 continue
 
             direction_code = direction[
-                "_direction_code"
+                "_reference_direction_code"
             ]
 
             weekday_courses = []
@@ -1630,9 +1932,10 @@ def build_schedules(
 
                 for item in trip_stop_times:
 
-                    values = item[
-                        "times"
-                    ]
+                    values = item.get(
+                        "times",
+                        []
+                    )
 
                     if not values:
                         continue
@@ -1649,11 +1952,6 @@ def build_schedules(
                         if value is not None
                     )
 
-                    start_time = (
-                        f"{first_value // 60:02d}:"
-                        f"{first_value % 60:02d}:00"
-                    )
-
                     target.append({
 
                         "trip_id":
@@ -1662,7 +1960,10 @@ def build_schedules(
                             ],
 
                         "start_time":
-                            start_time,
+                            (
+                                f"{first_value // 60:02d}:"
+                                f"{first_value % 60:02d}:00"
+                            ),
 
                         "times":
                             [
@@ -1679,37 +1980,37 @@ def build_schedules(
                             item.get(
                                 "car",
                                 ""
-                            ),
+                            )
                     })
 
             weekday_courses.sort(
                 key=lambda course:
-                    parse_time_to_minutes(
+                    parse_time(
                         course[
                             "start_time"
                         ]
                     )
-                    if parse_time_to_minutes(
+                    if parse_time(
                         course[
                             "start_time"
                         ]
                     ) is not None
-                    else 10**9
+                    else 10**12
             )
 
             weekend_courses.sort(
                 key=lambda course:
-                    parse_time_to_minutes(
+                    parse_time(
                         course[
                             "start_time"
                         ]
                     )
-                    if parse_time_to_minutes(
+                    if parse_time(
                         course[
                             "start_time"
                         ]
                     ) is not None
-                    else 10**9
+                    else 10**12
             )
 
             route_schedule[
@@ -1720,7 +2021,7 @@ def build_schedules(
                     weekday_courses,
 
                 "weekend":
-                    weekend_courses,
+                    weekend_courses
             }
 
         if route_schedule:
@@ -1730,135 +2031,6 @@ def build_schedules(
             ] = route_schedule
 
     return schedules
-
-
-# ============================================================
-# Shapes
-# ============================================================
-
-def load_shapes(
-    shape_ids
-):
-
-    path = (
-        GTFS_DIR / "shapes.txt"
-    )
-
-    if not path.exists():
-
-        print(
-            "WARNING: shapes.txt not present."
-        )
-
-        return {}
-
-    shape_ids = {
-        normalize(
-            shape_id
-        )
-        for shape_id in shape_ids
-        if normalize(shape_id)
-    }
-
-    if not shape_ids:
-        return {}
-
-    points = defaultdict(
-        list
-    )
-
-    with path.open(
-        "r",
-        encoding="utf-8-sig",
-        newline=""
-    ) as file:
-
-        reader = csv.DictReader(
-            file
-        )
-
-        for row in reader:
-
-            shape_id = normalize(
-                row.get(
-                    "shape_id"
-                )
-            )
-
-            if shape_id not in shape_ids:
-                continue
-
-            try:
-
-                lat = float(
-                    row.get(
-                        "shape_pt_lat"
-                    )
-                )
-
-                lon = float(
-                    row.get(
-                        "shape_pt_lon"
-                    )
-                )
-
-                sequence = int(
-                    row.get(
-                        "shape_pt_sequence",
-                        0
-                    )
-                )
-
-            except (
-                TypeError,
-                ValueError
-            ):
-
-                continue
-
-            points[
-                shape_id
-            ].append({
-
-                "lat":
-                    lat,
-
-                "lon":
-                    lon,
-
-                "sequence":
-                    sequence,
-            })
-
-    result = {}
-
-    for shape_id, items in points.items():
-
-        items.sort(
-            key=lambda item:
-                item[
-                    "sequence"
-                ]
-        )
-
-        result[
-            shape_id
-        ] = [
-            {
-                "lat":
-                    item[
-                        "lat"
-                    ],
-
-                "lon":
-                    item[
-                        "lon"
-                    ],
-            }
-            for item in items
-        ]
-
-    return result
 
 
 # ============================================================
@@ -1879,24 +2051,67 @@ def main():
         # 1. Read GTFS
         # --------------------------------------------------------
 
+        print(
+            "Reading routes.txt..."
+        )
+
         routes_data = read_csv(
             "routes.txt"
+        )
+
+        print(
+            "Reading stops.txt..."
         )
 
         stops_data = read_csv(
             "stops.txt"
         )
 
+        print(
+            "Reading trips.txt..."
+        )
+
         trips_data = read_csv(
             "trips.txt"
         )
 
-        stop_times_data = read_csv(
-            "stop_times.txt"
+        calendar_data = []
+
+        calendar_path = (
+            GTFS_DIR / "calendar.txt"
+        )
+
+        if calendar_path.exists():
+
+            print(
+                "Reading calendar.txt..."
+            )
+
+            calendar_data = read_csv(
+                "calendar.txt"
+            )
+
+        else:
+
+            print(
+                "calendar.txt not present; "
+                "using calendar_dates.txt only."
+            )
+
+        print(
+            "Reading calendar_dates.txt..."
         )
 
         calendar_dates_data = read_csv(
             "calendar_dates.txt"
+        )
+
+        print(
+            "Reading stop_times.txt..."
+        )
+
+        stop_times_data = read_csv(
+            "stop_times.txt"
         )
 
         print(
@@ -1925,18 +2140,56 @@ def main():
             f"Service reference date: {today}"
         )
 
-        active_service_ids = (
-            get_active_service_ids(
+        service_weights = (
+            get_active_service_weights(
+                calendar_data,
                 calendar_dates_data,
-                today
+                today,
+                horizon_days=16
             )
+        )
+
+        use_service_filter = bool(
+            service_weights
+        )
+
+        if use_service_filter:
+
+            print(
+                "Using active services only."
+            )
+
+        else:
+
+            print(
+                "WARNING: No active services "
+                "could be determined. "
+                "Using all trips."
+            )
+
+        weekday_services, weekend_services = (
+            get_service_day_sets(
+                calendar_dates_data,
+                today,
+                horizon_days=16
+            )
+        )
+
+        print(
+            "Weekday service IDs: "
+            f"{len(weekday_services)}"
+        )
+
+        print(
+            "Weekend service IDs: "
+            f"{len(weekend_services)}"
         )
 
         # --------------------------------------------------------
         # 3. Stops
         # --------------------------------------------------------
 
-        stops_by_code = build_stop_index(
+        stops_by_id = build_stop_index(
             stops_data
         )
 
@@ -1944,10 +2197,71 @@ def main():
         # 4. Trips
         # --------------------------------------------------------
 
-        trips_by_id = load_trips(
-            trips_data,
-            active_service_ids
-        )
+        trips_by_id = {}
+
+        for row in trips_data:
+
+            trip_id = normalize(
+                row.get(
+                    "trip_id"
+                )
+            )
+
+            if not trip_id:
+                continue
+
+            service_id = normalize(
+                row.get(
+                    "service_id"
+                )
+            )
+
+            if (
+                use_service_filter
+                and service_id
+                not in service_weights
+            ):
+
+                continue
+
+            trips_by_id[
+                trip_id
+            ] = {
+
+                "trip_id":
+                    trip_id,
+
+                "route_id":
+                    normalize(
+                        row.get(
+                            "route_id"
+                        )
+                    ),
+
+                "service_id":
+                    service_id,
+
+                "trip_headsign":
+                    normalize(
+                        row.get(
+                            "trip_headsign"
+                        )
+                    ),
+
+                "direction_id":
+                    normalize(
+                        row.get(
+                            "direction_id"
+                        )
+                    ),
+
+                "shape_id":
+                    normalize(
+                        row.get(
+                            "shape_id"
+                        )
+                    )
+            }
 
         print(
             "Active trips: "
@@ -1958,27 +2272,112 @@ def main():
         # 5. Stop times
         # --------------------------------------------------------
 
-        stop_times_by_trip = load_stop_times(
-            stop_times_data,
-            trips_by_id
+        stop_times_by_trip = defaultdict(
+            list
         )
 
+        for row in stop_times_data:
+
+            trip_id = normalize(
+                row.get(
+                    "trip_id"
+                )
+            )
+
+            if trip_id not in trips_by_id:
+                continue
+
+            original_stop_id = normalize(
+                row.get(
+                    "stop_id"
+                )
+            )
+
+            stop_id = normalize_gtfs_stop_id(
+                original_stop_id
+            )
+
+            if not stop_id:
+                continue
+
+            try:
+
+                sequence = int(
+                    row.get(
+                        "stop_sequence",
+                        0
+                    )
+                )
+
+            except (
+                TypeError,
+                ValueError
+            ):
+
+                sequence = 0
+
+            stop_times_by_trip[
+                trip_id
+            ].append({
+
+                "stop_id":
+                    stop_id,
+
+                "sequence":
+                    sequence,
+
+                "arrival_time":
+                    normalize(
+                        row.get(
+                            "arrival_time"
+                        )
+                    ),
+
+                "departure_time":
+                    normalize(
+                        row.get(
+                            "departure_time"
+                        )
+                    )
+            })
+
+        for trip_id in stop_times_by_trip:
+
+            stop_times_by_trip[
+                trip_id
+            ].sort(
+                key=lambda item:
+                    item[
+                        "sequence"
+                    ]
+            )
+
         print(
-            "Trips with stop times: "
+            "Trips with active stop times: "
             f"{len(stop_times_by_trip)}"
         )
 
         # --------------------------------------------------------
-        # 6. Exact 04-schedules.js direction construction
+        # 6. Direction construction
         # --------------------------------------------------------
 
+        print(
+            ""
+        )
+
+        print(
+            "=== Building directions using "
+            "Dimitar5555 reference algorithm ==="
+        )
+
         (
-            logical_trips,
+            reference_trips,
             directions,
-            logical_stop_times
-        ) = build_reference_model(
+            reference_stop_times
+        ) = build_reference_direction_data(
             trips_by_id,
-            stop_times_by_trip
+            stop_times_by_trip,
+            service_weights
         )
 
         print(
@@ -1988,18 +2387,18 @@ def main():
 
         print(
             "Initial logical trips: "
-            f"{len(logical_trips)}"
+            f"{len(reference_trips)}"
         )
 
         # --------------------------------------------------------
-        # 7. Partial directions
+        # 7. Partial direction merge
         # --------------------------------------------------------
 
         merge_partial_directions(
             routes_data,
-            logical_trips,
+            reference_trips,
             directions,
-            logical_stop_times
+            reference_stop_times
         )
 
         print(
@@ -2008,46 +2407,43 @@ def main():
         )
 
         # --------------------------------------------------------
-        # 8. Merge logical trips
+        # 8. Logical trip merge
         # --------------------------------------------------------
 
         merge_logical_trips(
             routes_data,
-            logical_trips,
-            logical_stop_times
+            reference_trips,
+            reference_stop_times
         )
 
         print(
             "Logical trips after merge: "
-            f"{len(logical_trips)}"
+            f"{len(reference_trips)}"
         )
 
         # --------------------------------------------------------
-        # 9. Build output directions.
-        #
-        # IMPORTANT:
-        # Visible A/B text comes from route_long_name.
+        # 9. Directions output
         # --------------------------------------------------------
 
         directions_result = (
             build_output_directions(
                 routes_data,
                 directions,
-                logical_trips,
+                reference_trips,
                 trips_by_id,
                 stop_times_by_trip,
-                stops_by_code
+                stops_by_id
             )
         )
 
         # --------------------------------------------------------
-        # 10. Build schedules
+        # 10. Schedules
         # --------------------------------------------------------
 
         schedules_result = build_schedules(
             directions_result,
-            logical_trips,
-            logical_stop_times
+            reference_trips,
+            reference_stop_times
         )
 
         # --------------------------------------------------------
@@ -2079,11 +2475,12 @@ def main():
                 )
 
                 if shape_id:
+
                     selected_shape_ids.add(
                         shape_id
                     )
 
-        shapes_result = load_shapes(
+        shapes_result = load_selected_shapes(
             selected_shape_ids
         )
 
@@ -2107,12 +2504,56 @@ def main():
                 if direction:
 
                     direction.pop(
-                        "_direction_code",
+                        "_reference_direction_code",
                         None
                     )
 
         # --------------------------------------------------------
-        # 13. Final JSON
+        # 13. IMPORTANT:
+        #
+        # Use NORMALIZED stop IDs in data.stops too.
+        #
+        # This makes:
+        #
+        # directions[*].stops[*].stop_id
+        #
+        # and:
+        #
+        # stops[*].stop_id
+        #
+        # identical, so map.js can find the stop coordinates.
+        # --------------------------------------------------------
+
+        output_stops = []
+
+        for stop in stops_data:
+
+            original_stop_id = normalize(
+                stop.get(
+                    "stop_id"
+                )
+            )
+
+            normalized_stop_id = (
+                normalize_gtfs_stop_id(
+                    original_stop_id
+                )
+            )
+
+            normalized_stop = dict(
+                stop
+            )
+
+            normalized_stop[
+                "stop_id"
+            ] = normalized_stop_id
+
+            output_stops.append(
+                normalized_stop
+            )
+
+        # --------------------------------------------------------
+        # 14. Final output
         # --------------------------------------------------------
 
         result = {
@@ -2130,10 +2571,7 @@ def main():
                 ],
 
             "stops":
-                [
-                    dict(row)
-                    for row in stops_data
-                ],
+                output_stops,
 
             "trips":
                 [
@@ -2148,7 +2586,7 @@ def main():
                 shapes_result,
 
             "schedules":
-                schedules_result,
+                schedules_result
         }
 
         DATA_DIR.mkdir(
@@ -2172,7 +2610,7 @@ def main():
             )
 
         # --------------------------------------------------------
-        # 14. Diagnostics
+        # Diagnostics
         # --------------------------------------------------------
 
         print(
@@ -2212,9 +2650,11 @@ def main():
                 "B"
             )
 
-            schedule_info = schedules_result.get(
-                route_id,
-                {}
+            schedule_info = (
+                schedules_result.get(
+                    route_id,
+                    {}
+                )
             )
 
             weekday_a = len(
@@ -2284,38 +2724,6 @@ def main():
         print(
             "Temporary GTFS files removed."
         )
-
-
-# ============================================================
-# Stop index
-# ============================================================
-
-def build_stop_index(
-    stops_data
-):
-
-    result = {}
-
-    for row in stops_data:
-
-        raw_id = normalize(
-            row.get(
-                "stop_id"
-            )
-        )
-
-        normalized_id = normalize_stop_id(
-            raw_id
-        )
-
-        if not normalized_id:
-            continue
-
-        result[
-            normalized_id
-        ] = row
-
-    return result
 
 
 if __name__ == "__main__":
