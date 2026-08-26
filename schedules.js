@@ -822,12 +822,12 @@ function renderTimetable(courses) {
       button.addEventListener(
         "click",
         () => {
-          const course =
-            courses.find(
-              item =>
-                item.trip_id ===
-                button.dataset.tripId
-            );
+const course =
+  courses.find(
+    item =>
+      String(item.trip_id) ===
+      String(button.dataset.tripId)
+  );
 
           if (course) {
             showCourse(course);
