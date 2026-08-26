@@ -55,14 +55,8 @@ function formatTime(value) {
     return "—";
   }
 
-  /*
-   * GTFS позволява часове над 23:00:
-   * 24:xx -> 00:xx
-   * 25:xx -> 01:xx
-   * 26:xx -> 02:xx
-   * 27:xx -> 03:xx
-   */
-  const hour = Number(match[1]) % 24;
+  const hour =
+    Number(match[1]) % 24;
 
   return `${String(hour).padStart(2, "0")}:${match[2]}`;
 }
@@ -99,35 +93,40 @@ function lineIdentityHtml(line) {
 }
 
 function renderLineDropdown() {
-  const menu = document.getElementById(
-    "lineDropdownMenu"
-  );
+  const menu =
+    document.getElementById(
+      "lineDropdownMenu"
+    );
 
   menu.innerHTML = "";
 
   for (const type of typeOrder) {
-    const lines = scheduleLines
-      .filter(
-        line => line.type === type
-      )
-      .sort(
-        (a, b) =>
-          String(a.number).localeCompare(
-            String(b.number),
-            "bg",
-            {
-              numeric: true,
-              sensitivity: "base"
-            }
-          )
-      );
+    const lines =
+      scheduleLines
+        .filter(
+          line =>
+            line.type === type
+        )
+        .sort(
+          (a, b) =>
+            String(a.number).localeCompare(
+              String(b.number),
+              "bg",
+              {
+                numeric: true,
+                sensitivity: "base"
+              }
+            )
+        );
 
     if (!lines.length) {
       continue;
     }
 
     const group =
-      document.createElement("div");
+      document.createElement(
+        "div"
+      );
 
     group.className =
       "schedule-dropdown-group";
@@ -139,7 +138,9 @@ function renderLineDropdown() {
 
     for (const line of lines) {
       const item =
-        document.createElement("button");
+        document.createElement(
+          "button"
+        );
 
       item.type = "button";
 
@@ -152,7 +153,8 @@ function renderLineDropdown() {
 
       item.addEventListener(
         "click",
-        () => selectScheduleLine(line)
+        () =>
+          selectScheduleLine(line)
       );
 
       group.appendChild(item);
@@ -190,12 +192,14 @@ function closeLineDropdown() {
     "lineDropdownMenu"
   ).hidden = true;
 
-  document.getElementById(
-    "lineDropdownButton"
-  ).setAttribute(
-    "aria-expanded",
-    "false"
-  );
+  document
+    .getElementById(
+      "lineDropdownButton"
+    )
+    .setAttribute(
+      "aria-expanded",
+      "false"
+    );
 }
 
 function selectScheduleLine(line) {
@@ -446,11 +450,6 @@ function getCourses() {
       selectedScheduleLine.id
     ];
 
-  /*
-   * Новият модел:
-   *
-   * D1 / D2 / D3 / ...
-   */
   if (
     routeSchedule &&
     routeSchedule[
@@ -466,9 +465,6 @@ function getCourses() {
     );
   }
 
-  /*
-   * Стар fallback.
-   */
   const legacyKey =
     selectedDirectionKey === "B"
       ? "B"
@@ -496,6 +492,99 @@ function getStopTime(
   );
 }
 
+
+/*
+ * Проверява дали даден курс е частичен.
+ *
+ * Частичният курс има поне едно липсващо
+ * време след последното реално време.
+ *
+ * Пример:
+ *
+ * [08:10, 08:12, 08:15, 08:18, null, null]
+ *
+ * = частичен курс
+ */
+function isPartialCourse(course) {
+  const times =
+    Array.isArray(course?.times)
+      ? course.times
+      : [];
+
+  if (!times.length) {
+    return false;
+  }
+
+  let lastRealIndex = -1;
+
+  for (
+    let index = 0;
+    index < times.length;
+    index++
+  ) {
+    if (
+      times[index] !== null &&
+      times[index] !== undefined &&
+      String(
+        times[index]
+      ).trim() !== ""
+    ) {
+      lastRealIndex = index;
+    }
+  }
+
+  if (lastRealIndex < 0) {
+    return false;
+  }
+
+  for (
+    let index =
+      lastRealIndex + 1;
+    index < times.length;
+    index++
+  ) {
+    if (
+      times[index] === null ||
+      times[index] === undefined ||
+      String(
+        times[index]
+      ).trim() === ""
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+
+/*
+ * Връща CSS inline стил за минута.
+ *
+ * Частичните курсове:
+ *   фон #dc3545
+ *   бял текст
+ *
+ * Нормалните курсове:
+ *   без промяна.
+ */
+function getCourseMinuteStyle(
+  course
+) {
+  if (
+    !isPartialCourse(course)
+  ) {
+    return "";
+  }
+
+  return `
+    background:#dc3545;
+    color:#ffffff;
+    border-color:#dc3545;
+  `;
+}
+
+
 function renderSummary(courses) {
   const summary =
     document.getElementById(
@@ -514,30 +603,31 @@ function renderSummary(courses) {
     getSelectedDirection();
 
   /*
-   * Търсим всички реални времена за
-   * избраната спирка.
+   * Търсим всички реални времена
+   * за избраната спирка.
    *
-   * Това е важно при partial directions,
-   * където курсът може да има null
-   * за конкретна спирка.
+   * null часовете след края на
+   * частичен курс не участват.
    */
-  const validTimes = courses
-    .map(
-      course =>
-        getStopTime(
-          course,
-          selectedStopIndex
-        )
-    )
-    .filter(
-      time =>
-        parseTime(time) !== null
-    )
-    .sort(
-      (a, b) =>
-        parseTime(a) -
-        parseTime(b)
-    );
+  const validTimes =
+    courses
+      .map(
+        course =>
+          getStopTime(
+            course,
+            selectedStopIndex
+          )
+      )
+      .filter(
+        time =>
+          parseTime(time) !==
+          null
+      )
+      .sort(
+        (a, b) =>
+          parseTime(a) -
+          parseTime(b)
+      );
 
   const first =
     validTimes.length
@@ -572,7 +662,7 @@ function renderSummary(courses) {
 
         <img
           class="direction-arrow"
-          src="https://raw.githubusercontent.com/nikolay5555/gtsofia/89507f07b1a7e7c1e6c1802db7ad502bd18fa63f/Icons/destinationarrow.svg"
+          src="https://raw.githubusercontent.com/nikolay5555/gtsofia/546fec48e624f1eadb3b6676d73d27e92d726e7c/Icons/destinationarrow.svg"
           alt=""
         />
 
@@ -610,6 +700,7 @@ function renderSummary(courses) {
 
   summary.hidden = false;
 }
+
 
 function renderTimetable(courses) {
   const section =
@@ -650,16 +741,6 @@ function renderTimetable(courses) {
       continue;
     }
 
-    /*
-     * Нормализиране на GTFS часовете:
-     *
-     * 23:xx -> 23:xx
-     * 24:xx -> 00:xx
-     * 25:xx -> 01:xx
-     * 26:xx -> 02:xx
-     * 27:xx -> 03:xx
-     */
-
     const hour =
       Math.floor(
         seconds / 3600
@@ -685,14 +766,10 @@ function renderTimetable(courses) {
       });
   }
 
-  /*
-   * Определяме реалния първи час,
-   * в който има курс.
-   */
-
-  const availableHours = [
-    ...byHour.keys()
-  ];
+  const availableHours =
+    [
+      ...byHour.keys()
+    ];
 
   const firstHour =
     availableHours.length
@@ -718,10 +795,6 @@ function renderTimetable(courses) {
         )
     );
 
-  /*
-   * Първият ред показва само часа.
-   */
-
   const header =
     hours
       .map(
@@ -729,10 +802,6 @@ function renderTimetable(courses) {
           `<th>${hour}</th>`
       )
       .join("");
-
-  /*
-   * Всеки час е отделна колонка.
-   */
 
   const cells =
     hours
@@ -759,6 +828,11 @@ function renderTimetable(courses) {
                       "0"
                     );
 
+                  const partialStyle =
+                    getCourseMinuteStyle(
+                      entry.course
+                    );
+
                   return `
                     <button
                       class="schedule-minute"
@@ -766,6 +840,7 @@ function renderTimetable(courses) {
                       data-trip-id="${escapeHtml(
                         entry.course.trip_id
                       )}"
+                      style="${partialStyle}"
                     >
                       ${label}
                     </button>`;
@@ -818,6 +893,7 @@ function renderTimetable(courses) {
     });
 }
 
+
 function showCourse(course) {
   selectedCourse =
     course;
@@ -838,14 +914,57 @@ function showCourse(course) {
   const stops =
     direction?.stops || [];
 
+  /*
+   * Намираме последната реална спирка
+   * на конкретния курс.
+   *
+   * Всички спирки след нея остават
+   * видими, но вместо час получават
+   * "—".
+   */
+  let lastRealIndex = -1;
+
+  for (
+    let index = 0;
+    index < stops.length;
+    index++
+  ) {
+    const time =
+      course.times?.[index];
+
+    if (
+      time !== null &&
+      time !== undefined &&
+      String(time).trim() !== ""
+    ) {
+      lastRealIndex = index;
+    }
+  }
+
   container.innerHTML =
     stops
       .map(
         (stop, index) => {
-          const time =
+          const rawTime =
             course.times?.[
               index
-            ] || "";
+            ];
+
+          const hasRealTime =
+            rawTime !== null &&
+            rawTime !== undefined &&
+            String(rawTime).trim() !== "";
+
+          /*
+           * Всички спирки след последната
+           * реална спирка получават "—".
+           */
+          const displayTime =
+            hasRealTime
+              ? formatTime(
+                  rawTime
+                )
+              : "—";
 
           const selected =
             index ===
@@ -868,9 +987,7 @@ function showCourse(course) {
               </div>
 
               <div class="course-stop-time">
-                ${formatTime(
-                  time
-                )}
+                ${displayTime}
               </div>
             </div>`;
         }
@@ -884,6 +1001,7 @@ function showCourse(course) {
     block: "start"
   });
 }
+
 
 function renderSchedule() {
   const empty =
@@ -929,6 +1047,7 @@ function renderSchedule() {
   ).hidden = true;
 }
 
+
 async function initializeSchedules() {
   try {
     const data =
@@ -955,6 +1074,7 @@ async function initializeSchedules() {
       "Разписанията не могат да бъдат заредени в момента.";
   }
 }
+
 
 document.addEventListener(
   "DOMContentLoaded",
