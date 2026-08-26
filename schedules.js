@@ -1,6 +1,6 @@
 let scheduleLines = [];
 let selectedScheduleLine = null;
-let selectedDirectionKey = "A";
+let selectedDirectionKey = null;
 let selectedStopIndex = 0;
 let selectedDayType = "weekday";
 let selectedCourse = null;
@@ -62,6 +62,7 @@ function formatTime(value) {
    * 26:xx -> 02:xx
    * 27:xx -> 03:xx
    */
+
   const hour = Number(match[1]) % 24;
 
   return `${String(hour).padStart(2, "0")}:${match[2]}`;
@@ -107,25 +108,27 @@ function renderLineDropdown() {
 
   for (const type of typeOrder) {
     const lines = scheduleLines
-      .filter(line => line.type === type)
-      .sort((a, b) =>
-        String(a.number).localeCompare(
-          String(b.number),
-          "bg",
-          {
-            numeric: true,
-            sensitivity: "base"
-          }
-        )
+      .filter(
+        line => line.type === type
+      )
+      .sort(
+        (a, b) =>
+          String(a.number).localeCompare(
+            String(b.number),
+            "bg",
+            {
+              numeric: true,
+              sensitivity: "base"
+            }
+          )
       );
 
     if (!lines.length) {
       continue;
     }
 
-    const group = document.createElement(
-      "div"
-    );
+    const group =
+      document.createElement("div");
 
     group.className =
       "schedule-dropdown-group";
@@ -140,6 +143,7 @@ function renderLineDropdown() {
         document.createElement("button");
 
       item.type = "button";
+
       item.className =
         "schedule-line-option";
 
@@ -160,17 +164,21 @@ function renderLineDropdown() {
 }
 
 function openLineDropdown() {
-  const button = document.getElementById(
-    "lineDropdownButton"
-  );
+  const button =
+    document.getElementById(
+      "lineDropdownButton"
+    );
 
-  const menu = document.getElementById(
-    "lineDropdownMenu"
-  );
+  const menu =
+    document.getElementById(
+      "lineDropdownMenu"
+    );
 
-  const isOpen = !menu.hidden;
+  const isOpen =
+    !menu.hidden;
 
-  menu.hidden = isOpen;
+  menu.hidden =
+    isOpen;
 
   button.setAttribute(
     "aria-expanded",
@@ -192,8 +200,21 @@ function closeLineDropdown() {
 }
 
 function selectScheduleLine(line) {
-  selectedScheduleLine = line;
-  selectedDirectionKey = "A";
+  selectedScheduleLine =
+    line;
+
+  /*
+   * Новата структура използва реални
+   * direction keys: D1, D2, D3...
+   *
+   * За съвместимост, ако някой стар line
+   * все още няма directions масив, се
+   * връщаме към A.
+   */
+  selectedDirectionKey =
+    line.directions?.[0]?.key
+      || "A";
+
   selectedStopIndex = 0;
   selectedCourse = null;
 
@@ -246,6 +267,38 @@ function getSelectedDirection() {
     return null;
   }
 
+  /*
+   * Новият модел:
+   *
+   * line.directions = [
+   *   { key: "D1", ... },
+   *   { key: "D2", ... },
+   *   ...
+   * ]
+   *
+   * Старият A/B модел остава
+   * като fallback.
+   */
+
+  const directions =
+    Array.isArray(
+      selectedScheduleLine.directions
+    )
+      ? selectedScheduleLine.directions
+      : [];
+
+  if (directions.length) {
+    return (
+      directions.find(
+        direction =>
+          direction.key ===
+          selectedDirectionKey
+      )
+      || directions[0]
+      || null
+    );
+  }
+
   return (
     selectedScheduleLine[
       selectedDirectionKey === "A"
@@ -261,13 +314,72 @@ function renderDirections() {
       "directionSelect"
     );
 
+  /*
+   * Нов модел: всички реални направления.
+   */
+  const directions =
+    Array.isArray(
+      selectedScheduleLine?.directions
+    )
+      ? selectedScheduleLine.directions
+      : [];
+
+  if (directions.length) {
+    /*
+     * Ако текущият key вече не съществува,
+     * избираме първото реално направление.
+     */
+    if (
+      !directions.some(
+        direction =>
+          direction.key ===
+          selectedDirectionKey
+      )
+    ) {
+      selectedDirectionKey =
+        directions[0].key;
+    }
+
+    select.innerHTML =
+      directions
+        .filter(
+          direction =>
+            direction &&
+            direction.headsign
+        )
+        .map(
+          direction => `
+            <option value="${escapeHtml(
+              direction.key
+            )}">
+              ${escapeHtml(
+                direction.headsign
+              )}
+            </option>`
+        )
+        .join("");
+
+    select.disabled =
+      !directions.length;
+
+    select.value =
+      selectedDirectionKey || "";
+
+    renderStops();
+
+    return;
+  }
+
+  /*
+   * Fallback за старите A/B данни.
+   */
   const directionA =
     selectedScheduleLine?.directionA;
 
   const directionB =
     selectedScheduleLine?.directionB;
 
-  const directions = [
+  const legacyDirections = [
     ["A", directionA],
     ["B", directionB]
   ].filter(
@@ -277,7 +389,7 @@ function renderDirections() {
   );
 
   select.innerHTML =
-    directions
+    legacyDirections
       .map(
         ([key, direction]) => `
           <option value="${key}">
@@ -289,7 +401,18 @@ function renderDirections() {
       .join("");
 
   select.disabled =
-    !directions.length;
+    !legacyDirections.length;
+
+  if (
+    !legacyDirections.some(
+      ([key]) =>
+        key === selectedDirectionKey
+    )
+  ) {
+    selectedDirectionKey =
+      legacyDirections[0]?.[0]
+      || "A";
+  }
 
   select.value =
     selectedDirectionKey;
@@ -324,17 +447,20 @@ function renderStops() {
   select.disabled =
     !stops.length;
 
-  selectedStopIndex = Math.min(
-    selectedStopIndex,
-    Math.max(
-      0,
-      stops.length - 1
-    )
-  );
+  selectedStopIndex =
+    Math.min(
+      selectedStopIndex,
+      Math.max(
+        0,
+        stops.length - 1
+      )
+    );
 
   if (stops.length) {
     select.value =
-      String(selectedStopIndex);
+      String(
+        selectedStopIndex
+      );
   }
 }
 
@@ -344,16 +470,43 @@ function getCourses() {
   }
 
   const schedules =
-    window.transportData?.schedules || {};
+    window.transportData?.schedules
+      || {};
 
   const routeSchedule =
     schedules[
       selectedScheduleLine.id
     ];
 
+  /*
+   * Новите данни използват D1/D2/D3...
+   */
+  if (
+    routeSchedule &&
+    routeSchedule[
+      selectedDirectionKey
+    ]
+  ) {
+    return (
+      routeSchedule[
+        selectedDirectionKey
+      ]?.[
+        selectedDayType
+      ] || []
+    );
+  }
+
+  /*
+   * Стар fallback.
+   */
+  const legacyKey =
+    selectedDirectionKey === "B"
+      ? "B"
+      : "A";
+
   const directionSchedule =
     routeSchedule?.[
-      selectedDirectionKey
+      legacyKey
     ];
 
   return (
@@ -431,7 +584,6 @@ function renderSummary(courses) {
           src="https://raw.githubusercontent.com/nikolay5555/gtsofia/546fec48e624f1eadb3b6676d73d27e92d726e7c/Icons/destinationarrow.svg"
           alt=""
         />
-
         <strong class="schedule-summary-destination">
           ${escapeHtml(
             direction.headsign
@@ -569,16 +721,18 @@ function renderTimetable(courses) {
     availableHours.sort(
       (a, b) =>
         (
-          (a -
+          (
+            a -
             firstHour +
-            24) %
-          24
+            24
+          ) % 24
         ) -
         (
-          (b -
+          (
+            b -
             firstHour +
-            24) %
-          24
+            24
+          ) % 24
         )
     );
 
@@ -780,9 +934,11 @@ function renderSchedule() {
     getCourses();
 
   renderStops();
+
   renderSummary(
     courses
   );
+
   renderTimetable(
     courses
   );
@@ -808,6 +964,7 @@ async function initializeSchedules() {
       scheduleLines;
 
     renderLineDropdown();
+
   } catch (error) {
     console.error(error);
 
