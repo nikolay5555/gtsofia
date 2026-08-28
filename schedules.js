@@ -672,6 +672,14 @@ function renderSummary(courses) {
           stop?.name || ""
         )}
       </span>
+
+      <button
+        id="virtualBoardButton"
+        class="schedule-virtual-board-button"
+        type="button"
+      >
+        Виртуално табло
+      </button>
     </div>
 
     <div class="schedule-summary-stats">
@@ -693,6 +701,7 @@ function renderSummary(courses) {
   `;
 
   summary.hidden = false;
+  wireVirtualBoardButton();
 }
 
 
@@ -1040,6 +1049,8 @@ function renderSchedule() {
       "courseSection"
     ).hidden = true;
 
+    window.stopVirtualBoard?.();
+
     return;
   }
 
@@ -1063,6 +1074,42 @@ function renderSchedule() {
   ).hidden = true;
 }
 
+
+window.getScheduleSelection = function() {
+  const direction = getSelectedDirection();
+  const stop = direction?.stops?.[selectedStopIndex];
+
+  if (!selectedScheduleLine || !direction || !stop) {
+    return null;
+  }
+
+  return {
+    lineId: selectedScheduleLine.id,
+    directionKey: selectedDirectionKey,
+    stopId: stop.stop_id,
+    stopName: stop.name,
+    dayType: selectedDayType
+  };
+};
+
+function wireVirtualBoardButton() {
+  const button = document.getElementById("virtualBoardButton");
+
+  if (!button) {
+    return;
+  }
+
+  button.addEventListener("click", () => {
+    if (window.startVirtualBoard) {
+      window.startVirtualBoard();
+    }
+
+    document.getElementById("virtualBoardSection")?.scrollIntoView({
+      behavior: "smooth",
+      block: "start"
+    });
+  });
+}
 
 async function initializeSchedules() {
   try {

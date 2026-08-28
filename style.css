@@ -1214,3 +1214,121 @@ SCHEDULES PAGE
   .schedule-summary-stats { grid-template-columns: 1fr; }
   .course-stop { grid-template-columns: 22px 1fr auto; }
 }
+
+.schedule-virtual-board-button {
+  margin-top: 10px;
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 14px;
+  background: #111827;
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.schedule-virtual-board-button:hover {
+  background: #1f2937;
+}
+
+.virtual-board-card {
+  padding: 22px;
+}
+
+.virtual-board-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.virtual-board-heading-row h2 {
+  margin: 3px 0 0;
+  font-size: 24px;
+}
+
+.virtual-board-clock {
+  font-size: 24px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.virtual-board-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.virtual-board-route {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.virtual-board-route-main {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 10px;
+}
+
+.virtual-board-destination-arrow {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  flex: 0 0 auto;
+}
+
+.virtual-board-destination {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.virtual-board-times {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(110px, auto));
+  gap: 8px;
+}
+
+.virtual-board-arrival {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.virtual-board-arrival strong {
+  font-size: 18px;
+}
+
+.virtual-board-arrival span {
+  color: #6b7280;
+  font-size: 13px;
+}
+
+@media (max-width: 760px) {
+  .virtual-board-heading-row {
+    align-items: flex-start;
+  }
+
+  .virtual-board-route {
+    grid-template-columns: 1fr;
+  }
+
+  .virtual-board-times {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .virtual-board-arrival {
+    align-items: flex-start;
+  }
+}
