@@ -1932,7 +1932,8 @@ def build_output_directions(
 def build_schedules(
     directions_result,
     logical_trips,
-    logical_stop_times
+    logical_stop_times,
+    trips_by_id
 ):
     """
     Schedules use the SAME D1/D2/... direction keys as directions.
@@ -2022,12 +2023,24 @@ def build_schedules(
                         0
                     ]
 
+                    original_trip_id = item.get("original_trip_id", "")
+                    original_trip = trips_by_id.get(original_trip_id, {})
+
                     destination.append({
 
                         "trip_id":
                             logical_trip[
                                 "id"
                             ],
+
+                        "original_trip_id":
+                            original_trip_id,
+
+                        "trip_headsign":
+                            original_trip.get(
+                                "trip_headsign",
+                                ""
+                            ),
 
                         "start_time":
                             (
@@ -2445,7 +2458,8 @@ def main():
             build_schedules(
                 directions_result,
                 logical_trips,
-                logical_stop_times
+                logical_stop_times,
+                trips_by_id
             )
         )
 
