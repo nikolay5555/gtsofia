@@ -1359,18 +1359,13 @@ SCHEDULES PAGE
   }
 
   .virtual-board-times {
-    grid-template-columns: repeat(3, max-content);
+    grid-template-columns: repeat(3, auto);
     justify-content: end;
-    gap: 8px 16px;
-    max-width: 100%;
-    overflow-x: auto;
-    padding-bottom: 2px;
-    scrollbar-width: thin;
+    column-gap: 18px;
   }
 
   .virtual-board-arrival {
     justify-content: flex-end;
     text-align: right;
-    min-width: max-content;
   }
 }
