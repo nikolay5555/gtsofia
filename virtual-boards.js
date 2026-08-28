@@ -65,6 +65,10 @@ function virtualBoardGetSofiaMinutes(date = new Date()) {
   return Number(values.hour) * 60 + Number(values.minute) + Number(values.second) / 60;
 }
 
+function virtualBoardGetMinutesForSofiaDate(date) {
+  return virtualBoardGetSofiaMinutes(date);
+}
+
 function virtualBoardScheduleDateForMinutes(minutes, nowDate) {
   const safe = Number(minutes);
   if (!Number.isFinite(safe)) return null;
@@ -107,6 +111,7 @@ function virtualBoardGetUpcoming(direction, schedule, stopIndex, nowDate) {
     if (lastRealIndex === stopIndex) continue;
 
     let liveDate = null;
+    let effectiveMinutes = scheduleMinutes;
     let isRealtime = false;
     const originalTripId = String(course?.original_trip_id || "");
     const realtimeStops = originalTripId ? virtualBoardRealtimeIndex.get(originalTripId) : null;
@@ -115,12 +120,13 @@ function virtualBoardGetUpcoming(direction, schedule, stopIndex, nowDate) {
     if (realtime?.time instanceof Date && Number.isFinite(realtime.time.getTime())) {
       liveDate = realtime.time;
       isRealtime = true;
+      effectiveMinutes = virtualBoardGetMinutesForSofiaDate(liveDate);
+    } else if (typeof realtime?.delay === "number" && Number.isFinite(realtime.delay)) {
+      // A delay-only GTFS-RT update is still live data.
+      effectiveMinutes += realtime.delay / 60;
+      liveDate = virtualBoardScheduleDateForMinutes(effectiveMinutes, nowDate);
+      isRealtime = true;
     } else {
-      // If GTFS-RT supplies only delay, apply it to the static schedule.
-      let effectiveMinutes = scheduleMinutes;
-      if (typeof realtime?.delay === "number" && Number.isFinite(realtime.delay)) {
-        effectiveMinutes += realtime.delay / 60;
-      }
       liveDate = virtualBoardScheduleDateForMinutes(effectiveMinutes, nowDate);
     }
 
@@ -130,11 +136,31 @@ function virtualBoardGetUpcoming(direction, schedule, stopIndex, nowDate) {
     if (deltaMs < -30000) continue;
 
     const remainingMinutes = Math.max(0, Math.ceil(deltaMs / 60000));
-    const destination = String(course?.trip_headsign || direction?.headsign || direction?.destination || "").trim();
+
+    const directionStops = Array.isArray(direction?.stops) ? direction.stops : [];
+    const lastRealIndex = (course.times || []).reduce(
+      (last, value, index) => (
+        value !== null && value !== undefined && String(value).trim() !== ""
+          ? index
+          : last
+      ),
+      -1
+    );
+
+    // For a partial course, the actual terminal is the last stop for which
+    // this specific course has a time. Use that stop instead of the main
+    // direction headsign. Full courses keep the normal direction headsign.
+    let destination = "";
+    if (lastRealIndex >= 0 && lastRealIndex < directionStops.length - 1) {
+      destination = String(directionStops[lastRealIndex]?.name || "").trim();
+    }
+    if (!destination) {
+      destination = String(course?.trip_headsign || direction?.headsign || direction?.destination || "").trim();
+    }
 
     results.push({
       exactDate: liveDate,
-      exactMinutes: scheduleMinutes,
+      exactMinutes: effectiveMinutes,
       remainingMinutes,
       car: course?.car || "",
       originalTripId,
@@ -224,13 +250,13 @@ function virtualBoardArrivalHtml(arrival) {
     ? virtualBoardFormatExactDate(arrival.exactDate)
     : virtualBoardFormatExactTime(arrival.exactMinutes);
   const remaining = virtualBoardFormatRemaining(arrival.remainingMinutes);
-  const indicatorClass = arrival.isRealtime
-    ? "virtual-board-live-indicator"
-    : "virtual-board-live-indicator virtual-board-scheduled-indicator";
+  const liveIndicator = arrival.isRealtime
+    ? '<span class="virtual-board-live-indicator" aria-label="В реално време"></span>'
+    : '';
 
   return `
     <div class="virtual-board-arrival">
-      <span class="${indicatorClass}" aria-label="${arrival.isRealtime ? "В реално време" : "По разписание"}"></span>
+      ${liveIndicator}
       <strong>${exact}</strong>
       <span>(${remaining})</span>
     </div>`;
