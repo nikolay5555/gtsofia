@@ -1265,11 +1265,6 @@ SCHEDULES PAGE
   flex-shrink: 0;
 }
 
-.virtual-board-clock {
-  font-size: 24px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
 
 .virtual-board-list {
   display: flex;
@@ -1368,6 +1363,7 @@ SCHEDULES PAGE
   }
 
   .virtual-board-arrival {
-    justify-content: flex-start;
+    justify-content: flex-end;
+    text-align: right;
   }
 }

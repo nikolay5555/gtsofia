@@ -233,7 +233,6 @@ function renderVirtualBoard() {
       </div>
 
       <div class="virtual-board-heading-actions">
-        <div class="virtual-board-clock" id="virtualBoardClock"></div>
         <button id="closeVirtualBoardButton" class="schedule-close-button" type="button">Затвори</button>
       </div>
     </div>
@@ -246,17 +245,6 @@ function renderVirtualBoard() {
   `;
 
   section.hidden = false;
-  updateVirtualBoardClock();
-}
-
-function updateVirtualBoardClock() {
-  const clock = document.getElementById("virtualBoardClock");
-  if (!clock) {
-    return;
-  }
-
-  const now = new Date();
-  clock.textContent = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
 }
 
 function startVirtualBoard() {
