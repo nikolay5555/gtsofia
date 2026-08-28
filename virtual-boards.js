@@ -137,24 +137,16 @@ function virtualBoardBuildRoutes(context) {
         continue;
       }
 
-      // At a terminal/looping endpoint there can be a direction whose
-      // first and last stop are the same selected stop. In that case the
-      // displayed destination is the stop itself, which is redundant for
-      // the virtual board, so do not include that direction.
+      // A virtual board shows departures from the selected stop. If the
+      // selected stop is the final stop of this direction, the schedule
+      // time represents an arrival there, not a departure from there.
+      // Such a direction must therefore not be shown on the board.
       const directionStops = Array.isArray(direction.stops)
         ? direction.stops
         : [];
 
-      if (directionStops.length >= 2) {
-        const firstStopId = String(directionStops[0]?.stop_id || '');
-        const lastStopId = String(
-          directionStops[directionStops.length - 1]?.stop_id || ''
-        );
-        const selectedStop = String(selectedStopId || '');
-
-        if (firstStopId === selectedStop && lastStopId === selectedStop) {
-          continue;
-        }
+      if (directionStops.length > 0 && stopIndex === directionStops.length - 1) {
+        continue;
       }
 
       const directionSchedule = routeSchedule[direction.key];
