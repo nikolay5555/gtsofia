@@ -672,14 +672,6 @@ function renderSummary(courses) {
           stop?.name || ""
         )}
       </span>
-
-      <button
-        id="virtualBoardButton"
-        class="schedule-virtual-board-button"
-        type="button"
-      >
-        Виртуално табло
-      </button>
     </div>
 
     <div class="schedule-summary-stats">
@@ -701,7 +693,12 @@ function renderSummary(courses) {
   `;
 
   summary.hidden = false;
-  wireVirtualBoardButton();
+
+  const virtualBoardButton = document.getElementById("virtualBoardButton");
+  if (virtualBoardButton) {
+    virtualBoardButton.hidden = false;
+    wireVirtualBoardButton();
+  }
 }
 
 
@@ -1041,6 +1038,11 @@ function renderSchedule() {
       "scheduleSummary"
     ).hidden = true;
 
+    const virtualBoardButton = document.getElementById("virtualBoardButton");
+    if (virtualBoardButton) {
+      virtualBoardButton.hidden = true;
+    }
+
     document.getElementById(
       "timetableSection"
     ).hidden = true;
@@ -1095,10 +1097,11 @@ window.getScheduleSelection = function() {
 function wireVirtualBoardButton() {
   const button = document.getElementById("virtualBoardButton");
 
-  if (!button) {
+  if (!button || button.dataset.wired === "true") {
     return;
   }
 
+  button.dataset.wired = "true";
   button.addEventListener("click", () => {
     if (window.startVirtualBoard) {
       window.startVirtualBoard();
@@ -1251,6 +1254,14 @@ document.addEventListener(
 
         }
       );
+
+    document
+      .getElementById("virtualBoardSection")
+      .addEventListener("click", event => {
+        if (event.target.closest("#closeVirtualBoardButton")) {
+          window.stopVirtualBoard?.();
+        }
+      });
 
     document
       .getElementById(

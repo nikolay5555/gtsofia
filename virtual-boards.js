@@ -183,6 +183,7 @@ function virtualBoardArrivalHtml(arrival) {
 
   return `
     <div class="virtual-board-arrival">
+      <span class="virtual-board-live-indicator" aria-label="Времето се обновява автоматично"></span>
       <strong>${exact}</strong>
       <span>(${remaining})</span>
     </div>`;
@@ -230,7 +231,11 @@ function renderVirtualBoard() {
         <div class="schedule-section-kicker">Виртуално табло</div>
         <h2>${virtualBoardEscapeHtml(stopName)}</h2>
       </div>
-      <div class="virtual-board-clock" id="virtualBoardClock"></div>
+
+      <div class="virtual-board-heading-actions">
+        <div class="virtual-board-clock" id="virtualBoardClock"></div>
+        <button id="closeVirtualBoardButton" class="schedule-close-button" type="button">Затвори</button>
+      </div>
     </div>
 
     ${routes.length
@@ -264,7 +269,7 @@ function startVirtualBoard() {
   virtualBoardRefreshTimer = setInterval(() => {
     renderVirtualBoard();
     updateVirtualBoardClock();
-  }, 30000);
+  }, 10000);
 }
 
 function stopVirtualBoard() {

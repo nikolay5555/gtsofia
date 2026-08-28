@@ -50,8 +50,19 @@
       </div>
 
       <div class="schedule-day-tabs" role="tablist" aria-label="Тип ден">
-        <button class="schedule-day-tab active" data-day-type="weekday" type="button">Делник</button>
-        <button class="schedule-day-tab" data-day-type="weekend" type="button">Празник</button>
+        <div class="schedule-day-tabs-left">
+          <button class="schedule-day-tab active" data-day-type="weekday" type="button">Делник</button>
+          <button class="schedule-day-tab" data-day-type="weekend" type="button">Празник</button>
+        </div>
+
+        <button
+          id="virtualBoardButton"
+          class="schedule-virtual-board-button"
+          type="button"
+          hidden
+        >
+          Виртуално табло
+        </button>
       </div>
     </section>
 

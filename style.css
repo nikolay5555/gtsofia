@@ -1074,10 +1074,16 @@ SCHEDULES PAGE
 .schedule-placeholder { color: #6b7280; }
 .schedule-day-tabs {
   display: flex;
-  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-top: 16px;
   border-top: 1px solid #eef0f2;
   padding-top: 16px;
+}
+.schedule-day-tabs-left {
+  display: flex;
+  gap: 8px;
 }
 .schedule-day-tab {
   border: 0;
@@ -1213,10 +1219,14 @@ SCHEDULES PAGE
   .schedule-summary-destination { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .schedule-summary-stats { grid-template-columns: 1fr; }
   .course-stop { grid-template-columns: 22px 1fr auto; }
+  .schedule-day-tabs { align-items: stretch; flex-direction: column; }
+  .schedule-day-tabs-left { width: 100%; }
+  .schedule-day-tab { flex: 1 1 0; }
+  .schedule-day-tabs .schedule-virtual-board-button { width: 100%; }
 }
 
 .schedule-virtual-board-button {
-  margin-top: 10px;
+  margin-top: 0;
   border: 0;
   border-radius: 10px;
   padding: 10px 14px;
@@ -1246,6 +1256,13 @@ SCHEDULES PAGE
 .virtual-board-heading-row h2 {
   margin: 3px 0 0;
   font-size: 24px;
+}
+
+.virtual-board-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
 }
 
 .virtual-board-clock {
@@ -1299,9 +1316,10 @@ SCHEDULES PAGE
 }
 
 .virtual-board-arrival {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
@@ -1310,14 +1328,35 @@ SCHEDULES PAGE
   font-size: 18px;
 }
 
-.virtual-board-arrival span {
+.virtual-board-arrival > span:not(.virtual-board-live-indicator) {
   color: #6b7280;
   font-size: 13px;
+}
+
+.virtual-board-live-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #16a34a;
+  box-shadow: 0 0 0 0 rgba(22, 163, 74, .45);
+  animation: virtual-board-live-pulse 1.6s infinite;
+  flex: 0 0 auto;
+}
+
+@keyframes virtual-board-live-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(22, 163, 74, .45); }
+  70% { box-shadow: 0 0 0 7px rgba(22, 163, 74, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); }
 }
 
 @media (max-width: 760px) {
   .virtual-board-heading-row {
     align-items: flex-start;
+  }
+
+  .virtual-board-heading-actions {
+    flex-direction: column;
+    align-items: flex-end;
   }
 
   .virtual-board-route {
@@ -1329,6 +1368,6 @@ SCHEDULES PAGE
   }
 
   .virtual-board-arrival {
-    align-items: flex-start;
+    justify-content: flex-start;
   }
 }
