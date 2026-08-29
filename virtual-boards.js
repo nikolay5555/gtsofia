@@ -13,6 +13,45 @@ function virtualBoardEscapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+// schedules.js is a regular script, while this file is an ES module.
+// Its helper functions therefore are not visible here. Keep the exact same
+// line identity markup locally instead of changing the schedules page API.
+function virtualBoardLinePillHtml(line) {
+  const number = virtualBoardEscapeHtml(line?.number || "");
+  const background = virtualBoardEscapeHtml(line?.color || "#BE1E2D");
+  const textColor = virtualBoardEscapeHtml(line?.textColor || "#FFFFFF");
+
+  if (line?.type === "metro") {
+    return `
+      <span
+        class="schedule-line-pill metro"
+        style="background:${background};color:${textColor}"
+      >
+        ${number}
+      </span>`;
+  }
+
+  return `
+    <span
+      class="schedule-line-pill"
+      style="background:${background}"
+    >
+      ${number}
+    </span>`;
+}
+
+function virtualBoardLineIdentityHtml(line) {
+  const icon = virtualBoardEscapeHtml(line?.icon || "");
+
+  return `
+    <span class="schedule-line-identity">
+      <span class="schedule-line-icon">
+        <img src="${icon}" alt="" />
+      </span>
+      ${virtualBoardLinePillHtml(line)}
+    </span>`;
+}
+
 function virtualBoardParseTime(value) {
   const match = String(value || "").match(
     /^(\d+):(\d{2})(?::(\d{2}))?$/
@@ -108,7 +147,12 @@ function virtualBoardGetUpcoming(direction, schedule, stopIndex, nowDate) {
       ),
       -1
     );
-    if (lastRealIndex === stopIndex) continue;
+    if (lastRealIndex < 0 || lastRealIndex === stopIndex) continue;
+
+    // A partial course can share the same merged direction as the full
+    // service but have a different terminal. Use the actual last served
+    // stop of this course as its displayed destination.
+    const courseDestination = direction.stops?.[lastRealIndex]?.name || direction.headsign || "";
 
     let liveDate = null;
     let effectiveMinutes = scheduleMinutes;
@@ -138,24 +182,17 @@ function virtualBoardGetUpcoming(direction, schedule, stopIndex, nowDate) {
     const remainingMinutes = Math.max(0, Math.ceil(deltaMs / 60000));
 
     const directionStops = Array.isArray(direction?.stops) ? direction.stops : [];
-    const lastRealIndex = (course.times || []).reduce(
-      (last, value, index) => (
-        value !== null && value !== undefined && String(value).trim() !== ""
-          ? index
-          : last
-      ),
-      -1
-    );
 
-    // For a partial course, the actual terminal is the last stop for which
-    // this specific course has a time. Use that stop instead of the main
-    // direction headsign. Full courses keep the normal direction headsign.
-    let destination = "";
+    // The generated data merges partial trips into the main direction.
+    // For the board, however, each individual trip must keep its own
+    // destination. The last stop with a real scheduled time is therefore
+    // the authoritative terminal for this particular course.
+    let destination = String(course?.trip_headsign || "").trim();
     if (lastRealIndex >= 0 && lastRealIndex < directionStops.length - 1) {
       destination = String(directionStops[lastRealIndex]?.name || "").trim();
     }
     if (!destination) {
-      destination = String(course?.trip_headsign || direction?.headsign || direction?.destination || "").trim();
+      destination = String(direction?.headsign || direction?.destination || "").trim();
     }
 
     results.push({
@@ -266,7 +303,7 @@ function virtualBoardRouteHtml(entry) {
   return `
     <article class="virtual-board-route">
       <div class="virtual-board-route-main">
-        ${lineIdentityHtml(entry.line)}
+        ${virtualBoardLineIdentityHtml(entry.line)}
         <img
           class="virtual-board-destination-arrow"
           src="Icons/destinationarrow.svg"
