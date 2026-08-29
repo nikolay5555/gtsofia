@@ -54,14 +54,40 @@ function decodeString(bytes) {
   return textDecoder.decode(bytes);
 }
 
-function parseTripDescriptor(bytes) {
-  let tripId = "";
+function parseFeedHeader(bytes) {
+  let timestamp = null;
   for (const field of readFields(bytes)) {
-    if (field.fieldNumber === 1 && field.wireType === 2) {
-      tripId = decodeString(field.value);
+    if (field.fieldNumber === 3 && field.wireType === 0) {
+      timestamp = Number(field.value);
     }
   }
-  return { tripId };
+  return { timestamp };
+}
+
+function parseTripDescriptor(bytes) {
+  let tripId = "";
+  let startTime = "";
+  let startDate = "";
+  let routeId = "";
+  let directionId = null;
+
+  for (const field of readFields(bytes)) {
+    if (field.wireType !== 2) continue;
+
+    if (field.fieldNumber === 1) {
+      tripId = decodeString(field.value);
+    } else if (field.fieldNumber === 2) {
+      startTime = decodeString(field.value);
+    } else if (field.fieldNumber === 3) {
+      startDate = decodeString(field.value);
+    } else if (field.fieldNumber === 5) {
+      routeId = decodeString(field.value);
+    } else if (field.fieldNumber === 6) {
+      directionId = decodeString(field.value);
+    }
+  }
+
+  return { tripId, startTime, startDate, routeId, directionId };
 }
 
 function parseStopTimeEvent(bytes) {
@@ -130,14 +156,20 @@ function parseFeedEntity(bytes) {
 }
 
 function parseFeedMessage(bytes) {
+  const header = { timestamp: null };
   const tripUpdates = [];
+
   for (const field of readFields(bytes)) {
-    if (field.fieldNumber === 2 && field.wireType === 2) {
+    if (field.fieldNumber === 1 && field.wireType === 2) {
+      const parsedHeader = parseFeedHeader(field.value);
+      header.timestamp = parsedHeader.timestamp;
+    } else if (field.fieldNumber === 2 && field.wireType === 2) {
       const entity = parseFeedEntity(field.value);
       if (entity.tripUpdate) tripUpdates.push(entity.tripUpdate);
     }
   }
-  return tripUpdates;
+
+  return { header, tripUpdates };
 }
 
 function gtfsRtUnixSecondsToDate(value) {
@@ -159,12 +191,15 @@ export async function fetchSofiaTripUpdates() {
   return parseFeedMessage(new Uint8Array(buffer));
 }
 
-export function buildRealtimeIndex(tripUpdates) {
-  const index = new Map();
+export function buildRealtimeIndex(feed) {
+  const payload = Array.isArray(feed) ? { tripUpdates: feed, header: {} } : (feed || {});
+  const trips = new Map();
+  const byRouteAndStartTime = new Map();
+  const byRoute = new Map();
 
-  for (const update of tripUpdates || []) {
-    const tripId = update?.trip?.tripId;
-    if (!tripId) continue;
+  for (const update of payload.tripUpdates || []) {
+    const trip = update?.trip;
+    if (!trip) continue;
 
     const stops = new Map();
     for (const stop of update.stopTimeUpdates || []) {
@@ -181,8 +216,31 @@ export function buildRealtimeIndex(tripUpdates) {
       });
     }
 
-    index.set(String(tripId), stops);
+    const entry = {
+      trip,
+      stops
+    };
+
+    const tripId = String(trip.tripId || "");
+    if (tripId) {
+      trips.set(tripId, entry);
+    }
+
+    const routeId = String(trip.routeId || "");
+    const startTime = String(trip.startTime || "");
+    if (routeId && startTime) {
+      byRouteAndStartTime.set(`${routeId}|${startTime}`, entry);
+    }
+    if (routeId) {
+      if (!byRoute.has(routeId)) byRoute.set(routeId, []);
+      byRoute.get(routeId).push(entry);
+    }
   }
 
-  return index;
+  return {
+    trips,
+    byRouteAndStartTime,
+    byRoute,
+    feedTimestamp: Number(payload.header?.timestamp) || null
+  };
 }

@@ -1,8 +1,14 @@
 import { fetchSofiaTripUpdates, buildRealtimeIndex } from './gtfs-realtime.js';
 
 let virtualBoardRefreshTimer = null;
-let virtualBoardRealtimeIndex = new Map();
+let virtualBoardRealtimeIndex = {
+  trips: new Map(),
+  byRouteAndStartTime: new Map(),
+  byRoute: new Map(),
+  feedTimestamp: null
+};
 let virtualBoardRealtimeAvailable = false;
+let virtualBoardRealtimeFetchedAt = 0;
 
 function virtualBoardEscapeHtml(value) {
   return String(value ?? "")
@@ -127,7 +133,49 @@ function virtualBoardScheduleDateForMinutes(minutes, nowDate) {
   return candidate;
 }
 
-function virtualBoardGetUpcoming(direction, schedule, stopIndex, nowDate) {
+function virtualBoardFindRealtimeEntry({ originalTripId, routeId, startTime }) {
+  if (!virtualBoardRealtimeIndex || !virtualBoardRealtimeIndex.trips) return null;
+
+  if (originalTripId) {
+    const direct = virtualBoardRealtimeIndex.trips.get(originalTripId);
+    if (direct) return direct;
+  }
+
+  if (routeId && startTime) {
+    const byStart = virtualBoardRealtimeIndex.byRouteAndStartTime.get(`${routeId}|${startTime}`);
+    if (byStart) return byStart;
+
+    // Sofia's feed can sometimes omit an exact trip_id but retain the route and
+    // start time. Match the same route with the closest same-day start time.
+    const candidates = virtualBoardRealtimeIndex.byRoute.get(routeId) || [];
+    if (candidates.length) {
+      const target = virtualBoardParseTime(startTime);
+      if (target != null) {
+        let best = null;
+        let bestDiff = Infinity;
+        for (const candidate of candidates) {
+          const candidateStart = virtualBoardParseTime(candidate.trip?.startTime);
+          if (candidateStart == null) continue;
+          const diff = Math.abs(candidateStart - target);
+          if (diff < bestDiff && diff <= 2) {
+            best = candidate;
+            bestDiff = diff;
+          }
+        }
+        if (best) return best;
+      }
+    }
+  }
+
+  return null;
+}
+
+function virtualBoardIsRealtimeFresh() {
+  if (!virtualBoardRealtimeFetchedAt) return false;
+  return (Date.now() - virtualBoardRealtimeFetchedAt) <= 90000;
+}
+
+function virtualBoardGetUpcoming(direction, schedule, stopIndex, nowDate, routeId) {
   const results = [];
   const nowMs = nowDate.getTime();
   const nowMinutes = virtualBoardGetSofiaMinutes(nowDate);
@@ -158,14 +206,21 @@ function virtualBoardGetUpcoming(direction, schedule, stopIndex, nowDate) {
     let effectiveMinutes = scheduleMinutes;
     let isRealtime = false;
     const originalTripId = String(course?.original_trip_id || "");
-    const realtimeStops = originalTripId ? virtualBoardRealtimeIndex.get(originalTripId) : null;
+    const realtimeRouteId = String(course?.route_id || "") || String(routeId || "");
+    const realtimeEntry = virtualBoardFindRealtimeEntry({
+      originalTripId,
+      routeId: realtimeRouteId,
+      startTime: String(course?.start_time || "")
+    });
+    const realtimeStops = realtimeEntry?.stops || null;
     const realtime = realtimeStops?.get(String(direction.stops?.[stopIndex]?.stop_id || ""));
 
-    if (realtime?.time instanceof Date && Number.isFinite(realtime.time.getTime())) {
+    const realtimeFresh = virtualBoardIsRealtimeFresh();
+    if (realtimeFresh && realtime?.time instanceof Date && Number.isFinite(realtime.time.getTime())) {
       liveDate = realtime.time;
       isRealtime = true;
       effectiveMinutes = virtualBoardGetMinutesForSofiaDate(liveDate);
-    } else if (typeof realtime?.delay === "number" && Number.isFinite(realtime.delay)) {
+    } else if (realtimeFresh && typeof realtime?.delay === "number" && Number.isFinite(realtime.delay)) {
       // A delay-only GTFS-RT update is still live data.
       effectiveMinutes += realtime.delay / 60;
       liveDate = virtualBoardScheduleDateForMinutes(effectiveMinutes, nowDate);
@@ -250,7 +305,7 @@ function virtualBoardBuildRoutes(context) {
       const daySchedule = directionSchedule?.[selectedDayType] || [];
       if (!daySchedule.length) continue;
 
-      const times = virtualBoardGetUpcoming(direction, daySchedule, stopIndex, nowDate);
+      const times = virtualBoardGetUpcoming(direction, daySchedule, stopIndex, nowDate, line.id);
       for (const time of times) {
         const destination = time.destination || direction.headsign || direction.destination || "";
         const groupKey = `${line.id}|${destination}`;
@@ -327,16 +382,11 @@ function renderVirtualBoard() {
   if (!section || !container || !context?.stopId) return;
 
   const routes = virtualBoardBuildRoutes(context);
-  const statusText = virtualBoardRealtimeAvailable
-    ? "Времена в реално време"
-    : "Времената са по разписание";
-
   container.innerHTML = `
     <div class="virtual-board-heading-row">
       <div>
         <div class="schedule-section-kicker">Виртуално табло</div>
         <h2>${virtualBoardEscapeHtml(context.stopName || "")}</h2>
-        <div class="virtual-board-status">${statusText}</div>
       </div>
 
       <div class="virtual-board-heading-actions">
@@ -359,12 +409,22 @@ function renderVirtualBoard() {
 
 async function refreshVirtualBoardRealtime() {
   try {
-    const updates = await fetchSofiaTripUpdates();
-    virtualBoardRealtimeIndex = buildRealtimeIndex(updates);
-    virtualBoardRealtimeAvailable = virtualBoardRealtimeIndex.size > 0;
+    const feed = await fetchSofiaTripUpdates();
+    virtualBoardRealtimeIndex = buildRealtimeIndex(feed);
+    virtualBoardRealtimeFetchedAt = feed?.header?.timestamp
+      ? Number(feed.header.timestamp) * 1000
+      : Date.now();
+    virtualBoardRealtimeAvailable =
+      virtualBoardRealtimeIndex.trips?.size > 0 && virtualBoardIsRealtimeFresh();
   } catch (error) {
     console.warn("Sofia GTFS-RT Trip Updates unavailable; using schedule fallback.", error);
-    virtualBoardRealtimeIndex = new Map();
+    virtualBoardRealtimeIndex = {
+      trips: new Map(),
+      byRouteAndStartTime: new Map(),
+      byRoute: new Map(),
+      feedTimestamp: null
+    };
+    virtualBoardRealtimeFetchedAt = 0;
     virtualBoardRealtimeAvailable = false;
   }
 
@@ -385,7 +445,13 @@ function stopVirtualBoard() {
     virtualBoardRefreshTimer = null;
   }
 
-  virtualBoardRealtimeIndex = new Map();
+  virtualBoardRealtimeIndex = {
+    trips: new Map(),
+    byRouteAndStartTime: new Map(),
+    byRoute: new Map(),
+    feedTimestamp: null
+  };
+  virtualBoardRealtimeFetchedAt = 0;
   virtualBoardRealtimeAvailable = false;
 
   const section = document.getElementById("virtualBoardSection");
