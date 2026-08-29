@@ -1,14 +1,8 @@
-import { fetchSofiaTripUpdates, buildRealtimeIndex } from './gtfs-realtime.js';
-
 let virtualBoardRefreshTimer = null;
-let virtualBoardRealtimeIndex = {
-  trips: new Map(),
-  byRouteAndStartTime: new Map(),
-  byRoute: new Map(),
-  feedTimestamp: null
-};
 let virtualBoardRealtimeAvailable = false;
-let virtualBoardRealtimeFetchedAt = 0;
+let virtualBoardProxyRoutes = null;
+const VIRTUAL_BOARD_PROXY_URL =
+  "https://sft-proxy.onrender.com/virtual-board?stop_code=";
 
 function virtualBoardEscapeHtml(value) {
   return String(value ?? "")
@@ -133,150 +127,164 @@ function virtualBoardScheduleDateForMinutes(minutes, nowDate) {
   return candidate;
 }
 
-function virtualBoardFindRealtimeEntry({ originalTripId, routeId, startTime }) {
-  if (!virtualBoardRealtimeIndex || !virtualBoardRealtimeIndex.trips) return null;
-
-  if (originalTripId) {
-    const direct = virtualBoardRealtimeIndex.trips.get(originalTripId);
-    if (direct) return direct;
-  }
-
-  if (routeId && startTime) {
-    const byStart = virtualBoardRealtimeIndex.byRouteAndStartTime.get(`${routeId}|${startTime}`);
-    if (byStart) return byStart;
-
-    // Sofia's feed can sometimes omit an exact trip_id but retain the route and
-    // start time. Match the same route with the closest same-day start time.
-    const candidates = virtualBoardRealtimeIndex.byRoute.get(routeId) || [];
-    if (candidates.length) {
-      const target = virtualBoardParseTime(startTime);
-      if (target != null) {
-        let best = null;
-        let bestDiff = Infinity;
-        for (const candidate of candidates) {
-          const candidateStart = virtualBoardParseTime(candidate.trip?.startTime);
-          if (candidateStart == null) continue;
-          const diff = Math.abs(candidateStart - target);
-          if (diff < bestDiff && diff <= 2) {
-            best = candidate;
-            bestDiff = diff;
-          }
-        }
-        if (best) return best;
-      }
-    }
-  }
-
-  return null;
+function virtualBoardNormalizeName(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
 }
 
-function virtualBoardIsRealtimeFresh() {
-  if (!virtualBoardRealtimeFetchedAt) return false;
-  return (Date.now() - virtualBoardRealtimeFetchedAt) <= 90000;
+function virtualBoardFindLine(routeRef, routeType) {
+  const lines = Array.isArray(window.scheduleLines) ? window.scheduleLines : [];
+  const ref = String(routeRef ?? "").trim();
+  const type = String(routeType ?? "").toLowerCase();
+  const typeAliases = {
+    trolley: ["trolley", "trolleybus"],
+    trolleybus: ["trolley", "trolleybus"],
+    bus: ["bus"],
+    tram: ["tram"],
+    metro: ["metro"]
+  };
+  const aliases = typeAliases[type] || [type];
+
+  return (
+    lines.find(line =>
+      String(line?.number ?? "").trim() === ref &&
+      aliases.includes(String(line?.type ?? "").toLowerCase())
+    ) ||
+    lines.find(line => String(line?.number ?? "").trim() === ref) ||
+    null
+  );
 }
 
-function virtualBoardGetUpcoming(direction, schedule, stopIndex, nowDate, routeId) {
-  const results = [];
-  const nowMs = nowDate.getTime();
-  const nowMinutes = virtualBoardGetSofiaMinutes(nowDate);
+function virtualBoardProxyTimeToArrival(timeEntry, nowDate) {
+  const raw = timeEntry?.t;
+  const minutes = Number(raw);
+  if (!Number.isFinite(minutes)) return null;
+  if (minutes < 0) return null;
 
-  for (const course of schedule || []) {
-    const rawTime = course?.times?.[stopIndex];
-    const scheduleMinutes = virtualBoardParseTime(rawTime);
-    if (scheduleMinutes == null) continue;
+  const exactDate = new Date(nowDate.getTime() + minutes * 60000);
+  if (!Number.isFinite(exactDate.getTime())) return null;
 
-    // A course that ends exactly at this stop is an arrival at its own terminal,
-    // not a departure for a virtual stop board.
-    const lastRealIndex = (course.times || []).reduce(
-      (last, value, index) => (
-        value !== null && value !== undefined && String(value).trim() !== ""
-          ? index
-          : last
-      ),
-      -1
-    );
-    if (lastRealIndex < 0 || lastRealIndex === stopIndex) continue;
+  const remainingMinutes = Math.max(0, Math.ceil(minutes));
+  const explicitRealtime =
+    timeEntry?.is_realtime ??
+    timeEntry?.realtime ??
+    timeEntry?.live;
 
-    // A partial course can share the same merged direction as the full
-    // service but have a different terminal. Use the actual last served
-    // stop of this course as its displayed destination.
-    const courseDestination = direction.stops?.[lastRealIndex]?.name || direction.headsign || "";
+  // The virtual-board proxy is a realtime departures endpoint. When it does
+  // not provide an explicit per-time flag, its returned times are treated as
+  // realtime. If it does provide a false flag, respect it.
+  const isRealtime = explicitRealtime === undefined
+    ? true
+    : Boolean(explicitRealtime);
 
-    let liveDate = null;
-    let effectiveMinutes = scheduleMinutes;
-    let isRealtime = false;
-    const originalTripId = String(course?.original_trip_id || "");
-    const realtimeRouteId = String(course?.route_id || "") || String(routeId || "");
-    const realtimeEntry = virtualBoardFindRealtimeEntry({
-      originalTripId,
-      routeId: realtimeRouteId,
-      startTime: String(course?.start_time || "")
-    });
-    const realtimeStops = realtimeEntry?.stops || null;
-    const realtime = realtimeStops?.get(String(direction.stops?.[stopIndex]?.stop_id || ""));
+  return {
+    exactDate,
+    exactMinutes: virtualBoardGetMinutesForSofiaDate(exactDate),
+    remainingMinutes,
+    car: "",
+    originalTripId: "",
+    destination: "",
+    isRealtime
+  };
+}
 
-    const realtimeFresh = virtualBoardIsRealtimeFresh();
-    if (realtimeFresh && realtime?.time instanceof Date && Number.isFinite(realtime.time.getTime())) {
-      liveDate = realtime.time;
-      isRealtime = true;
-      effectiveMinutes = virtualBoardGetMinutesForSofiaDate(liveDate);
-    } else if (realtimeFresh && typeof realtime?.delay === "number" && Number.isFinite(realtime.delay)) {
-      // A delay-only GTFS-RT update is still live data.
-      effectiveMinutes += realtime.delay / 60;
-      liveDate = virtualBoardScheduleDateForMinutes(effectiveMinutes, nowDate);
-      isRealtime = true;
-    } else {
-      liveDate = virtualBoardScheduleDateForMinutes(effectiveMinutes, nowDate);
+function virtualBoardBuildProxyRoutes(proxyRoutes, context, nowDate) {
+  const grouped = new Map();
+  const selectedStopName = virtualBoardNormalizeName(context.stopName);
+
+  for (const proxyRoute of proxyRoutes || []) {
+    const routeRef = String(proxyRoute?.route_ref ?? "").trim();
+    if (!routeRef) continue;
+
+    const line = virtualBoardFindLine(routeRef, proxyRoute?.type);
+    if (!line) continue;
+
+    const destination = String(proxyRoute?.destination ?? "").trim();
+    if (!destination) continue;
+
+    // Do not show a vehicle whose displayed destination is the selected
+    // terminal itself. At a terminal we are interested in the departures in
+    // the opposite direction, not in the vehicle arriving at its own terminal.
+    if (
+      selectedStopName &&
+      virtualBoardNormalizeName(destination) === selectedStopName
+    ) {
+      continue;
     }
 
-    if (!(liveDate instanceof Date) || !Number.isFinite(liveDate.getTime())) continue;
-
-    const deltaMs = liveDate.getTime() - nowMs;
-    if (deltaMs < -30000) continue;
-
-    const remainingMinutes = Math.max(0, Math.ceil(deltaMs / 60000));
-
-    const directionStops = Array.isArray(direction?.stops) ? direction.stops : [];
-
-    // The generated data merges partial trips into the main direction.
-    // For the board, however, each individual trip must keep its own
-    // destination. The last stop with a real scheduled time is therefore
-    // the authoritative terminal for this particular course.
-    let destination = String(course?.trip_headsign || "").trim();
-    if (lastRealIndex >= 0 && lastRealIndex < directionStops.length - 1) {
-      destination = String(directionStops[lastRealIndex]?.name || "").trim();
+    const arrivals = [];
+    for (const timeEntry of proxyRoute?.times || []) {
+      const arrival = virtualBoardProxyTimeToArrival(timeEntry, nowDate);
+      if (!arrival) continue;
+      arrival.destination = destination;
+      arrivals.push(arrival);
     }
-    if (!destination) {
-      destination = String(direction?.headsign || direction?.destination || "").trim();
-    }
+    if (!arrivals.length) continue;
 
-    results.push({
-      exactDate: liveDate,
-      exactMinutes: effectiveMinutes,
-      remainingMinutes,
-      car: course?.car || "",
-      originalTripId,
-      destination,
-      isRealtime
-    });
+    const groupKey = `${line.id}|${destination}`;
+    if (!grouped.has(groupKey)) {
+      grouped.set(groupKey, { line, destination, times: [] });
+    }
+    grouped.get(groupKey).times.push(...arrivals);
   }
 
-  results.sort((a, b) =>
-    a.exactDate - b.exactDate ||
-    a.remainingMinutes - b.remainingMinutes ||
-    String(a.originalTripId).localeCompare(String(b.originalTripId))
+  const routes = Array.from(grouped.values());
+  for (const route of routes) {
+    route.times.sort((a, b) => a.exactDate - b.exactDate);
+    const unique = [];
+    const seen = new Set();
+    for (const time of route.times) {
+      const key = `${time.exactDate.getTime()}|${time.destination}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unique.push(time);
+      if (unique.length >= 3) break;
+    }
+    route.times = unique;
+  }
+
+  routes.sort((a, b) => {
+    const aTime = a.times[0]?.exactDate?.getTime() ?? Infinity;
+    const bTime = b.times[0]?.exactDate?.getTime() ?? Infinity;
+    if (aTime !== bTime) return aTime - bTime;
+    return String(a.line.number).localeCompare(String(b.line.number), "bg", {
+      numeric: true,
+      sensitivity: "base"
+    });
+  });
+
+  return routes;
+}
+
+async function virtualBoardFetchProxy(context) {
+  const stopCode = String(context?.stopId ?? "").trim();
+  if (!stopCode) throw new Error("Missing stop code");
+
+  const response = await fetch(
+    `${VIRTUAL_BOARD_PROXY_URL}${encodeURIComponent(stopCode)}`,
+    {
+      cache: "no-store"
+    }
   );
 
-  const unique = [];
-  const seen = new Set();
-  for (const item of results) {
-    const key = `${item.exactDate.getTime()}|${item.originalTripId}|${item.destination}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    unique.push(item);
-    if (unique.length >= 3) break;
+  if (!response.ok) {
+    throw new Error(`Virtual board proxy HTTP ${response.status}`);
   }
-  return unique;
+
+  const payload = await response.json();
+  if (payload?.status && payload.status !== "ok") {
+    throw new Error(`Virtual board proxy status: ${payload.status}`);
+  }
+
+  if (!Array.isArray(payload?.routes)) {
+    throw new Error("Virtual board proxy returned no routes array");
+  }
+
+  return payload.routes;
 }
 
 function virtualBoardBuildRoutes(context) {
@@ -381,7 +389,9 @@ function renderVirtualBoard() {
   const container = document.getElementById("virtualBoardContainer");
   if (!section || !container || !context?.stopId) return;
 
-  const routes = virtualBoardBuildRoutes(context);
+  const routes = virtualBoardProxyRoutes
+    ? virtualBoardBuildProxyRoutes(virtualBoardProxyRoutes, context, virtualBoardGetNowDate())
+    : virtualBoardBuildRoutes(context);
   container.innerHTML = `
     <div class="virtual-board-heading-row">
       <div>
@@ -408,23 +418,15 @@ function renderVirtualBoard() {
 }
 
 async function refreshVirtualBoardRealtime() {
+  const context = window.getScheduleSelection?.();
+  if (!context?.stopId) return;
+
   try {
-    const feed = await fetchSofiaTripUpdates();
-    virtualBoardRealtimeIndex = buildRealtimeIndex(feed);
-    virtualBoardRealtimeFetchedAt = feed?.header?.timestamp
-      ? Number(feed.header.timestamp) * 1000
-      : Date.now();
-    virtualBoardRealtimeAvailable =
-      virtualBoardRealtimeIndex.trips?.size > 0 && virtualBoardIsRealtimeFresh();
+    virtualBoardProxyRoutes = await virtualBoardFetchProxy(context);
+    virtualBoardRealtimeAvailable = true;
   } catch (error) {
-    console.warn("Sofia GTFS-RT Trip Updates unavailable; using schedule fallback.", error);
-    virtualBoardRealtimeIndex = {
-      trips: new Map(),
-      byRouteAndStartTime: new Map(),
-      byRoute: new Map(),
-      feedTimestamp: null
-    };
-    virtualBoardRealtimeFetchedAt = 0;
+    console.warn("Virtual board realtime proxy unavailable; using schedule fallback.", error);
+    virtualBoardProxyRoutes = null;
     virtualBoardRealtimeAvailable = false;
   }
 
@@ -432,6 +434,8 @@ async function refreshVirtualBoardRealtime() {
 }
 
 function startVirtualBoard() {
+  virtualBoardProxyRoutes = null;
+  virtualBoardRealtimeAvailable = false;
   renderVirtualBoard();
   refreshVirtualBoardRealtime();
 
@@ -445,13 +449,7 @@ function stopVirtualBoard() {
     virtualBoardRefreshTimer = null;
   }
 
-  virtualBoardRealtimeIndex = {
-    trips: new Map(),
-    byRouteAndStartTime: new Map(),
-    byRoute: new Map(),
-    feedTimestamp: null
-  };
-  virtualBoardRealtimeFetchedAt = 0;
+  virtualBoardProxyRoutes = null;
   virtualBoardRealtimeAvailable = false;
 
   const section = document.getElementById("virtualBoardSection");
