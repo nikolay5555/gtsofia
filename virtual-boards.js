@@ -161,20 +161,12 @@
 
     while (state.index < bytes.length) {
       const field = readField(bytes, state);
-
-      if (field.fieldNumber === 1 && field.wireType === 2) {
-        trip.tripId = decodeString(field.value);
-      } else if (field.fieldNumber === 2 && field.wireType === 2) {
-        trip.startTime = decodeString(field.value);
-      } else if (field.fieldNumber === 3 && field.wireType === 2) {
-        trip.startDate = decodeString(field.value);
-      } else if (field.fieldNumber === 4 && field.wireType === 0) {
-        trip.scheduleRelationship = Number(field.value);
-      } else if (field.fieldNumber === 5 && field.wireType === 2) {
-        trip.routeId = decodeString(field.value);
-      } else if (field.fieldNumber === 6 && field.wireType === 0) {
-        trip.directionId = String(Number(field.value));
-      }
+      if (field.fieldNumber === 2 && field.wireType === 2) trip.startTime = decodeString(field.value);
+      else if (field.fieldNumber === 3 && field.wireType === 2) trip.startDate = decodeString(field.value);
+      else if (field.fieldNumber === 1 && field.wireType === 2) trip.tripId = decodeString(field.value);
+      else if (field.fieldNumber === 4 && field.wireType === 0) trip.scheduleRelationship = Number(field.value);
+      else if (field.fieldNumber === 5 && field.wireType === 2) trip.routeId = decodeString(field.value);
+      else if (field.fieldNumber === 6 && field.wireType === 0) trip.directionId = String(Number(field.value));
     }
 
     return trip;
@@ -186,7 +178,6 @@
 
     while (state.index < bytes.length) {
       const field = readField(bytes, state);
-
       if (field.fieldNumber === 1 && field.wireType === 0) {
         result.delay = toSignedInt32(field.value);
       } else if (field.fieldNumber === 2 && field.wireType === 0) {
@@ -209,7 +200,6 @@
 
     while (state.index < bytes.length) {
       const field = readField(bytes, state);
-
       if (field.fieldNumber === 1 && field.wireType === 0) {
         result.stopSequence = Number(field.value);
       } else if (field.fieldNumber === 2 && field.wireType === 2) {
@@ -228,20 +218,14 @@
 
   function decodeTripUpdate(bytes) {
     const state = { index: 0 };
-    const result = {
-      trip: null,
-      stopTimeUpdates: []
-    };
+    const result = { trip: null, stopTimeUpdates: [] };
 
     while (state.index < bytes.length) {
       const field = readField(bytes, state);
-
       if (field.fieldNumber === 1 && field.wireType === 2) {
         result.trip = decodeTripDescriptor(field.value);
       } else if (field.fieldNumber === 2 && field.wireType === 2) {
-        result.stopTimeUpdates.push(
-          decodeStopTimeUpdate(field.value)
-        );
+        result.stopTimeUpdates.push(decodeStopTimeUpdate(field.value));
       }
     }
 
@@ -254,7 +238,6 @@
 
     while (state.index < bytes.length) {
       const field = readField(bytes, state);
-
       if (field.fieldNumber === 3 && field.wireType === 2) {
         tripUpdate = decodeTripUpdate(field.value);
       }
@@ -271,69 +254,44 @@
 
     while (state.index < bytes.length) {
       const field = readField(bytes, state);
-
       if (field.fieldNumber === 1 && field.wireType === 2) {
         const headerState = { index: 0 };
-
         while (headerState.index < field.value.length) {
           const headerField = readField(field.value, headerState);
-
-          if (
-            headerField.fieldNumber === 3 &&
-            headerField.wireType === 0
-          ) {
+          if (headerField.fieldNumber === 3 && headerField.wireType === 0) {
             feedTimestamp = Number(headerField.value) * 1000;
           }
         }
       } else if (field.fieldNumber === 2 && field.wireType === 2) {
         const entity = decodeFeedEntity(field.value);
-
-        if (entity?.trip?.tripId) {
-          updates.push(entity);
-        }
+        if (entity?.trip?.tripId) updates.push(entity);
       }
     }
 
-    return {
-      updates,
-      feedTimestamp: feedTimestamp || Date.now()
-    };
+    return { updates, feedTimestamp: feedTimestamp || Date.now() };
   }
 
   function normalizeProxyStopCode(stop) {
-    const rawCode = String(
-      stop?.stop_code ??
-      stop?.stop_id ??
-      ""
-    ).trim();
-
-    if (!rawCode) {
-      return {
-        candidates: [],
-        isMetro: false
-      };
-    }
+    const rawCode = String(stop?.stop_code ?? stop?.stop_id ?? "").trim();
+    if (!rawCode) return { candidates: [], isMetro: false };
 
     const rawId = String(stop?.stop_id ?? "").trim();
-    const isMetro =
-      /^M/i.test(rawCode) ||
-      /^M/i.test(rawId);
-
+    const isMetro = /^M/i.test(rawCode) || /^M/i.test(rawId);
     const digits = rawCode.replace(/\D/g, "");
 
+    // Dimitar's proxy is fed the public stop code. For surface stops the
+    // proxy expects the numeric code without GTFS left-padding; keep the
+    // original spelling as a second candidate because both forms exist in
+    // different Sofia Traffic data generations.
     const candidates = [];
-
     if (digits) {
       candidates.push(String(Number(digits)));
       candidates.push(digits);
     }
-
     candidates.push(rawCode);
 
     return {
-      candidates: [
-        ...new Set(candidates.filter(Boolean))
-      ],
+      candidates: [...new Set(candidates.filter(Boolean))],
       isMetro
     };
   }
@@ -341,1330 +299,657 @@
   function getLineMeta(routeId, routeRef) {
     const id = String(routeId ?? "").trim();
     const ref = String(routeRef ?? "").trim();
-
-    if (id && routeMetaById.has(id)) {
-      return routeMetaById.get(id);
-    }
-
-    if (ref && routeMetaByNumber.has(ref)) {
-      return routeMetaByNumber.get(ref);
-    }
+    if (id && routeMetaById.has(id)) return routeMetaById.get(id);
+    if (ref && routeMetaByNumber.has(ref)) return routeMetaByNumber.get(ref);
 
     const route = id ? routeById.get(id) : null;
-    const number =
-      ref ||
-      route?.route_short_name ||
-      "—";
-
+    const number = ref || route?.route_short_name || "—";
     if (!route) {
       return {
         id,
         number,
-        type: /^N/i.test(number)
-          ? "night"
-          : "bus",
+        type: /^N/i.test(number) ? "night" : "bus",
         icon: "",
         color: "#BE1E2D",
         textColor: "#FFFFFF"
       };
     }
 
-    const type =
-      typeof getLineType === "function"
-        ? getLineType(route)
-        : "bus";
-
-    const icon =
-      typeof getTransportIcon === "function"
-        ? getTransportIcon(route, type)
-        : "";
-
+    const type = typeof getLineType === "function" ? getLineType(route) : "bus";
+    const icon = typeof getTransportIcon === "function" ? getTransportIcon(type, number) : "";
+    const color = typeof getLineColor === "function" ? getLineColor(route, type) : "#BE1E2D";
     return {
-      id,
+      id: route.route_id,
       number,
       type,
       icon,
-      color:
-        route.route_color
-          ? `#${String(route.route_color).replace(/^#/, "")}`
-          : "#BE1E2D",
-      textColor:
-        route.route_text_color
-          ? `#${String(route.route_text_color).replace(/^#/, "")}`
-          : "#FFFFFF"
+      color,
+      textColor: route.route_text_color ? `#${route.route_text_color}` : "#FFFFFF"
     };
   }
 
-  async function loadTransportData() {
-    const response = await fetch(
-      "data/transport.json",
-      { cache: "no-store" }
-    );
+  function linePillHtml(line) {
+    const number = escapeHtml(line?.number || "—");
+    const typeClass = line?.type === "metro" ? " metro" : "";
+    const color = escapeHtml(line?.color || "#BE1E2D");
+    const textColor = escapeHtml(line?.textColor || "#FFFFFF");
+    return `<span class="schedule-line-pill${typeClass}" style="--line-color:${color}; --line-text-color:${textColor}">${number}</span>`;
+  }
 
-    if (!response.ok) {
-      throw new Error(
-        `GTFS данните не могат да бъдат заредени (${response.status}).`
-      );
+  function lineIdentityHtml(line) {
+    const icon = line?.icon
+      ? `<span class="schedule-line-icon"><img src="${escapeHtml(line.icon)}" alt="" aria-hidden="true"></span>`
+      : "";
+    return `<span class="schedule-line-identity">${icon}${linePillHtml(line)}</span>`;
+  }
+
+  function destinationHtml(destination) {
+    return `<span class="schedule-summary-arrow direction-arrow" aria-hidden="true"><img src="Icons/destinationarrow.svg" alt=""></span><strong class="schedule-summary-destination vb-destination">${escapeHtml(destination || "—")}</strong>`;
+  }
+
+  function parseGeneratedAt(value) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value < 1e12 ? value * 1000 : value;
+    }
+    const parsed = Date.parse(String(value ?? ""));
+    return Number.isFinite(parsed) ? parsed : Date.now();
+  }
+
+  function getArrivalMinutes(timestamp) {
+    const seconds = Number(timestamp);
+    if (!Number.isFinite(seconds)) return null;
+    return Math.max(0, (seconds - Date.now() / 1000) / 60);
+  }
+
+  function formatArrivalClock(timestamp) {
+    const seconds = Number(timestamp);
+    if (!Number.isFinite(seconds)) return "—";
+
+    return new Intl.DateTimeFormat("bg-BG", {
+      timeZone: SOFIA_TIME_ZONE,
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23"
+    }).format(new Date(seconds * 1000));
+  }
+
+  function countdownHtml(arrival, showLive) {
+    const timestamp = Number(arrival?.timestamp);
+    const minutes = getArrivalMinutes(timestamp);
+    if (!Number.isFinite(minutes)) return "";
+
+    const rounded = Math.max(0, Math.ceil(minutes));
+    const clock = formatArrivalClock(timestamp);
+    const live = showLive ? '<span class="vb-arrival-live" aria-hidden="true"></span>' : '';
+
+    return `<div class="vb-arrival-main">${live}<span class="vb-arrival-clock">${escapeHtml(clock)}</span><span class="vb-arrival-minutes">${rounded} мин.</span></div>`;
+  }
+
+  function normalizeStopKey(value) {
+    const raw = String(value ?? "").trim();
+    if (!raw) return "";
+    const withoutMetroPrefix = raw.replace(/^M/i, "");
+    const numeric = withoutMetroPrefix.replace(/^0+(?=\d)/, "");
+    return numeric || "0";
+  }
+
+  function stopIdsMatch(left, right) {
+    return normalizeStopKey(left) === normalizeStopKey(right);
+  }
+
+  function findStaticTrip(tripId) {
+    return tripById.get(String(tripId)) || null;
+  }
+
+  function buildRealtimeRoutes(updates, stop, generatedAt) {
+    const selectedStopIds = [stop.stop_id, stop.stop_code, String(stop.stop_id || "").replace(/^M/i, "")]
+      .filter(Boolean)
+      .map(String);
+
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const grouped = new Map();
+
+    for (const entity of updates) {
+      const trip = entity?.trip;
+      if (!trip || trip.scheduleRelationship === 3 || trip.scheduleRelationship === 2) continue;
+
+      const staticTrip = findStaticTrip(trip.tripId);
+      const routeId = trip.routeId || staticTrip?.route_id || "";
+      const route = routeById.get(String(routeId));
+      const meta = getLineMeta(routeId, route?.route_short_name || "");
+      const destination = staticTrip?.trip_headsign || route?.route_long_name?.split("-")?.at(-1)?.trim() || "";
+
+      const relevant = (entity.stopTimeUpdates || []).filter(update => {
+        if (!update?.stopId || update.scheduleRelationship === 1 || update.scheduleRelationship === 2) return false;
+        return selectedStopIds.some(id => stopIdsMatch(id, update.stopId));
+      });
+
+      for (const update of relevant) {
+        const event = update.arrival?.time != null
+          ? update.arrival
+          : update.departure?.time != null
+            ? update.departure
+            : null;
+        if (!event || !Number.isFinite(event.time)) continue;
+
+        const arrivalSeconds = Number(event.time);
+        if (arrivalSeconds < nowSeconds - 30 || arrivalSeconds > nowSeconds + 3 * 3600) continue;
+
+        const key = `${String(routeId)}|${String(destination)}|${String(meta.number || "")}`;
+        if (!grouped.has(key)) {
+          grouped.set(key, {
+            route_id: routeId,
+            route_ref: meta.number || route?.route_short_name || "—",
+            destination,
+            times: [],
+            meta
+          });
+        }
+        grouped.get(key).times.push({
+          timestamp: arrivalSeconds,
+          t: Math.max(0, (arrivalSeconds - nowSeconds) / 60)
+        });
+      }
     }
 
-    return response.json();
+    const routes = [];
+    for (const row of grouped.values()) {
+      const seen = new Set();
+      row.times = row.times
+        .sort((a, b) => a.timestamp - b.timestamp)
+        .filter(item => {
+          if (seen.has(item.timestamp)) return false;
+          seen.add(item.timestamp);
+          return true;
+        })
+        .slice(0, 4)
+        .map(item => ({ t: item.t, timestamp: item.timestamp }));
+      if (row.times.length) routes.push(row);
+    }
+
+    routes.sort((a, b) => a.times[0].timestamp - b.times[0].timestamp);
+    return {
+      status: routes.length ? "ok" : "ok",
+      routes,
+      generatedAt
+    };
+  }
+
+  async function fetchWithTimeout(url, options = {}, timeoutMs = 45000) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...options, signal: controller.signal, cache: "no-store" });
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  async function fetchVirtualBoardViaServer(stop) {
+    const stopCode = String(stop?.stop_code || stop?.stop_id || '').trim();
+    if (!stopCode) throw new Error('Липсва код на спирката.');
+
+    const url = `api/virtual-board?stop_code=${encodeURIComponent(stopCode)}`;
+    const response = await fetchWithTimeout(url, {}, 20000);
+
+    let data = null;
+    try {
+      data = await response.json();
+    } catch {
+      throw new Error(`Realtime API върна невалиден JSON (${response.status}).`);
+    }
+
+    if (!response.ok) {
+      throw new Error(data?.error || `Realtime API заявката върна ${response.status}.`);
+    }
+
+    if (!data || typeof data !== 'object' || !Array.isArray(data.routes)) {
+      throw new Error('Realtime API върна невалидни данни.');
+    }
+
+    return {
+      status: data.status || (data.routes.length ? 'ok' : 'empty'),
+      generatedAt: data.generated_at || Math.floor(Date.now() / 1000),
+      routes: data.routes
+        .map(route => {
+          const staticTrip = findStaticTrip(route?.trip_id);
+          const staticRoute = routeById.get(String(route?.route_id || staticTrip?.route_id || ''));
+          const destination = staticTrip?.trip_headsign
+            || staticRoute?.route_long_name?.split(' - ').filter(Boolean).at(-1)?.trim()
+            || '';
+
+          return {
+            ...route,
+            route_id: route?.route_id || staticTrip?.route_id || '',
+            route_ref: route?.route_ref ?? staticRoute?.route_short_name ?? '—',
+            destination: route?.destination ?? destination,
+            times: Array.isArray(route?.times)
+              ? route.times.map(time => ({
+                  timestamp: Number(time?.timestamp),
+                  delay: Number.isFinite(Number(time?.delay)) ? Number(time?.delay) : null,
+                  t: Math.max(0, (Number(time?.timestamp) - Math.floor(Date.now() / 1000)) / 60)
+                })).filter(time => Number.isFinite(time.timestamp))
+              : []
+          };
+        })
+        .filter(route => route.times.length)
+    };
   }
 
   async function fetchVirtualBoard(stop) {
-    const normalized = normalizeProxyStopCode(stop);
-
-    if (!normalized.candidates.length) {
-      throw new Error("Спирката няма валиден stop_code.");
-    }
-
-    let lastError = null;
-
-    for (const candidate of normalized.candidates) {
-      try {
-        const url =
-          `/api/virtual-board?stop_code=${encodeURIComponent(candidate)}${
-            normalized.isMetro
-              ? "&metro=true"
-              : ""
-          }`;
-
-        const response = await fetch(url, {
-          cache: "no-store",
-          headers: {
-            Accept: "application/json"
-          }
-        });
-
-        if (!response.ok) {
-          let message = `HTTP ${response.status}`;
-
-          try {
-            const body = await response.json();
-
-            if (body?.error) {
-              message = body.error;
-            }
-          } catch (_) {
-            // Ignore invalid error bodies.
-          }
-
-          throw new Error(message);
-        }
-
-        const data = await response.json();
-
-        if (!data || typeof data !== "object") {
-          throw new Error("Невалиден отговор от realtime услугата.");
-        }
-
-        return data;
-      } catch (error) {
-        lastError = error;
-      }
-    }
-
-    throw lastError || new Error(
-      "Realtime данните не могат да бъдат заредени."
-    );
+    return fetchVirtualBoardViaServer(stop);
   }
 
-  function resolveStopName(stop) {
-    return (
-      stop?.name ||
-      stop?.stop_name ||
-      "Спирка"
-    );
-  }
-
-  function getDestinationFromTrip(trip) {
-    if (!trip) return "";
-
-    const direct =
-      trip.destination ||
-      trip.headsign ||
-      trip.trip_headsign ||
-      "";
-
-    if (direct) return String(direct);
-
-    const directionId =
-      trip.direction_id ??
-      trip.directionId ??
-      "";
-
-    if (
-      routeMetaById.has(String(trip.route_id))
-    ) {
-      const meta = routeMetaById.get(
-        String(trip.route_id)
-      );
-
-      if (
-        meta?.destinations &&
-        meta.destinations[directionId]
-      ) {
-        return meta.destinations[directionId];
-      }
-    }
-
-    return "";
-  }
-
-  function normalizeRealtimeRows(data, stop) {
-    const rawRoutes =
-      Array.isArray(data?.routes)
-        ? data.routes
-        : [];
-
-    const rows = [];
-
-    for (const routeGroup of rawRoutes) {
-      if (!routeGroup) continue;
-
-      const routeId = String(
-        routeGroup.route_id ??
-        routeGroup.routeId ??
-        ""
-      ).trim();
-
-      const routeRef = String(
-        routeGroup.route_short_name ??
-        routeGroup.route_short_name ??
-        routeGroup.route ??
-        routeGroup.line ??
-        ""
-      ).trim();
-
-      const meta = getLineMeta(
-        routeId,
-        routeRef
-      );
-
-      const directionGroups =
-        Array.isArray(routeGroup.directions)
-          ? routeGroup.directions
-          : [routeGroup];
-
-      for (const directionGroup of directionGroups) {
-        if (!directionGroup) continue;
-
-        const destination =
-          String(
-            directionGroup.destination ??
-            directionGroup.headsign ??
-            directionGroup.trip_headsign ??
-            getDestinationFromTrip(
-              directionGroup.trip
-            ) ??
-            ""
-          ).trim();
-
-        const times =
-          Array.isArray(directionGroup.times)
-            ? directionGroup.times
-            : [];
-
-        const arrivals = times
-          .map(time => {
-            if (
-              typeof time === "number" ||
-              typeof time === "string"
-            ) {
-              const numeric = Number(time);
-
-              return Number.isFinite(numeric)
-                ? {
-                    minutes: Math.max(
-                      0,
-                      Math.round(numeric)
-                    )
-                  }
-                : null;
-            }
-
-            if (!time || typeof time !== "object") {
-              return null;
-            }
-
-            const rawMinutes =
-              time.minutes ??
-              time.min ??
-              time.t ??
-              null;
-
-            const rawTime =
-              time.time ??
-              time.arrival ??
-              time.arrival_time ??
-              null;
-
-            let minutes = Number(
-              rawMinutes
-            );
-
-            let clockTime = null;
-
-            if (
-              Number.isFinite(minutes) &&
-              minutes > 10000 &&
-              !rawTime
-            ) {
-              const now = getNowGtfsSeconds();
-              minutes = Math.max(
-                0,
-                Math.round(
-                  (minutes - now) / 60
-                )
-              );
-            }
-
-            if (
-              rawTime &&
-              !Number.isFinite(minutes)
-            ) {
-              const parsed =
-                parseGtfsTime(rawTime);
-
-              if (parsed !== null) {
-                const now =
-                  getNowGtfsSeconds();
-
-                let diff = parsed - now;
-
-                if (diff < -43200) {
-                  diff += 86400;
-                }
-
-                minutes = Math.max(
-                  0,
-                  Math.round(diff / 60)
-                );
-              }
-            }
-
-            if (!Number.isFinite(minutes)) {
-              return null;
-            }
-
-            if (
-              rawTime &&
-              typeof rawTime === "string" &&
-              /^\d{1,2}:\d{2}/.test(rawTime)
-            ) {
-              clockTime = rawTime.slice(
-                0,
-                5
-              );
-            }
-
-            return {
-              minutes: Math.max(
-                0,
-                Math.round(minutes)
-              ),
-              clockTime
-            };
-          })
-          .filter(Boolean)
-          .sort(
-            (a, b) =>
-              a.minutes - b.minutes
-          );
-
-        if (!arrivals.length) {
-          continue;
-        }
-
-        rows.push({
-          routeId,
-          routeRef,
-          meta,
-          destination,
-          arrivals: arrivals.slice(0, 5)
-        });
-      }
-    }
-
-    return rows;
-  }
-
-  function createRoutePill(meta) {
-    const color =
-      meta?.color ||
-      "#BE1E2D";
-
-    const textColor =
-      meta?.textColor ||
-      "#FFFFFF";
-
-    return `
-      <span
-        class="line-pill"
-        style="
-          --line-color:${escapeHtml(color)};
-          --line-text-color:${escapeHtml(textColor)};
-          background-color:${escapeHtml(color)};
-          color:${escapeHtml(textColor)};
-        "
-      >
-        ${escapeHtml(meta?.number || "—")}
-      </span>
-    `;
-  }
-
-  function createTransportIcon(meta) {
-    if (meta?.icon) {
-      return `
-        <span class="line-icon" aria-hidden="true">
-          ${meta.icon}
-        </span>
-      `;
-    }
-
-    return `
-      <span
-        class="line-icon line-icon-placeholder"
-        aria-hidden="true"
-      ></span>
-    `;
-  }
-
-  function createArrivalTime(arrival, index) {
-    const minutes = Number(
-      arrival?.minutes
-    );
-
-    if (!Number.isFinite(minutes)) {
-      return "";
-    }
-
-    const clockTime =
-      arrival?.clockTime ||
-      "";
-
-    const primaryTime =
-      clockTime ||
-      (() => {
-        const now = getNowGtfsSeconds();
-        return formatClockTime(
-          now + minutes * 60
-        );
-      })();
-
-    const liveIndicator =
-      index === 0
-        ? `
-          <span
-            class="live-indicator"
-            aria-label="Най-близко пристигане"
-            title="Най-близко пристигане"
-          ></span>
-        `
-        : "";
-
-    return `
-      <div class="arrival-time">
-        ${liveIndicator}
-        <strong>${escapeHtml(primaryTime)}</strong>
-        <span class="arrival-minutes">
-          ${escapeHtml(minutes)} мин.
-        </span>
-      </div>
-    `;
-  }
-
-  function renderRows(rows) {
-    if (!rows.length) {
-      return `
-        <div class="virtual-board-empty">
-          <p>
-            Няма налични realtime пристигания
-            за тази спирка.
-          </p>
-        </div>
-      `;
-    }
-
-    return rows.map(row => {
-      const firstArrival =
-        row.arrivals[0] || null;
-
-      const remaining =
-        row.arrivals.slice(1);
-
-      return `
-        <article class="virtual-board-row">
-          <div class="virtual-board-route">
-            ${createTransportIcon(row.meta)}
-            ${createRoutePill(row.meta)}
-
-            <span class="destination-arrow" aria-hidden="true">
-              →
-            </span>
-
-            <span class="destination">
-              ${escapeHtml(
-                row.destination ||
-                "—"
-              )}
-            </span>
-          </div>
-
-          <div class="virtual-board-arrivals">
-            ${
-              firstArrival
-                ? createArrivalTime(
-                    firstArrival,
-                    0
-                  )
-                : ""
-            }
-
-            ${
-              remaining.length
-                ? `
-                  <div class="arrival-next">
-                    ${remaining
-                      .map((arrival, index) =>
-                        createArrivalTime(
-                          arrival,
-                          index + 1
-                        )
-                      )
-                      .join("")}
-                  </div>
-                `
-                : ""
-            }
-          </div>
-        </article>
-      `;
-    }).join("");
-  }
-
-  async function renderStopBoard(
-    stop,
-    data = null
-  ) {
-    selectedStopId =
-      String(stop.stop_id);
-
+  async function renderStopBoard(stop, boardData = null) {
+    selectedStopId = String(stop.stop_id);
     const panel = boardPanel();
-
     if (!panel) return;
 
-    const stopTitle = resolveStopName(
-      stop
-    );
-
     panel.innerHTML = `
-      <div class="virtual-board-loading">
-        <span class="spinner" aria-hidden="true"></span>
-        <span>Зареждане...</span>
+      <div class="virtual-board-header">
+        <div>
+          <div class="virtual-board-kicker">Спирка ${escapeHtml(stop.stop_code || stop.stop_id || "")}</div>
+          <h2>${escapeHtml(stop.stop_name || stop.name || "Спирка")}</h2>
+        </div>
+        <div class="virtual-board-header-actions">
+          <button type="button" class="virtual-board-refresh is-loading" id="virtualBoardRefresh" disabled>Обнови</button>
+          <button type="button" class="virtual-board-close" id="virtualBoardClose" aria-label="Затвори таблото">×</button>
+        </div>
       </div>
+      <div class="virtual-board-list"><div class="virtual-board-loading">Зареждане…</div></div>
     `;
 
+    document.getElementById("virtualBoardClose")?.addEventListener("click", () => {
+      selectedStopId = null;
+      renderEmptyBoard();
+    });
+
     try {
-      const realtimeData =
-        data ||
-        await fetchVirtualBoard(stop);
+      const data = boardData || await fetchVirtualBoard(stop);
+      const list = panel.querySelector(".virtual-board-list");
 
-      const rows =
-        normalizeRealtimeRows(
-          realtimeData,
-          stop
-        );
+      if (data.status !== "ok" || !data.routes.length) {
+        list.innerHTML = `<div class="virtual-board-no-data">Няма налични realtime пристигания за тази спирка.</div>`;
+        return;
+      }
 
-      panel.innerHTML = `
-        <div class="virtual-board-header">
-          <div>
-            <h2>${escapeHtml(stopTitle)}</h2>
-          </div>
+      const rows = data.routes
+        .map(route => ({
+          ...route,
+          arrivals: (route.times || [])
+            .map(time => ({
+              timestamp: Number(time?.timestamp),
+              delay: Number.isFinite(Number(time?.delay)) ? Number(time.delay) : null
+            }))
+            .filter(time => Number.isFinite(time.timestamp))
+            .filter(time => getArrivalMinutes(time.timestamp) >= 0)
+            .sort((a, b) => a.timestamp - b.timestamp)
+            .slice(0, 4)
+        }))
+        .filter(route => route.arrivals.length)
+        .sort((a, b) => a.arrivals[0].timestamp - b.arrivals[0].timestamp);
 
-          <button
-            type="button"
-            id="virtualBoardRefresh"
-            class="virtual-board-refresh"
-            aria-label="Обнови"
-            title="Обнови"
-          >
-            ↻
-          </button>
-        </div>
+      if (!rows.length) {
+        list.innerHTML = `<div class="virtual-board-no-data">Няма налични realtime пристигания за тази спирка.</div>`;
+        return;
+      }
 
-        <div class="virtual-board-list">
-          ${renderRows(rows)}
-        </div>
-      `;
-
-      bindRefreshButton();
+      list.innerHTML = rows.map((row, index) => {
+        const meta = getLineMeta(row.route_id || row.routeId, row.route_ref);
+        const arrivals = row.arrivals;
+        return `
+          <article class="vb-row">
+            <div class="schedule-summary-route-row vb-route-row">
+              ${lineIdentityHtml(meta)}
+              ${destinationHtml(row.destination || row.headsign || "")}
+            </div>
+            <div class="vb-time-block">
+              ${countdownHtml(arrivals[0], index === 0)}
+              ${arrivals.length > 1 ? `<div class="vb-next-times">${arrivals.slice(1).map(time => `<span>${escapeHtml(formatArrivalClock(time.timestamp))}</span>`).join("")}</div>` : ""}
+            </div>
+          </article>
+        `;
+      }).join("");
     } catch (error) {
-      console.error(
-        "Грешка при зареждане на realtime таблото:",
-        error
-      );
-
-      panel.innerHTML = `
-        <div class="virtual-board-error">
-          Realtime данните не могат
-          да бъдат заредени.
-        </div>
-      `;
-
-      bindRefreshButton();
+      console.error("Realtime virtual board error:", error);
+      panel.querySelector(".virtual-board-list").innerHTML = `<div class="virtual-board-error">Realtime данните не могат да бъдат заредени.</div>`;
+    } finally {
+      const refreshButton = document.getElementById("virtualBoardRefresh");
+      if (refreshButton) {
+        refreshButton.disabled = false;
+        refreshButton.classList.remove("is-loading");
+        refreshButton.addEventListener("click", refreshSelectedBoard, { once: true });
+      }
     }
-  }
-
-  function bindRefreshButton() {
-    const refreshButton =
-      document.getElementById(
-        "virtualBoardRefresh"
-      );
-
-    if (
-      !refreshButton ||
-      refreshButton.dataset.bound
-    ) {
-      return;
-    }
-
-    refreshButton.dataset.bound = "true";
-
-    refreshButton.addEventListener(
-      "click",
-      refreshSelectedBoard
-    );
   }
 
   function renderEmptyBoard() {
     const panel = boardPanel();
-
     if (!panel) return;
 
     panel.innerHTML = `
       <div class="virtual-board-empty">
-        <p>
-          Изберете спирка от картата,
-          за да видите следващите пристигания
-        </p>
+        <p>Изберете спирка от картата, за да видите следващите пристигания</p>
       </div>
     `;
   }
 
   function findStopById(stopId) {
-    return (
-      transportData?.stops || []
-    ).find(
-      stop =>
-        String(stop.stop_id) ===
-        String(stopId)
+    return (transportData?.stops || []).find(
+      stop => String(stop.stop_id) === String(stopId)
     ) || null;
   }
 
   function selectStopOnMap(stop) {
     if (!stop || !map) return;
-
     const lat = Number(stop.stop_lat);
     const lon = Number(stop.stop_lon);
-
-    if (
-      !Number.isFinite(lat) ||
-      !Number.isFinite(lon)
-    ) {
-      return;
-    }
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
 
     renderStopBoard(stop);
-
-    map.setView(
-      [lat, lon],
-      Math.max(map.getZoom(), 15),
-      { animate: true }
-    );
+    map.setView([lat, lon], Math.max(map.getZoom(), 15), { animate: true });
   }
 
   function setupStopSearch(stops) {
-    const input =
-      document.getElementById(
-        "stopSearch"
-      );
-
-    const results =
-      document.getElementById(
-        "stopSearchResults"
-      );
-
+    const input = document.getElementById("stopSearch");
+    const results = document.getElementById("stopSearchResults");
     if (!input || !results) return;
 
-    const normalized =
-      value =>
-        String(value || "")
-          .toLocaleLowerCase(
-            "bg-BG"
-          )
-          .normalize("NFD")
-          .replace(
-            /[\u0300-\u036f]/g,
-            "");
+    const normalized = value => String(value || "")
+      .toLocaleLowerCase("bg-BG")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
 
-    const searchStops =
-      query => {
-        const needle =
-          normalized(query)
-            .trim();
+    const searchStops = query => {
+      const needle = normalized(query).trim();
+      if (!needle) return [];
 
-        if (!needle) return [];
+      return stops
+        .filter(stop => {
+          const name = normalized(stop.name || stop.stop_name);
+          const code = normalized(stop.stop_code || stop.stop_id);
+          return name.includes(needle) || code.includes(needle);
+        })
+        .slice(0, 8);
+    };
 
-        return stops
-          .filter(stop => {
-            const name =
-              normalized(
-                stop.name ||
-                stop.stop_name
-              );
+    const renderResults = matches => {
+      results.innerHTML = matches.length
+        ? matches.map(stop => `
+            <button type="button" class="virtual-stop-search-result" data-stop-id="${escapeHtml(stop.stop_id)}">
+              <strong>${escapeHtml(stop.name || stop.stop_name || "Спирка")}</strong>
+              <span>${escapeHtml(stop.stop_code || stop.stop_id || "")}</span>
+            </button>
+          `).join("")
+        : `<div class="virtual-stop-search-empty">Няма намерени спирки.</div>`;
 
-            const code =
-              normalized(
-                stop.stop_code ||
-                stop.stop_id
-              );
+      results.hidden = false;
 
-            return (
-              name.includes(needle) ||
-              code.includes(needle)
-            );
-          })
-          .slice(0, 8);
-      };
+      results.querySelectorAll("[data-stop-id]").forEach(button => {
+        button.addEventListener("click", () => {
+          const stop = findStopById(button.dataset.stopId);
+          if (stop) {
+            input.value = stop.name || stop.stop_name || "";
+            results.hidden = true;
+            selectStopOnMap(stop);
+          }
+        });
+      });
+    };
 
-    const renderResults =
-      matches => {
-        results.innerHTML =
-          matches.length
-            ? matches.map(stop => `
-                <button
-                  type="button"
-                  class="virtual-stop-search-result"
-                  data-stop-id="${escapeHtml(
-                    stop.stop_id
-                  )}"
-                >
-                  <strong>
-                    ${escapeHtml(
-                      stop.name ||
-                      stop.stop_name ||
-                      "Спирка"
-                    )}
-                  </strong>
-                  <span>
-                    ${escapeHtml(
-                      stop.stop_code ||
-                      stop.stop_id ||
-                      ""
-                    )}
-                  </span>
-                </button>
-              `).join("")
-            : `
-              <div class="virtual-stop-search-empty">
-                Няма намерени спирки.
-              </div>
-            `;
-
-        results.hidden = false;
-
-        results
-          .querySelectorAll(
-            "[data-stop-id]"
-          )
-          .forEach(button => {
-            button.addEventListener(
-              "click",
-              () => {
-                const stop =
-                  findStopById(
-                    button.dataset.stopId
-                  );
-
-                if (stop) {
-                  input.value =
-                    stop.name ||
-                    stop.stop_name ||
-                    "";
-
-                  results.hidden = true;
-
-                  selectStopOnMap(
-                    stop
-                  );
-                }
-              }
-            );
-          });
-      };
-
-    input.addEventListener(
-      "input",
-      () => {
-        const query =
-          input.value.trim();
-
-        if (!query) {
-          results.hidden = true;
-          results.innerHTML = "";
-          return;
-        }
-
-        renderResults(
-          searchStops(query)
-        );
+    input.addEventListener("input", () => {
+      const query = input.value.trim();
+      if (!query) {
+        results.hidden = true;
+        results.innerHTML = "";
+        return;
       }
-    );
+      renderResults(searchStops(query));
+    });
 
-    input.addEventListener(
-      "focus",
-      () => {
-        if (input.value.trim()) {
-          renderResults(
-            searchStops(
-              input.value
-            )
-          );
-        }
-      }
-    );
+    input.addEventListener("focus", () => {
+      if (input.value.trim()) renderResults(searchStops(input.value));
+    });
 
-    document.addEventListener(
-      "click",
-      event => {
-        if (
-          !event.target.closest(
-            ".virtual-stop-search"
-          )
-        ) {
-          results.hidden = true;
-        }
+    document.addEventListener("click", event => {
+      if (!event.target.closest(".virtual-stop-search")) {
+        results.hidden = true;
       }
-    );
+    });
   }
 
   function setupGeolocation() {
-    const button =
-      document.getElementById(
-        "locateUserButton"
-      );
-
+    const button = document.getElementById("locateUserButton");
     if (!button) return;
 
     let userMarker = null;
-
     const locate = () => {
       if (!navigator.geolocation) {
-        window.alert(
-          "Този браузър не поддържа определяне на локация."
-        );
+        window.alert("Този браузър не поддържа определяне на локация.");
         return;
       }
 
       button.disabled = true;
-      button.classList.add(
-        "is-loading"
-      );
+      button.classList.add("is-loading");
 
       navigator.geolocation.getCurrentPosition(
         position => {
-          const lat =
-            position.coords.latitude;
-
-          const lon =
-            position.coords.longitude;
+          const lat = position.coords.latitude;
+          const lon = position.coords.longitude;
 
           if (!userMarker) {
-            userMarker =
-              L.circleMarker(
-                [lat, lon],
-                {
-                  radius: 8,
-                  weight: 3,
-                  color: "#ffffff",
-                  fillColor: "#2563eb",
-                  fillOpacity: 1
-                }
-              ).addTo(map);
-
-            userMarker.bindTooltip(
-              "Вашата локация",
-              {
-                direction: "top",
-                offset: [0, -8]
-              }
-            );
+            userMarker = L.circleMarker([lat, lon], {
+              radius: 8,
+              weight: 3,
+              color: "#ffffff",
+              fillColor: "#2563eb",
+              fillOpacity: 1
+            }).addTo(map);
+            userMarker.bindTooltip("Вашата локация", { direction: "top", offset: [0, -8] });
           } else {
-            userMarker.setLatLng(
-              [lat, lon]
-            );
+            userMarker.setLatLng([lat, lon]);
           }
 
-          map.setView(
-            [lat, lon],
-            Math.max(
-              map.getZoom(),
-              15
-            ),
-            {
-              animate: true
-            }
-          );
-
+          map.setView([lat, lon], Math.max(map.getZoom(), 15), { animate: true });
           button.disabled = false;
-          button.classList.remove(
-            "is-loading"
-          );
+          button.classList.remove("is-loading");
         },
         error => {
-          console.warn(
-            "Грешка при определяне на локацията:",
-            error
-          );
-
+          console.warn("Грешка при определяне на локацията:", error);
           button.disabled = false;
-          button.classList.remove(
-            "is-loading"
-          );
-
-          window.alert(
-            "Не успяхме да определим вашата локация. Проверете разрешението за достъп до местоположението."
-          );
+          button.classList.remove("is-loading");
+          window.alert("Не успяхме да определим вашата локация. Проверете разрешението за достъп до местоположението.");
         },
-        {
-          enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 30000
-        }
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
       );
     };
 
-    button.addEventListener(
-      "click",
-      locate
-    );
+    button.addEventListener("click", locate);
   }
 
   function addStopMarkers(stops) {
     stopMarkers.clearLayers();
 
-    const renderer =
-      L.svg();
+    const renderer = L.svg();
 
     for (const stop of stops) {
-      const lat =
-        Number(stop.stop_lat);
+      const lat = Number(stop.stop_lat);
+      const lon = Number(stop.stop_lon);
 
-      const lon =
-        Number(stop.stop_lon);
-
-      if (
-        !Number.isFinite(lat) ||
-        !Number.isFinite(lon)
-      ) {
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
         continue;
       }
 
-      const clickTarget =
-        L.circleMarker(
-          [lat, lon],
-          {
-            radius: 16,
-            weight: 0,
-            stroke: false,
-            fillColor: "#111827",
-            fillOpacity: 0.01,
-            renderer,
-            pane: "markerPane"
-          }
-        );
+      const clickTarget = L.circleMarker([lat, lon], {
+        radius: 16,
+        weight: 0,
+        stroke: false,
+        fillColor: "#111827",
+        fillOpacity: 0.01,
+        renderer,
+        pane: "markerPane"
+      });
 
-      const marker =
-        L.circleMarker(
-          [lat, lon],
-          {
-            radius: 7,
-            weight: 2,
-            color: "#ffffff",
-            fillColor: "#111827",
-            fillOpacity: 0.9,
-            renderer,
-            pane: "markerPane"
-          }
-        );
+      const marker = L.circleMarker([lat, lon], {
+        radius: 7,
+        weight: 2,
+        color: "#ffffff",
+        fillColor: "#111827",
+        fillOpacity: 0.9,
+        renderer,
+        pane: "markerPane"
+      });
 
-      const stopTooltip =
-        escapeHtml(
-          stop.name ||
-          stop.stop_name ||
-          "Спирка"
-        );
+      const stopTooltip = escapeHtml(stop.name || stop.stop_name || "Спирка");
+      marker.bindTooltip(stopTooltip, { direction: "top", offset: [0, -5] });
+      clickTarget.bindTooltip(stopTooltip, { direction: "top", offset: [0, -12] });
 
-      marker.bindTooltip(
-        stopTooltip,
-        {
-          direction: "top",
-          offset: [0, -5]
-        }
-      );
+      const select = () => selectStopOnMap(stop);
+      clickTarget.on("click", select);
+      marker.on("click", select);
 
-      clickTarget.bindTooltip(
-        stopTooltip,
-        {
-          direction: "top",
-          offset: [0, -12]
-        }
-      );
-
-      const select =
-        () =>
-          selectStopOnMap(
-            stop
-          );
-
-      clickTarget.on(
-        "click",
-        select
-      );
-
-      marker.on(
-        "click",
-        select
-      );
-
-      clickTarget.addTo(
-        stopMarkers
-      );
-
-      marker.addTo(
-        stopMarkers
-      );
+      clickTarget.addTo(stopMarkers);
+      marker.addTo(stopMarkers);
     }
   }
 
   function getActiveStops(stops) {
-    const activeStopIds =
-      new Set();
+    const activeStopIds = new Set();
 
-    for (
-      const directionSet of Object.values(
-        transportData?.directions || {}
-      )
-    ) {
-      for (
-        const direction of Object.values(
-          directionSet || {}
-        )
-      ) {
-        for (
-          const stop of
-            direction?.stops || []
-        ) {
-          const stopId =
-            String(
-              stop?.stop_id ?? ""
-            ).trim();
-
-          if (stopId) {
-            activeStopIds.add(
-              stopId
-            );
-          }
+    for (const directionSet of Object.values(transportData?.directions || {})) {
+      for (const direction of Object.values(directionSet || {})) {
+        for (const stop of direction?.stops || []) {
+          const stopId = String(stop?.stop_id ?? "").trim();
+          if (stopId) activeStopIds.add(stopId);
         }
       }
     }
 
-    return stops.filter(
-      stop =>
-        activeStopIds.has(
-          String(
-            stop?.stop_id ?? ""
-          ).trim()
-        )
-    );
+    return stops.filter(stop => activeStopIds.has(String(stop?.stop_id ?? "").trim()));
   }
 
   function initMap(stops) {
     if (typeof L === "undefined") {
-      const mapElement =
-        document.getElementById(
-          "virtualMap"
-        );
-
+      const mapElement = document.getElementById("virtualMap");
       if (mapElement) {
         mapElement.innerHTML =
           '<div class="virtual-map-error">Картата не може да бъде заредена.</div>';
       }
-
       return;
     }
 
-    map =
-      L.map(
-        "virtualMap",
-        {
-          center:
-            SOFIA_CENTER,
-          zoom: 12,
-          minZoom: 10,
-          preferCanvas: true,
-          zoomControl: true
-        }
-      );
+    map = L.map("virtualMap", {
+      center: SOFIA_CENTER,
+      zoom: 12,
+      minZoom: 10,
+      preferCanvas: true,
+      zoomControl: true
+    });
 
-    L.tileLayer(
-      "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-      {
-        maxZoom: 19,
-        attribution:
-          "&copy; OpenStreetMap contributors"
-      }
-    ).addTo(map);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
 
-    stopMarkers =
-      L.layerGroup().addTo(
-        map
-      );
+    stopMarkers = L.layerGroup().addTo(map);
 
-    addStopMarkers(
-      stops
-    );
+    addStopMarkers(stops);
 
-    setTimeout(
-      () =>
-        map.invalidateSize(),
-      100
-    );
+    setTimeout(() => map.invalidateSize(), 100);
   }
 
-  function startTimers() {
-    clearInterval(
-      refreshTimer
-    );
 
-    refreshTimer =
-      setInterval(
-        () => {
-          if (
-            selectedStopId
-          ) {
-            refreshSelectedBoard();
-          }
-        },
-        REFRESH_MS
-      );
+  function startTimers() {
+    clearInterval(refreshTimer);
+
+    refreshTimer = setInterval(() => {
+      if (selectedStopId) refreshSelectedBoard();
+    }, REFRESH_MS);
   }
 
   async function refreshSelectedBoard() {
     if (!selectedStopId) return;
 
-    const stop =
-      findStopById(
-        selectedStopId
-      );
-
+    const stop = findStopById(selectedStopId);
     if (!stop) return;
 
-    const refreshButton =
-      document.getElementById(
-        "virtualBoardRefresh"
-      );
-
-    refreshButton?.classList.add(
-      "is-loading"
-    );
-
-    if (refreshButton) {
-      refreshButton.disabled =
-        true;
-    }
+    const refreshButton = document.getElementById("virtualBoardRefresh");
+    refreshButton?.classList.add("is-loading");
+    if (refreshButton) refreshButton.disabled = true;
 
     try {
-      const data =
-        await fetchVirtualBoard(
-          stop
-        );
-
-      await renderStopBoard(
-        stop,
-        data
-      );
+      const data = await fetchVirtualBoard(stop);
+      await renderStopBoard(stop, data);
     } catch (error) {
-      console.error(
-        "Неуспешно зареждане на GTFS-Realtime виртуално табло:",
-        error
-      );
-
-      const list =
-        boardPanel()?.querySelector(
-          ".virtual-board-list"
-        );
-
-      if (list) {
-        list.innerHTML = `
-          <div class="virtual-board-error">
-            Realtime данните не могат да бъдат заредени.
-          </div>
-        `;
-      }
+      console.error("Неуспешно зареждане на GTFS-Realtime виртуално табло:", error);
+      const list = boardPanel()?.querySelector(".virtual-board-list");
+      if (list) list.innerHTML = `<div class="virtual-board-error">Realtime данните не могат да бъдат заредени.</div>`;
     }
   }
 
   async function initializeVirtualBoards() {
     try {
-      transportData =
-        await loadTransportData();
+      transportData = await loadTransportData();
 
-      routeById =
-        new Map(
-          (transportData.routes || [])
-            .map(route => [
-              String(
-                route.route_id
-              ),
-              route
-            ])
-        );
+      routeById = new Map(
+        (transportData.routes || []).map(route => [
+          String(route.route_id),
+          route
+        ])
+      );
 
-      tripById =
-        new Map(
-          (transportData.trips || [])
-            .map(trip => [
-              String(
-                trip.trip_id
-              ),
-              trip
-            ])
-        );
+      tripById = new Map(
+        (transportData.trips || []).map(trip => [
+          String(trip.trip_id),
+          trip
+        ])
+      );
 
-      tripStopsById =
-        new Map();
-
-      for (
-        const directionSet of Object.values(
-          transportData.directions || {}
-        )
-      ) {
-        for (
-          const direction of Object.values(
-            directionSet || {}
-          )
-        ) {
-          const tripId =
-            String(
-              direction?.trip_id ||
-              ""
-            ).trim();
-
+      tripStopsById = new Map();
+      for (const directionSet of Object.values(transportData.directions || {})) {
+        for (const direction of Object.values(directionSet || {})) {
+          const tripId = String(direction?.trip_id || '').trim();
           if (!tripId) continue;
-
-          const stopIds =
-            Array.isArray(
-              direction?.stops
-            )
-              ? direction.stops
-                  .map(
-                    stop =>
-                      String(
-                        stop?.stop_id ||
-                        ""
-                      ).trim()
-                  )
-                  .filter(Boolean)
-              : [];
-
-          if (stopIds.length) {
-            tripStopsById.set(
-              tripId,
-              stopIds
-            );
-          }
+          const stopIds = Array.isArray(direction?.stops)
+            ? direction.stops.map(stop => String(stop?.stop_id || '').trim()).filter(Boolean)
+            : [];
+          if (stopIds.length) tripStopsById.set(tripId, stopIds);
         }
       }
 
-      const lines =
-        convertGtfsRoutes(
-          transportData.routes ||
-            [],
-          transportData.trips ||
-            [],
-          transportData.directions ||
-            {}
-        );
-
-      routeMetaById =
-        new Map(
-          lines.map(line => [
-            String(line.id),
-            line
-          ])
-        );
-
-      routeMetaByNumber =
-        new Map(
-          lines.map(line => [
-            String(
-              line.number
-            ).trim(),
-            line
-          ])
-        );
-
-      const allStops =
-        transportData.stops ||
-        [];
-
-      const stops =
-        getActiveStops(
-          allStops
-        );
-
-      initMap(
-        stops
+      const lines = convertGtfsRoutes(
+        transportData.routes || [],
+        transportData.trips || [],
+        transportData.directions || {}
       );
 
-      setupStopSearch(
-        stops
+      routeMetaById = new Map(
+        lines.map(line => [String(line.id), line])
+      );
+      routeMetaByNumber = new Map(
+        lines.map(line => [String(line.number).trim(), line])
       );
 
+      const allStops = transportData.stops || [];
+      const stops = getActiveStops(allStops);
+      initMap(stops);
+      setupStopSearch(stops);
       setupGeolocation();
-
       startTimers();
     } catch (error) {
-      console.error(
-        "Неуспешно зареждане на GTFS за виртуалните табла:",
-        error
-      );
+      console.error("Неуспешно зареждане на GTFS за виртуалните табла:", error);
 
-      const panel =
-        boardPanel();
-
+      const panel = boardPanel();
       if (panel) {
         panel.innerHTML = `
           <div class="virtual-board-error">
-            <strong>
-              Виртуалното табло не може
-              да бъде заредено.
-            </strong>
-            <span>
-              ${escapeHtml(
-                error.message ||
-                "Неизвестна грешка."
-              )}
-            </span>
+            <strong>Виртуалното табло не може да бъде заредено.</strong>
+            <span>${escapeHtml(error.message || "Неизвестна грешка.")}</span>
           </div>
         `;
       }
     }
   }
 
-  document.addEventListener(
-    "DOMContentLoaded",
-    initializeVirtualBoards
-  );
+  document.addEventListener("DOMContentLoaded", initializeVirtualBoards);
 })();
