@@ -333,7 +333,7 @@
     const typeClass = line?.type === "metro" ? " metro" : "";
     const color = escapeHtml(line?.color || "#BE1E2D");
     const textColor = escapeHtml(line?.textColor || "#FFFFFF");
-    return `<span class="schedule-line-pill${typeClass}" style="--line-color:${color}; --line-text-color:${textColor}">${number}</span>`;
+    return `<span class="schedule-line-pill${typeClass}" style="--line-color:${color}; --line-text-color:${textColor}; background-color:${color}; color:${textColor};">${number}</span>`;
   }
 
   function lineIdentityHtml(line) {
@@ -382,7 +382,7 @@
     const clock = formatArrivalClock(timestamp);
     const live = showLive ? '<span class="vb-arrival-live" aria-hidden="true"></span>' : '';
 
-    return `<div class="vb-arrival-main">${live}<span class="vb-arrival-clock">${escapeHtml(clock)}</span><span class="vb-arrival-minutes">${rounded} мин.</span></div>`;
+    return `<div class="vb-arrival-main">${live}<span class="vb-arrival-clock">${escapeHtml(clock)}</span><span class="vb-arrival-separator" aria-hidden="true">·</span><span class="vb-arrival-minutes">${rounded} мин.</span></div>`;
   }
 
   function normalizeStopKey(value) {
