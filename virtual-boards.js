@@ -152,14 +152,21 @@
 
   function decodeTripDescriptor(bytes) {
     const state = { index: 0 };
-    const trip = { tripId: "", routeId: "", directionId: "" };
+    const trip = {
+      tripId: "",
+      routeId: "",
+      directionId: "",
+      scheduleRelationship: null
+    };
 
     while (state.index < bytes.length) {
       const field = readField(bytes, state);
-      if (field.wireType !== 2) continue;
-      if (field.fieldNumber === 1) trip.tripId = decodeString(field.value);
-      else if (field.fieldNumber === 5) trip.routeId = decodeString(field.value);
-      else if (field.fieldNumber === 6) trip.directionId = decodeString(field.value);
+      if (field.fieldNumber === 2 && field.wireType === 2) trip.startTime = decodeString(field.value);
+      else if (field.fieldNumber === 3 && field.wireType === 2) trip.startDate = decodeString(field.value);
+      else if (field.fieldNumber === 1 && field.wireType === 2) trip.tripId = decodeString(field.value);
+      else if (field.fieldNumber === 4 && field.wireType === 0) trip.scheduleRelationship = Number(field.value);
+      else if (field.fieldNumber === 5 && field.wireType === 2) trip.routeId = decodeString(field.value);
+      else if (field.fieldNumber === 6 && field.wireType === 0) trip.directionId = String(Number(field.value));
     }
 
     return trip;
@@ -243,139 +250,169 @@
     const bytes = new Uint8Array(buffer);
     const state = { index: 0 };
     const updates = [];
+    let feedTimestamp = null;
 
     while (state.index < bytes.length) {
       const field = readField(bytes, state);
-      if (field.fieldNumber === 2 && field.wireType === 2) {
+      if (field.fieldNumber === 1 && field.wireType === 2) {
+        const headerState = { index: 0 };
+        while (headerState.index < field.value.length) {
+          const headerField = readField(field.value, headerState);
+          if (headerField.fieldNumber === 3 && headerField.wireType === 0) {
+            feedTimestamp = Number(headerField.value) * 1000;
+          }
+        }
+      } else if (field.fieldNumber === 2 && field.wireType === 2) {
         const entity = decodeFeedEntity(field.value);
         if (entity?.trip?.tripId) updates.push(entity);
       }
     }
 
-    return updates;
+    return { updates, feedTimestamp: feedTimestamp || Date.now() };
   }
 
-  function getLineMeta(routeId, routeRef) {
-    if (routeRef && routeMetaByNumber.has(String(routeRef).trim())) {
-      return routeMetaByNumber.get(String(routeRef).trim());
+  function normalizeStopKey(value) {
+    const raw = String(value ?? "").trim();
+    if (!raw) return "";
+    const withoutMetroPrefix = raw.replace(/^M/i, "");
+    const numeric = withoutMetroPrefix.replace(/^0+(?=\d)/, "");
+    return numeric || "0";
+  }
+
+  function stopIdsMatch(left, right) {
+    return normalizeStopKey(left) === normalizeStopKey(right);
+  }
+
+  function findStaticTrip(tripId) {
+    return tripById.get(String(tripId)) || null;
+  }
+
+  function buildRealtimeRoutes(updates, stop, generatedAt) {
+    const selectedStopIds = [stop.stop_id, stop.stop_code, String(stop.stop_id || "").replace(/^M/i, "")]
+      .filter(Boolean)
+      .map(String);
+
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const grouped = new Map();
+
+    for (const entity of updates) {
+      const trip = entity?.trip;
+      if (!trip || trip.scheduleRelationship === 3 || trip.scheduleRelationship === 2) continue;
+
+      const staticTrip = findStaticTrip(trip.tripId);
+      const routeId = trip.routeId || staticTrip?.route_id || "";
+      const route = routeById.get(String(routeId));
+      const meta = getLineMeta(routeId, route?.route_short_name || "");
+      const destination = staticTrip?.trip_headsign || route?.route_long_name?.split("-")?.at(-1)?.trim() || "";
+
+      const relevant = (entity.stopTimeUpdates || []).filter(update => {
+        if (!update?.stopId || update.scheduleRelationship === 1 || update.scheduleRelationship === 2) return false;
+        return selectedStopIds.some(id => stopIdsMatch(id, update.stopId));
+      });
+
+      for (const update of relevant) {
+        const event = update.arrival?.time != null
+          ? update.arrival
+          : update.departure?.time != null
+            ? update.departure
+            : null;
+        if (!event || !Number.isFinite(event.time)) continue;
+
+        const arrivalSeconds = Number(event.time);
+        if (arrivalSeconds < nowSeconds - 30 || arrivalSeconds > nowSeconds + 3 * 3600) continue;
+
+        const key = `${String(routeId)}|${String(destination)}|${String(meta.number || "")}`;
+        if (!grouped.has(key)) {
+          grouped.set(key, {
+            route_id: routeId,
+            route_ref: meta.number || route?.route_short_name || "—",
+            destination,
+            times: [],
+            meta
+          });
+        }
+        grouped.get(key).times.push({
+          timestamp: arrivalSeconds,
+          t: Math.max(0, (arrivalSeconds - nowSeconds) / 60)
+        });
+      }
     }
 
-    return routeMetaById.get(String(routeId)) || {
-      id: routeId || routeRef,
-      number: routeRef || "—",
-      type: "other",
-      color: "#BE1E2D",
-      textColor: "#FFFFFF",
-      icon: ""
-    };
-  }
-
-  function linePillHtml(meta) {
-    if (meta.type === "metro") {
-      return `
-        <span
-          class="schedule-line-pill metro"
-          style="background:${escapeHtml(meta.color)};color:${escapeHtml(meta.textColor || "#FFFFFF")}"
-        >
-          ${escapeHtml(meta.number)}
-        </span>`;
+    const routes = [];
+    for (const row of grouped.values()) {
+      const seen = new Set();
+      row.times = row.times
+        .sort((a, b) => a.timestamp - b.timestamp)
+        .filter(item => {
+          if (seen.has(item.timestamp)) return false;
+          seen.add(item.timestamp);
+          return true;
+        })
+        .slice(0, 4)
+        .map(item => ({ t: item.t, timestamp: item.timestamp }));
+      if (row.times.length) routes.push(row);
     }
 
-    return `
-      <span
-        class="schedule-line-pill"
-        style="background:${escapeHtml(meta.color)};color:${escapeHtml(meta.textColor || "#FFFFFF")}"
-      >
-        ${escapeHtml(meta.number)}
-      </span>`;
-  }
-
-  function lineIdentityHtml(meta) {
-    return `
-      <span class="schedule-line-identity">
-        <span class="schedule-line-icon">
-          ${meta.icon ? `<img src="${escapeHtml(meta.icon)}" alt="">` : ""}
-        </span>
-        ${linePillHtml(meta)}
-      </span>`;
-  }
-
-  function destinationHtml(headsign) {
-    return `
-      <img
-        class="direction-arrow vb-direction-arrow"
-        src="Icons/destinationarrow.svg"
-        alt=""
-      />
-      <strong class="schedule-summary-destination vb-destination">
-        ${escapeHtml(headsign || "Без дестинация")}
-      </strong>
-    `;
-  }
-
-  function formatRelativeMinutes(minutes) {
-    const value = Number(minutes);
-    if (!Number.isFinite(value)) return "—";
-    if (value <= 0) return "<1 мин";
-    return `${Math.round(value)} мин`;
-  }
-
-  function formatArrivalClock(minutesFromNow, generatedAtMs = Date.now()) {
-    const seconds = Number(minutesFromNow) * 60;
-    if (!Number.isFinite(seconds)) return "—";
-    return new Intl.DateTimeFormat("bg-BG", {
-      timeZone: SOFIA_TIME_ZONE,
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23"
-    }).format(new Date(generatedAtMs + seconds * 1000));
-  }
-
-  function countdownHtml(minutesFromNow, isFirst, generatedAtMs) {
-    if (minutesFromNow == null || !Number.isFinite(Number(minutesFromNow))) {
-      return `<span class="vb-arrival vb-arrival-empty">Няма realtime данни</span>`;
-    }
-
-    return `
-      <span class="vb-arrival">
-        ${isFirst ? '<span class="live-indicator vb-arrival-live" aria-hidden="true"></span>' : ''}
-        <span class="vb-arrival-time">${escapeHtml(formatArrivalClock(minutesFromNow, generatedAtMs))}</span>
-        <span class="vb-arrival-countdown">след ${escapeHtml(formatRelativeMinutes(minutesFromNow))}</span>
-      </span>
-    `;
-  }
-
-  function normalizeProxyStopCode(stop) {
-    const stopId = String(stop?.stop_id || "").trim();
-    const stopCode = String(stop?.stop_code || stopId).trim();
-    const isMetro = stopId.startsWith("M");
+    routes.sort((a, b) => a.times[0].timestamp - b.times[0].timestamp);
     return {
-      isMetro,
-      value: isMetro ? stopId.replace(/\D/g, "") : stopCode
+      status: routes.length ? "ok" : "ok",
+      routes,
+      generatedAt
     };
   }
 
-  async function fetchVirtualBoard(stop) {
+  async function fetchWithTimeout(url, options = {}, timeoutMs = 45000) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...options, signal: controller.signal, cache: "no-store" });
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  async function fetchVirtualBoardViaProxy(stop) {
     const { isMetro, value } = normalizeProxyStopCode(stop);
     if (!value) throw new Error("Липсва код на спирката.");
 
     const url = `https://sofiatraffic-proxy.onrender.com/virtual-board?stop_code=${encodeURIComponent(value)}${isMetro ? "&metro" : ""}`;
-    const response = await fetch(url, { cache: "no-store" });
+    const response = await fetchWithTimeout(url);
     if (!response.ok) {
-      throw new Error(`Realtime заявката върна ${response.status}.`);
+      throw new Error(`Realtime proxy заявката върна ${response.status}.`);
     }
 
     const data = await response.json();
-    if (!data || data.status !== "ok") {
-      return { status: data?.status || "error", routes: [], generatedAt: Date.now() };
+    if (!data || typeof data !== "object") {
+      throw new Error("Realtime proxy върна невалиден отговор.");
     }
 
     return {
-      status: "ok",
+      status: data.status || "error",
       routes: Array.isArray(data.routes) ? data.routes : [],
-      generatedAt: data.generated_at ? Date.parse(data.generated_at) : Date.now()
+      generatedAt: data.generated_at ? Date.parse(data.generated_at) || Date.now() : Date.now()
     };
   }
+
+  async function fetchVirtualBoardDirect(stop) {
+    const response = await fetchWithTimeout("https://gtfs.sofiatraffic.bg/api/v1/trip-updates");
+    if (!response.ok) throw new Error(`Официалният GTFS-Realtime feed върна ${response.status}.`);
+    const buffer = await response.arrayBuffer();
+    const { updates, feedTimestamp } = decodeGtfsRealtimeFeed(buffer);
+    return buildRealtimeRoutes(updates, stop, feedTimestamp);
+  }
+
+  async function fetchVirtualBoard(stop) {
+    try {
+      const proxyData = await fetchVirtualBoardViaProxy(stop);
+      if (proxyData.status === "ok") return proxyData;
+      if (proxyData.status !== "error") return proxyData;
+    } catch (proxyError) {
+      console.warn("Realtime proxy недостъпен, пробвам официалния GTFS-Realtime feed.", proxyError);
+    }
+
+    return fetchVirtualBoardDirect(stop);
+  }
+
   async function renderStopBoard(stop, boardData = null) {
     selectedStopId = String(stop.stop_id);
     const panel = boardPanel();
