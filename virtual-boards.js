@@ -482,38 +482,53 @@
   }
 
   async function fetchVirtualBoardViaServer(stop) {
-    const stopCode = String(stop?.stop_code || stop?.stop_id || "").trim();
-    if (!stopCode) throw new Error("Липсва код на спирката.");
+    const stopCode = String(stop?.stop_code || stop?.stop_id || '').trim();
+    if (!stopCode) throw new Error('Липсва код на спирката.');
 
     const url = `api/virtual-board?stop_code=${encodeURIComponent(stopCode)}`;
-    const response = await fetchWithTimeout(url, {}, 25000);
+    const response = await fetchWithTimeout(url, {}, 20000);
 
-    if (!response.ok) {
-      let details = "";
-      try {
-        const errorData = await response.json();
-        details = errorData?.error ? ` ${errorData.error}` : "";
-      } catch {
-        // Ignore non-JSON error responses.
-      }
-      throw new Error(`Realtime API заявката върна ${response.status}.${details}`);
+    let data = null;
+    try {
+      data = await response.json();
+    } catch {
+      throw new Error(`Realtime API върна невалиден JSON (${response.status}).`);
     }
 
-    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data?.error || `Realtime API заявката върна ${response.status}.`);
+    }
 
-    if (!data || typeof data !== "object" || !Array.isArray(data.routes)) {
-      throw new Error("Realtime API върна невалиден отговор.");
+    if (!data || typeof data !== 'object' || !Array.isArray(data.routes)) {
+      throw new Error('Realtime API върна невалидни данни.');
     }
 
     return {
-      status: data.status || (data.routes.length ? "ok" : "empty"),
-      routes: data.routes.map(route => ({
-        ...route,
-        route_ref: route?.route_ref ?? route?.route_short_name ?? route?.route ?? "—",
-        destination: route?.destination ?? route?.headsign ?? "",
-        times: Array.isArray(route?.times) ? route.times : []
-      })),
-      generatedAt: data.generated_at || data.generatedAt || Date.now()
+      status: data.status || (data.routes.length ? 'ok' : 'empty'),
+      generatedAt: data.generated_at || Math.floor(Date.now() / 1000),
+      routes: data.routes
+        .map(route => {
+          const staticTrip = findStaticTrip(route?.trip_id);
+          const staticRoute = routeById.get(String(route?.route_id || staticTrip?.route_id || ''));
+          const destination = staticTrip?.trip_headsign
+            || staticRoute?.route_long_name?.split(' - ').filter(Boolean).at(-1)?.trim()
+            || '';
+
+          return {
+            ...route,
+            route_id: route?.route_id || staticTrip?.route_id || '',
+            route_ref: route?.route_ref ?? staticRoute?.route_short_name ?? '—',
+            destination: route?.destination ?? destination,
+            times: Array.isArray(route?.times)
+              ? route.times.map(time => ({
+                  timestamp: Number(time?.timestamp),
+                  delay: Number.isFinite(Number(time?.delay)) ? Number(time?.delay) : null,
+                  t: Math.max(0, (Number(time?.timestamp) - Math.floor(Date.now() / 1000)) / 60)
+                })).filter(time => Number.isFinite(time.timestamp))
+              : []
+          };
+        })
+        .filter(route => route.times.length)
     };
   }
 
