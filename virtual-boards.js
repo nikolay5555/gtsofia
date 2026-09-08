@@ -1021,7 +1021,7 @@
         weight: 2,
         color: "#ffffff",
         fillColor: "#111827",
-        fillOpacity: 0.9,
+        fillOpacity: 1,
         renderer,
         pane: "markerPane"
       });
