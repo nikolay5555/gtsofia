@@ -11,6 +11,7 @@
   let transportData = null;
   let routeById = new Map();
   let routeMetaById = new Map();
+  let routeMetaByNumber = new Map();
   let tripById = new Map();
   let tripStopsById = new Map();
 
@@ -254,10 +255,14 @@
     return updates;
   }
 
-  function getLineMeta(routeId) {
+  function getLineMeta(routeId, routeRef) {
+    if (routeRef && routeMetaByNumber.has(String(routeRef).trim())) {
+      return routeMetaByNumber.get(String(routeRef).trim());
+    }
+
     return routeMetaById.get(String(routeId)) || {
-      id: routeId,
-      number: "—",
+      id: routeId || routeRef,
+      number: routeRef || "—",
       type: "other",
       color: "#BE1E2D",
       textColor: "#FFFFFF",
@@ -308,196 +313,86 @@
     `;
   }
 
-  function countdownHtml(arrivalUnix, isFirst) {
-    if (arrivalUnix == null) {
-      return `<span class="vb-arrival vb-arrival-empty">Няма realtime данни</span>`;
-    }
+  function formatRelativeMinutes(minutes) {
+    const value = Number(minutes);
+    if (!Number.isFinite(value)) return "—";
+    if (value <= 0) return "<1 мин";
+    return `${Math.round(value)} мин`;
+  }
 
-    const diffSeconds = Math.max(0, arrivalUnix - Math.floor(Date.now() / 1000));
-    const minutes = Math.max(0, Math.ceil(diffSeconds / 60));
-    const time = new Intl.DateTimeFormat("bg-BG", {
+  function formatArrivalClock(minutesFromNow, generatedAtMs = Date.now()) {
+    const seconds = Number(minutesFromNow) * 60;
+    if (!Number.isFinite(seconds)) return "—";
+    return new Intl.DateTimeFormat("bg-BG", {
       timeZone: SOFIA_TIME_ZONE,
       hour: "2-digit",
       minute: "2-digit",
       hourCycle: "h23"
-    }).format(new Date(arrivalUnix * 1000));
+    }).format(new Date(generatedAtMs + seconds * 1000));
+  }
+
+  function countdownHtml(minutesFromNow, isFirst, generatedAtMs) {
+    if (minutesFromNow == null || !Number.isFinite(Number(minutesFromNow))) {
+      return `<span class="vb-arrival vb-arrival-empty">Няма realtime данни</span>`;
+    }
 
     return `
       <span class="vb-arrival">
         ${isFirst ? '<span class="live-indicator vb-arrival-live" aria-hidden="true"></span>' : ''}
-        <span class="vb-arrival-time">${escapeHtml(time)}</span>
-        <span class="vb-arrival-countdown">${minutes < 1 ? "след <1 мин" : `след ${minutes} мин`}</span>
+        <span class="vb-arrival-time">${escapeHtml(formatArrivalClock(minutesFromNow, generatedAtMs))}</span>
+        <span class="vb-arrival-countdown">след ${escapeHtml(formatRelativeMinutes(minutesFromNow))}</span>
       </span>
     `;
   }
 
-  function getStaticTrip(tripId) {
-    return tripById.get(String(tripId)) || null;
+  function normalizeProxyStopCode(stop) {
+    const stopId = String(stop?.stop_id || "").trim();
+    const stopCode = String(stop?.stop_code || stopId).trim();
+    const isMetro = stopId.startsWith("M");
+    return {
+      isMetro,
+      value: isMetro ? stopId.replace(/\D/g, "") : stopCode
+    };
   }
 
-  function getRealtimeStopId(stopUpdate, tripId) {
-    const explicitStopId = String(stopUpdate?.stopId || '').trim();
-    if (explicitStopId) return explicitStopId;
+  async function fetchVirtualBoard(stop) {
+    const { isMetro, value } = normalizeProxyStopCode(stop);
+    if (!value) throw new Error("Липсва код на спирката.");
 
-    const stopSequence = Number(stopUpdate?.stopSequence);
-    if (!Number.isFinite(stopSequence) || stopSequence < 1) return '';
-
-    const tripStops = tripStopsById.get(String(tripId));
-    return tripStops?.[stopSequence - 1] || '';
-  }
-
-  function collectRealtimeStopRows(stopId) {
-    const groups = new Map();
-    const updates = Array.isArray(window.gtfsRealtimeTripUpdates)
-      ? window.gtfsRealtimeTripUpdates
-      : [];
-    const nowUnix = Math.floor(Date.now() / 1000);
-    const targetStopId = String(stopId);
-
-    for (const update of updates) {
-      const tripDescriptor = update?.trip || {};
-      const tripId = String(tripDescriptor.tripId || "");
-      if (!tripId) continue;
-
-      const stopUpdates = Array.isArray(update.stopTimeUpdates)
-        ? update.stopTimeUpdates
-        : [];
-      const stopUpdate = stopUpdates.find(item => {
-        const realtimeStopId = getRealtimeStopId(item, tripId);
-        return realtimeStopId === targetStopId;
-      });
-      if (!stopUpdate) continue;
-
-      // 1 = SKIPPED, 2 = NO_DATA, 3 = CANCELED.
-      if ([1, 2, 3].includes(stopUpdate.scheduleRelationship)) continue;
-
-      const arrivalEvent = stopUpdate.arrival || stopUpdate.departure;
-      const arrivalUnix = Number(arrivalEvent?.time);
-      if (!Number.isFinite(arrivalUnix) || arrivalUnix < nowUnix - 60) continue;
-
-      const staticTrip = getStaticTrip(tripId);
-      const routeId = String(
-        tripDescriptor.routeId || staticTrip?.route_id || ""
-      );
-      if (!routeId) continue;
-
-      const headsign = staticTrip?.trip_headsign || "";
-      const groupKey = `${routeId}|${headsign}`;
-      let group = groups.get(groupKey);
-
-      if (!group) {
-        group = {
-          routeId,
-          headsign,
-          arrivals: []
-        };
-        groups.set(groupKey, group);
-      }
-
-      group.arrivals.push(arrivalUnix);
+    const url = `https://sofiatraffic-proxy.onrender.com/virtual-board?stop_code=${encodeURIComponent(value)}${isMetro ? "&metro" : ""}`;
+    const response = await fetch(url, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`Realtime заявката върна ${response.status}.`);
     }
 
-    return [...groups.values()]
-      .map(group => ({
-        ...group,
-        arrivals: [...new Set(group.arrivals)].sort((a, b) => a - b),
-      }))
-      .map(group => ({
-        ...group,
-        arrivals: group.arrivals.slice(0, 4),
-        nextArrivalUnix: group.arrivals[0] ?? null
-      }))
-      .sort((a, b) => {
-        if (a.nextArrivalUnix == null) return 1;
-        if (b.nextArrivalUnix == null) return -1;
-        return a.nextArrivalUnix - b.nextArrivalUnix;
-      });
+    const data = await response.json();
+    if (!data || data.status !== "ok") {
+      return { status: data?.status || "error", routes: [], generatedAt: Date.now() };
+    }
+
+    return {
+      status: "ok",
+      routes: Array.isArray(data.routes) ? data.routes : [],
+      generatedAt: data.generated_at ? Date.parse(data.generated_at) : Date.now()
+    };
   }
-
-  function renderStopBoard(stop) {
+  async function renderStopBoard(stop, boardData = null) {
     selectedStopId = String(stop.stop_id);
-    const rows = collectRealtimeStopRows(stop.stop_id);
     const panel = boardPanel();
-
     if (!panel) return;
-
-    const activeRows = rows.filter(row => row.nextArrivalUnix != null);
-    const titleName = stop.name || stop.stop_name || "Спирка";
-    const titleCode = stop.stop_code || stop.stop_id || "";
 
     panel.innerHTML = `
       <div class="virtual-board-header">
         <div>
-          <div class="virtual-board-kicker">Спирка ${escapeHtml(titleCode)}</div>
-          <h2>${escapeHtml(titleName)}</h2>
+          <div class="virtual-board-kicker">Спирка ${escapeHtml(stop.stop_code || stop.stop_id || "")}</div>
+          <h2>${escapeHtml(stop.stop_name || stop.name || "Спирка")}</h2>
         </div>
         <div class="virtual-board-header-actions">
-          <button type="button" class="virtual-board-refresh" id="virtualBoardRefresh">Обнови</button>
-          <button
-            type="button"
-            class="virtual-board-close"
-            id="virtualBoardClose"
-            aria-label="Затвори таблото"
-          >×</button>
+          <button type="button" class="virtual-board-refresh is-loading" id="virtualBoardRefresh" disabled>Обнови</button>
+          <button type="button" class="virtual-board-close" id="virtualBoardClose" aria-label="Затвори таблото">×</button>
         </div>
       </div>
-
-      <div class="virtual-board-list">
-        ${
-          rows.length
-            ? rows
-                .map((row, index) => {
-                  const meta = getLineMeta(row.routeId);
-                  const futureItems = row.arrivals || [row.nextArrivalUnix];
-
-                  return `
-                    <article class="vb-row">
-                      <div class="schedule-summary-route-row vb-route-row">
-                        ${lineIdentityHtml(meta)}
-                        ${destinationHtml(row.headsign)}
-                      </div>
-
-                      <div class="vb-time-block">
-                        ${countdownHtml(row.nextArrivalUnix, index === 0)}
-                        ${
-                          futureItems.length > 1
-                            ? `
-                              <div class="vb-next-times">
-                                ${futureItems
-                                  .slice(1)
-                                  .map(
-                                    time =>
-                                      `<span>${escapeHtml(new Intl.DateTimeFormat("bg-BG", {
-                                        timeZone: SOFIA_TIME_ZONE,
-                                        hour: "2-digit",
-                                        minute: "2-digit",
-                                        hourCycle: "h23"
-                                      }).format(new Date(Number(time) * 1000)))}</span>`
-                                  )
-                                  .join("")}
-                              </div>
-                            `
-                            : ""
-                        }
-                      </div>
-                    </article>
-                  `;
-                })
-                .join("")
-            : `
-              <div class="virtual-board-no-data">
-                Няма намерени GTFS направления за тази спирка.
-              </div>
-            `
-        }
-      </div>
-
-      ${
-        activeRows.length === 0 && rows.length
-          ? `<div class="virtual-board-no-service">Няма оставащи курсове за избраната спирка според текущото GTFS разписание.</div>`
-          : ""
-      }
-
+      <div class="virtual-board-list"><div class="virtual-board-loading">Зареждане…</div></div>
     `;
 
     document.getElementById("virtualBoardClose")?.addEventListener("click", () => {
@@ -505,7 +400,59 @@
       renderEmptyBoard();
     });
 
-    document.getElementById("virtualBoardRefresh")?.addEventListener("click", refreshSelectedBoard);
+    try {
+      const data = boardData || await fetchVirtualBoard(stop);
+      const list = panel.querySelector(".virtual-board-list");
+
+      if (data.status !== "ok" || !data.routes.length) {
+        list.innerHTML = `<div class="virtual-board-no-data">Няма налични realtime пристигания за тази спирка.</div>`;
+        return;
+      }
+
+      const rows = data.routes
+        .map(route => ({
+          ...route,
+          arrivals: (route.times || [])
+            .map(time => Number(time?.t))
+            .filter(Number.isFinite)
+            .sort((a, b) => a - b)
+            .slice(0, 4)
+        }))
+        .filter(route => route.arrivals.length)
+        .sort((a, b) => a.arrivals[0] - b.arrivals[0]);
+
+      if (!rows.length) {
+        list.innerHTML = `<div class="virtual-board-no-data">Няма налични realtime пристигания за тази спирка.</div>`;
+        return;
+      }
+
+      list.innerHTML = rows.map((row, index) => {
+        const meta = getLineMeta(row.route_id || row.routeId, row.route_ref);
+        const arrivals = row.arrivals;
+        return `
+          <article class="vb-row">
+            <div class="schedule-summary-route-row vb-route-row">
+              ${lineIdentityHtml(meta)}
+              ${destinationHtml(row.destination || row.headsign || "")}
+            </div>
+            <div class="vb-time-block">
+              ${countdownHtml(arrivals[0], index === 0, data.generatedAt)}
+              ${arrivals.length > 1 ? `<div class="vb-next-times">${arrivals.slice(1).map(time => `<span>${escapeHtml(formatArrivalClock(time, data.generatedAt))}</span>`).join("")}</div>` : ""}
+            </div>
+          </article>
+        `;
+      }).join("");
+    } catch (error) {
+      console.error("Realtime virtual board error:", error);
+      panel.querySelector(".virtual-board-list").innerHTML = `<div class="virtual-board-error">Realtime данните не могат да бъдат заредени.</div>`;
+    } finally {
+      const refreshButton = document.getElementById("virtualBoardRefresh");
+      if (refreshButton) {
+        refreshButton.disabled = false;
+        refreshButton.classList.remove("is-loading");
+        refreshButton.addEventListener("click", refreshSelectedBoard, { once: true });
+      }
+    }
   }
 
   function renderEmptyBoard() {
@@ -746,55 +693,29 @@
 
   function startTimers() {
     clearInterval(refreshTimer);
-    clearInterval(clockTimer);
 
     refreshTimer = setInterval(() => {
-      loadRealtimeTripUpdates()
-        .then(() => {
-          if (selectedStopId) {
-            const selectedStop = findStopById(selectedStopId);
-            if (selectedStop) renderStopBoard(selectedStop);
-          }
-        })
-        .catch(error => console.error("GTFS-Realtime refresh error:", error));
+      if (selectedStopId) refreshSelectedBoard();
     }, REFRESH_MS);
-
-    refreshSelectedBoard();
-  }
-
-  async function loadRealtimeTripUpdates() {
-    const response = await fetch(
-      "https://gtfs.sofiatraffic.bg/api/v1/trip-updates",
-      {
-        cache: "no-store",
-        mode: "cors"
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error(`GTFS-Realtime заявката върна ${response.status}.`);
-    }
-
-    const buffer = await response.arrayBuffer();
-    window.gtfsRealtimeTripUpdates = decodeGtfsRealtimeFeed(buffer);
-    window.gtfsRealtimeUpdatedAt = Date.now();
-    return window.gtfsRealtimeTripUpdates;
   }
 
   async function refreshSelectedBoard() {
     if (!selectedStopId) return;
 
+    const stop = findStopById(selectedStopId);
+    if (!stop) return;
+
     const refreshButton = document.getElementById("virtualBoardRefresh");
     refreshButton?.classList.add("is-loading");
+    if (refreshButton) refreshButton.disabled = true;
 
     try {
-      await loadRealtimeTripUpdates();
-      const selectedStop = findStopById(selectedStopId);
-      if (selectedStop) renderStopBoard(selectedStop);
+      const data = await fetchVirtualBoard(stop);
+      await renderStopBoard(stop, data);
     } catch (error) {
-      console.error("Неуспешно зареждане на GTFS-Realtime:", error);
-    } finally {
-      refreshButton?.classList.remove("is-loading");
+      console.error("Неуспешно зареждане на GTFS-Realtime виртуално табло:", error);
+      const list = boardPanel()?.querySelector(".virtual-board-list");
+      if (list) list.innerHTML = `<div class="virtual-board-error">Realtime данните не могат да бъдат заредени.</div>`;
     }
   }
 
@@ -837,8 +758,9 @@
       routeMetaById = new Map(
         lines.map(line => [String(line.id), line])
       );
-
-      await loadRealtimeTripUpdates();
+      routeMetaByNumber = new Map(
+        lines.map(line => [String(line.number).trim(), line])
+      );
 
       const allStops = transportData.stops || [];
       const stops = getActiveStops(allStops);
