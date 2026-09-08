@@ -1021,7 +1021,7 @@
         weight: 2,
         color: "#ffffff",
         fillColor: "#111827",
-        fillOpacity: 1,
+        fillOpacity: 0.9,
         renderer,
         pane: "markerPane"
       });
@@ -1051,7 +1051,16 @@
       }
     }
 
-    return stops.filter(stop => activeStopIds.has(String(stop?.stop_id ?? "").trim()));
+    return stops.filter(stop => {
+      const stopId = String(stop?.stop_id ?? "").trim();
+      if (!activeStopIds.has(stopId)) return false;
+
+      // Keep only genuine metro stops as metro points. GTFS also contains
+      // standalone entrance/exit records named "метростанция ...".
+      // A surface stop with that name is kept only when a surface route
+      // actually serves it; unserved entrance/exit records stay hidden.
+      return true;
+    });
   }
 
   function initMap(stops) {
