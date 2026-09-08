@@ -534,9 +534,47 @@
     return getStopDistanceMeters(selectedStop, terminalStop) <= 300;
   }
 
-  function shouldHideTerminalArrival(routeId, stopId, staticTrip, destination = '') {
+  function getDirectionsForRouteAtStop(routeId, stopId) {
+    const directionSet = transportData?.directions?.[String(routeId)] || {};
+    return Object.entries(directionSet).filter(([, direction]) => {
+      const pattern = Array.isArray(direction?.pattern) ? direction.pattern : [];
+      return pattern.some(id => stopIdsMatch(id, stopId));
+    }).map(([key, direction]) => ({ key, ...direction }));
+  }
+
+  function resolveDirectionForRealtimeRoute(routeId, stopId, staticTrip, destination = '', directionId = '') {
     const staticDirection = getStaticDirectionForTrip(staticTrip);
-    if (staticDirection?.pattern?.length && isTerminalDirectionForStop(routeId, stopId, staticDirection)) return true;
+    if (staticDirection) return staticDirection;
+
+    const directions = getDirectionsForRouteAtStop(routeId, stopId);
+    if (!directions.length) return null;
+
+    const wantedDestination = normalizeDirectionText(destination);
+    if (wantedDestination) {
+      const byDestination = directions.find(direction =>
+        normalizeDirectionText(direction?.headsign || direction?.destination) === wantedDestination
+      );
+      if (byDestination) return byDestination;
+    }
+
+    const wantedDirectionId = String(directionId ?? '').trim();
+    if (wantedDirectionId) {
+      const byKey = directions.find(direction =>
+        String(direction?.direction_id ?? direction?.key ?? '').trim() === wantedDirectionId
+      );
+      if (byKey) return byKey;
+    }
+
+    // Sofia's realtime feed often leaves direction_id empty. If this stop
+    // belongs to only one static direction for the route, that direction is
+    // unambiguous and can safely be used. This is what lets terminal stops
+    // with separate GTFS stop IDs (such as 0611/0612) work correctly.
+    return directions.length === 1 ? directions[0] : null;
+  }
+
+  function shouldHideTerminalArrival(routeId, stopId, staticTrip, destination = '', directionId = '') {
+    const direction = resolveDirectionForRealtimeRoute(routeId, stopId, staticTrip, destination, directionId);
+    if (direction?.pattern?.length && isTerminalDirectionForStop(routeId, stopId, direction)) return true;
 
     // The same physical terminal can be represented by different GTFS stop IDs
     // and even slightly different destination spellings (e.g. Ж.К. ДРУЖБА-2
@@ -719,7 +757,8 @@
               route.route_id || staticTrip?.route_id || '',
               stop.stop_id,
               staticTrip,
-              route.destination || ''
+              route.destination || '',
+              route.direction_id || route.directionId || ''
             );
           })
           .map(route => {
