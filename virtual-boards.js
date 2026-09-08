@@ -271,6 +271,100 @@
     return { updates, feedTimestamp: feedTimestamp || Date.now() };
   }
 
+  function normalizeProxyStopCode(stop) {
+    const raw = String(stop?.stop_code ?? stop?.stop_id ?? "").trim();
+    const isMetro = /^M/i.test(raw) || String(stop?.stop_id ?? "").toUpperCase().startsWith("M");
+    const digits = raw.replace(/\D/g, "");
+    if (isMetro) return { isMetro: true, value: digits };
+    const numeric = raw.replace(/\D/g, "");
+    return { isMetro: false, value: numeric ? numeric.padStart(4, "0") : raw };
+  }
+
+  function getLineMeta(routeId, routeRef) {
+    const id = String(routeId ?? "").trim();
+    const ref = String(routeRef ?? "").trim();
+    if (id && routeMetaById.has(id)) return routeMetaById.get(id);
+    if (ref && routeMetaByNumber.has(ref)) return routeMetaByNumber.get(ref);
+
+    const route = id ? routeById.get(id) : null;
+    const number = ref || route?.route_short_name || "—";
+    if (!route) {
+      return {
+        id,
+        number,
+        type: /^N/i.test(number) ? "night" : "bus",
+        icon: "",
+        color: "#BE1E2D",
+        textColor: "#FFFFFF"
+      };
+    }
+
+    const type = typeof getLineType === "function" ? getLineType(route) : "bus";
+    const icon = typeof getTransportIcon === "function" ? getTransportIcon(type, number) : "";
+    const color = typeof getLineColor === "function" ? getLineColor(route, type) : "#BE1E2D";
+    return {
+      id: route.route_id,
+      number,
+      type,
+      icon,
+      color,
+      textColor: route.route_text_color ? `#${route.route_text_color}` : "#FFFFFF"
+    };
+  }
+
+  function linePillHtml(line) {
+    const number = escapeHtml(line?.number || "—");
+    const typeClass = line?.type === "metro" ? " metro" : "";
+    const color = escapeHtml(line?.color || "#BE1E2D");
+    const textColor = escapeHtml(line?.textColor || "#FFFFFF");
+    return `<span class="schedule-line-pill${typeClass}" style="--line-color:${color}; --line-text-color:${textColor}">${number}</span>`;
+  }
+
+  function lineIdentityHtml(line) {
+    const icon = line?.icon
+      ? `<span class="schedule-line-icon"><img src="${escapeHtml(line.icon)}" alt="" aria-hidden="true"></span>`
+      : "";
+    return `<span class="schedule-line-identity">${icon}${linePillHtml(line)}</span>`;
+  }
+
+  function destinationHtml(destination) {
+    return `<span class="schedule-summary-arrow direction-arrow" aria-hidden="true"><img src="Icons/destinationarrow.svg" alt=""></span><strong class="schedule-summary-destination vb-destination">${escapeHtml(destination || "—")}</strong>`;
+  }
+
+  function parseGeneratedAt(value) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value < 1e12 ? value * 1000 : value;
+    }
+    const parsed = Date.parse(String(value ?? ""));
+    return Number.isFinite(parsed) ? parsed : Date.now();
+  }
+
+  function getArrivalMinutes(value, generatedAt) {
+    const minutes = Number(value);
+    if (!Number.isFinite(minutes)) return null;
+    const generatedMs = parseGeneratedAt(generatedAt);
+    const elapsed = Math.max(0, (Date.now() - generatedMs) / 60000);
+    return Math.max(0, minutes - elapsed);
+  }
+
+  function formatArrivalClock(minutes) {
+    const whole = Math.max(0, Math.ceil(Number(minutes) || 0));
+    const now = new Date(Date.now() + whole * 60000);
+    return new Intl.DateTimeFormat("bg-BG", {
+      timeZone: SOFIA_TIME_ZONE,
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23"
+    }).format(now);
+  }
+
+  function countdownHtml(minutes, showLive) {
+    const clock = formatArrivalClock(minutes);
+    const rounded = Math.max(0, Math.ceil(Number(minutes) || 0));
+    const live = showLive ? '<span class="vb-arrival-live" aria-hidden="true"></span>' : '';
+    return `<div class="vb-arrival-main">${live}<span class="vb-arrival-clock">${escapeHtml(clock)}</span><span class="vb-arrival-minutes">${rounded} мин.</span></div>`;
+  }
+
   function normalizeStopKey(value) {
     const raw = String(value ?? "").trim();
     if (!raw) return "";
@@ -386,10 +480,15 @@
       throw new Error("Realtime proxy върна невалиден отговор.");
     }
 
+    const routes = Array.isArray(data.routes) ? data.routes.map(route => ({
+      ...route,
+      subtype: route?.subtype || (/^N/i.test(String(route?.route_ref || "")) ? "night" : undefined)
+    })) : [];
+
     return {
       status: data.status || "error",
-      routes: Array.isArray(data.routes) ? data.routes : [],
-      generatedAt: data.generated_at ? Date.parse(data.generated_at) || Date.now() : Date.now()
+      routes,
+      generatedAt: data.generated_at || Date.now()
     };
   }
 
@@ -402,15 +501,7 @@
   }
 
   async function fetchVirtualBoard(stop) {
-    try {
-      const proxyData = await fetchVirtualBoardViaProxy(stop);
-      if (proxyData.status === "ok") return proxyData;
-      if (proxyData.status !== "error") return proxyData;
-    } catch (proxyError) {
-      console.warn("Realtime proxy недостъпен, пробвам официалния GTFS-Realtime feed.", proxyError);
-    }
-
-    return fetchVirtualBoardDirect(stop);
+    return fetchVirtualBoardViaProxy(stop);
   }
 
   async function renderStopBoard(stop, boardData = null) {
@@ -446,11 +537,11 @@
         return;
       }
 
-      const rows = data.routes
+        const rows = data.routes
         .map(route => ({
           ...route,
           arrivals: (route.times || [])
-            .map(time => Number(time?.t))
+            .map(time => getArrivalMinutes(time?.t, data.generatedAt))
             .filter(Number.isFinite)
             .sort((a, b) => a - b)
             .slice(0, 4)
