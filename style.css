@@ -108,108 +108,171 @@ HOME PAGE
 ========================= */
 
 .home {
+  max-width: 1180px;
+  margin: 0 auto;
   padding: 32px;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 32px;
+}
+
+.home-hero {
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 24px;
+  padding: 38px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 28px;
+  box-shadow: 0 10px 30px rgba(17, 24, 39, 0.04);
+}
+
+.home-hero-copy {
+  max-width: 760px;
+}
+
+.home-eyebrow,
+.home-section-kicker,
+.home-card-label {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6b7280;
+}
+
+.home-hero h1 {
+  margin-top: 10px;
+  font-size: clamp(32px, 5vw, 54px);
+  line-height: 1.02;
+  letter-spacing: -0.04em;
+  max-width: 760px;
+}
+
+.home-hero p {
+  margin-top: 16px;
+  max-width: 660px;
+  color: #6b7280;
+  font-size: 17px;
+  line-height: 1.55;
+}
+
+.home-hero-action {
+  min-width: 240px;
+  padding: 18px 20px;
+  border-radius: 16px;
+  background: #111827;
+  color: white;
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  font-weight: 700;
+  transition: transform 0.2s ease, background 0.2s ease;
+}
+
+.home-hero-action:hover {
+  transform: translateY(-2px);
+  background: #1f2937;
+}
+
+.home-hero-action-arrow {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.home-section {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.home-section-heading h2 {
+  margin-top: 4px;
+  font-size: 24px;
+  letter-spacing: -0.02em;
 }
 
 .home-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 20px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
 }
 
-.home-card {
+.home-card,
+.home-info-card {
   background: white;
-  border-radius: 18px;
+  border: 1px solid #e5e7eb;
+  border-radius: 20px;
   padding: 24px;
   text-decoration: none;
   color: inherit;
-  border: 1px solid #e5e7eb;
-  transition: 0.2s;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
 }
 
-.home-card:hover {
-  transform: translateY(-4px);
+.home-card:hover,
+.home-info-card-link:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 26px rgba(17, 24, 39, 0.07);
+  border-color: #d1d5db;
 }
 
-/* =========================
-PROMO CARD (HOME)
-========================= */
-
-.promo-card {
-  background: white;
-  border-radius: 18px;
-  padding: 18px 24px;
-  border: 1px solid #e5e7eb;
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  gap: 10px;
+.home-card-primary {
+  background: #111827;
+  color: white;
+  border-color: #111827;
 }
 
-.promo-logo {
-  width: 64px;
-  height: 64px;
-  border-radius: 16px;
-  margin-bottom: 12px;
+.home-card-primary:hover {
+  border-color: #1f2937;
 }
 
-.promo-title {
-  font-size: 18px;
-  font-weight: 700;
-  margin-bottom: 8px;
+.home-card h2,
+.home-info-card h2 {
+  margin-top: 10px;
+  font-size: 22px;
+  letter-spacing: -0.02em;
 }
 
-.promo-text {
-  font-size: 14px;
+.home-card p,
+.home-info-card p {
+  margin-top: 10px;
   color: #6b7280;
-  margin-bottom: 16px;
+  line-height: 1.5;
 }
 
-.promo-btn {
-  display: block;
-  width: 100%;
-  max-width: 280px;
-  padding: 10px 14px;
-  border: none;
-  border-radius: 10px;
-  background: #e5e7eb;
-  color: #111827;
+.home-card-primary p {
+  color: #d1d5db;
+}
+
+.home-card-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 22px;
   font-size: 14px;
-  font-weight: 600;
-  text-decoration: none;
-  text-align: center;
-  transition: 0.2s;
+  font-weight: 700;
 }
 
-.promo-btn:hover {
-  background: #d1d5db;
+.home-card-link span {
+  font-size: 18px;
 }
 
-.promo-btn.secondary {
-  background: #e5e7eb;
+.home-card-primary .home-card-label {
+  color: #cbd5e1;
 }
 
-.promo-btn.secondary:hover {
-  background: #d1d5db;
+.home-info-grid {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 18px;
 }
 
-.promo-actions {
-  display: flex;
-  gap: 10px;
-  width: 100%;
-  max-width: 600px;
-  justify-content: center;
-}
-
-.promo-actions .promo-btn {
-  flex: 1;
-  max-width: none;
+.home-info-card-link {
+  display: block;
 }
 
 /* =========================
@@ -1236,10 +1299,30 @@ RESPONSIVE
 
   .home {
     padding: 18px;
+    gap: 22px;
   }
 
-  .promo-card {
-    align-items: center;
+  .home-hero {
+    padding: 24px;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .home-hero h1 {
+    font-size: 34px;
+  }
+
+  .home-hero p {
+    font-size: 15px;
+  }
+
+  .home-hero-action {
+    min-width: 0;
+  }
+
+  .home-grid,
+  .home-info-grid {
+    grid-template-columns: 1fr;
   }
 
   .schedule-page {

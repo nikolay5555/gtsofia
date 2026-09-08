@@ -13,50 +13,72 @@
     <button class="nav-toggle" onclick="toggleMenu()" aria-label="Отвори меню">☰</button>
     <nav id="navMenu">
       <a href="index.html" class="active">Начало</a>
-      <a href="schedules.html">Разписания</a>
       <a href="virtual-boards.html">Виртуални табла</a>
+      <a href="schedules.html">Разписания</a>
       <a href="rolling-stock.html">Подвижен състав</a>
       <a href="about.html">За проекта</a>
     </nav>
   </header>
 
   <main class="home">
-    <div class="promo-card">
-      <div class="empty-text">Разписания и информация в реално време</div>
-      <img class="promo-logo"
-           src="https://play-lh.googleusercontent.com/kJihhzXg33FMGIpa5Z0FjZaG5wHRpqfv63iG77FD3LmwtSw5SA8unoY0oTt-LDJca0TK2arPOpqpQY8-z-E6PQ=w240-h480-rw"
-           alt="Sofia Ride" />
-      <div class="promo-title">Sofia Ride</div>
-      <div class="promo-text">
-        Преглеждайте пристигания в реално време, разписания и информация за транспорта с помощта на Sofia Ride. Автор на приложението е Pablito86.
+    <section class="home-hero">
+      <div class="home-hero-copy">
+        <span class="home-eyebrow">Градски транспорт · София</span>
+        <h1>Всичко необходимо за пътуването ти в София.</h1>
+        <p>Разписания, виртуални табла и информация за подвижния състав — събрани на едно място.</p>
       </div>
-      <div class="promo-actions">
-        <a href="https://play.google.com/store/apps/details?id=com.paf.sofiatrafficapp" target="_blank" class="promo-btn secondary">Изтегляне на приложението</a>
-        <a href="https://sofiaride.vercel.app/" class="promo-btn secondary">Отваряне на уеб версията</a>
+      <a href="virtual-boards.html" class="home-hero-action">
+        <span class="home-hero-action-label">Виж виртуалните табла</span>
+        <span class="home-hero-action-arrow">→</span>
+      </a>
+    </section>
+
+    <section class="home-section">
+      <div class="home-section-heading">
+        <div>
+          <span class="home-section-kicker">Бърз достъп</span>
+          <h2>Избери какво търсиш</h2>
+        </div>
       </div>
-    </div>
 
-    <div class="home-grid">
-      <a href="virtual-boards.html" class="home-card">
-        <h2>Виртуални табла</h2>
-        <p>Карта на спирките в София и предстоящите пристигания според актуалните GTFS разписания.</p>
-      </a>
+      <div class="home-grid home-grid-main">
+        <a href="virtual-boards.html" class="home-card home-card-primary">
+          <span class="home-card-label">Realtime</span>
+          <h2>Виртуални табла</h2>
+          <p>Провери какво пристига на избрана спирка с актуалните realtime данни.</p>
+          <span class="home-card-link">Отвори таблата <span>→</span></span>
+        </a>
 
-      <a href="schedules.html" class="home-card">
-        <h2>Разписания</h2>
-        <p>Разписания по линия, направление и спирка.</p>
-      </a>
+        <a href="schedules.html" class="home-card">
+          <span class="home-card-label">Разписания</span>
+          <h2>Разписания</h2>
+          <p>Прегледай часовете по линия, направление и спирка.</p>
+          <span class="home-card-link">Виж разписанията <span>→</span></span>
+        </a>
 
-      <a href="rolling-stock.html" class="home-card">
-        <h2>Подвижен състав</h2>
-        <p>Списък на целия подвижен състав, обслужващ града.</p>
-      </a>
+        <a href="rolling-stock.html" class="home-card">
+          <span class="home-card-label">Транспорт</span>
+          <h2>Подвижен състав</h2>
+          <p>Разгледай автобусите, трамваите, тролеите и метрото в системата.</p>
+          <span class="home-card-link">Разгледай състава <span>→</span></span>
+        </a>
+      </div>
+    </section>
 
-      <a href="about.html" class="home-card">
-        <h2>За проекта</h2>
-        <p>Информация за проекта и възможности за обратна връзка.</p>
+    <section class="home-info-grid">
+      <div class="home-info-card">
+        <span class="home-section-kicker">Как работи</span>
+        <h2>Realtime там, където има данни</h2>
+        <p>Виртуалните табла използват актуални GTFS-Realtime данни за наземния транспорт. За метрото се използват часовете от разписанието.</p>
+      </div>
+
+      <a href="about.html" class="home-info-card home-info-card-link">
+        <span class="home-section-kicker">За проекта</span>
+        <h2>Повече за GT Sofia</h2>
+        <p>Научи повече за проекта, източниците на данни и идеята зад сайта.</p>
+        <span class="home-card-link">Към проекта <span>→</span></span>
       </a>
-    </div>
+    </section>
   </main>
 
   <script src="navbar.js"></script>
