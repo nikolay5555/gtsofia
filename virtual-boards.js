@@ -394,7 +394,59 @@
   }
 
   function stopIdsMatch(left, right) {
-    return normalizeStopKey(left) === normalizeStopKey(right);
+    const leftRaw = String(left ?? "").trim();
+    const rightRaw = String(right ?? "").trim();
+    if (!leftRaw || !rightRaw) return false;
+
+    // Metro station IDs (M1, M23, M302...) must never match surface
+    // transport stop codes such as 0001, 0023, 0302.
+    const leftMetro = /^M/i.test(leftRaw);
+    const rightMetro = /^M/i.test(rightRaw);
+    if (leftMetro !== rightMetro) return false;
+
+    if (leftMetro && rightMetro) {
+      return leftRaw.toUpperCase() === rightRaw.toUpperCase();
+    }
+
+    return normalizeStopKey(leftRaw) === normalizeStopKey(rightRaw);
+  }
+
+  function isMetroStop(stop) {
+    return /^M/i.test(String(stop?.stop_id || "").trim())
+      || /^M/i.test(String(stop?.stop_code || "").trim());
+  }
+
+  function getSofiaDateParts() {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: SOFIA_TIME_ZONE,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).formatToParts(new Date());
+    const get = type => parts.find(part => part.type === type)?.value || "";
+    return { year: Number(get("year")), month: Number(get("month")), day: Number(get("day")) };
+  }
+
+  function getSofiaOffsetMs(date = new Date()) {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: SOFIA_TIME_ZONE,
+      timeZoneName: "shortOffset",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23"
+    }).formatToParts(date);
+    const raw = parts.find(part => part.type === "timeZoneName")?.value || "GMT+0";
+    const match = raw.match(/^GMT([+-])(\d{1,2})(?::(\d{2}))?$/);
+    if (!match) return 0;
+    const sign = match[1] === "+" ? 1 : -1;
+    return sign * (Number(match[2]) * 60 + Number(match[3] || 0)) * 60 * 1000;
+  }
+
+  function gtfsSecondsToTodayTimestamp(seconds) {
+    const date = getSofiaDateParts();
+    const baseUtc = Date.UTC(date.year, date.month - 1, date.day);
+    const candidate = baseUtc + Number(seconds) * 1000 - getSofiaOffsetMs(new Date(baseUtc));
+    return candidate / 1000;
   }
 
   function findStaticTrip(tripId) {
@@ -419,7 +471,7 @@
     );
     if (entries.length < 2) return false;
 
-    const selected = normalizeStopKey(stopId);
+    const selected = String(stopId ?? "").trim();
     let hasFirst = false;
     let hasLast = false;
     for (const [, direction] of entries) {
@@ -474,8 +526,9 @@
           const seconds = parseGtfsTime(rawTime);
           if (seconds == null) continue;
 
-          let timestamp = seconds;
-          if (timestamp < now) timestamp += 86400;
+          const todayTimestamp = gtfsSecondsToTodayTimestamp(seconds);
+          let timestamp = todayTimestamp;
+          if (timestamp < Date.now() / 1000) timestamp += 86400;
           arrivals.push(timestamp);
         }
 
@@ -605,30 +658,49 @@
 
     const data = await response.json();
     const generatedAt = data?.generated_at || Date.now();
-    const realtime = {
-      status: data?.status || 'empty',
-      generatedAt,
-      routes: Array.isArray(data?.routes)
-        ? data.routes
-            .filter(route => route && Array.isArray(route.times))
-            .filter(route => {
-              const staticTrip = findStaticTrip(route.trip_id);
-              return !staticTrip || !shouldHideTerminalArrival(route.route_id, stop.stop_id, staticTrip);
-            })
-            .map(route => ({
+    const realtimeRoutes = Array.isArray(data?.routes)
+      ? data.routes
+          .filter(route => route && Array.isArray(route.times))
+          .filter(route => {
+            const staticTrip = findStaticTrip(route.trip_id);
+            return !staticTrip || !shouldHideTerminalArrival(
+              route.route_id || staticTrip?.route_id || '',
+              stop.stop_id,
+              staticTrip
+            );
+          })
+          .map(route => {
+            const staticTrip = findStaticTrip(route.trip_id);
+            const staticDirection = getStaticDirectionForTrip(staticTrip);
+            const routeMeta = getLineMeta(
+              route.route_id || staticTrip?.route_id || '',
+              route.route_ref || ''
+            );
+
+            return {
               ...route,
-              route_id: route.route_id || '',
-              route_ref: route.route_ref || getLineMeta(route.route_id || '', '').number || '—',
-              destination: route.destination || '',
+              route_id: route.route_id || staticTrip?.route_id || '',
+              route_ref: route.route_ref || routeMeta.number || '—',
+              destination: route.destination
+                || staticTrip?.trip_headsign
+                || staticDirection?.destination
+                || staticDirection?.headsign
+                || '',
               times: route.times
                 .map(time => ({
                   timestamp: Number(time?.timestamp),
                   delay: Number.isFinite(Number(time?.delay)) ? Number(time.delay) : null
                 }))
                 .filter(time => Number.isFinite(time.timestamp))
-            }))
-            .filter(route => route.times.length)
-        : []
+            };
+          })
+          .filter(route => route.times.length)
+      : [];
+
+    const realtime = {
+      status: data?.status || 'empty',
+      generatedAt,
+      routes: isMetroStop(stop) ? [] : realtimeRoutes
     };
     const metroRoutes = getMetroScheduledArrivals(stop);
 
