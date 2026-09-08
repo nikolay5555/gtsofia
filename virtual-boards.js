@@ -98,51 +98,46 @@
     };
   }
 
-  function typeLabel(type) {
-    switch (type) {
-      case "bus": return "Автобус";
-      case "night": return "Нощна линия";
-      case "trolleybus": return "Тролейбус";
-      case "tram": return "Трамвай";
-      case "metro": return "Метро";
-      default: return "Линия";
+  function linePillHtml(meta) {
+    if (meta.type === "metro") {
+      return `
+        <span
+          class="schedule-line-pill metro"
+          style="background:${escapeHtml(meta.color)};color:${escapeHtml(meta.textColor || "#FFFFFF")}"
+        >
+          ${escapeHtml(meta.number)}
+        </span>`;
     }
-  }
-
-  function routePillHtml(meta) {
-    const isMetro = meta.type === "metro";
-    const classes = isMetro
-      ? "vb-line-pill vb-line-pill-metro"
-      : "vb-line-pill";
-
-    const style = `background:${escapeHtml(meta.color)};color:${escapeHtml(
-      meta.textColor || "#FFFFFF"
-    )};`;
 
     return `
-      <span class="vb-line-identity">
-        ${
-          meta.icon
-            ? `<img class="vb-line-icon" src="${escapeHtml(meta.icon)}" alt="">`
-            : ""
-        }
-        <span class="${classes}" style="${style}">
-          ${escapeHtml(meta.number)}
+      <span
+        class="schedule-line-pill"
+        style="background:${escapeHtml(meta.color)};color:${escapeHtml(meta.textColor || "#FFFFFF")}"
+      >
+        ${escapeHtml(meta.number)}
+      </span>`;
+  }
+
+  function lineIdentityHtml(meta) {
+    return `
+      <span class="schedule-line-identity">
+        <span class="schedule-line-icon">
+          ${meta.icon ? `<img src="${escapeHtml(meta.icon)}" alt="">` : ""}
         </span>
-      </span>
-    `;
+        ${linePillHtml(meta)}
+      </span>`;
   }
 
   function destinationHtml(headsign) {
     return `
-      <span class="vb-route-direction">
-        <img
-          class="vb-direction-arrow"
-          src="Icons/destinationarrow.svg"
-          alt=""
-        />
-        <span class="vb-destination">${escapeHtml(headsign || "Без дестинация")}</span>
-      </span>
+      <img
+        class="direction-arrow vb-direction-arrow"
+        src="Icons/destinationarrow.svg"
+        alt=""
+      />
+      <strong class="schedule-summary-destination vb-destination">
+        ${escapeHtml(headsign || "Без дестинация")}
+      </strong>
     `;
   }
 
@@ -222,8 +217,7 @@
           headsign: direction?.headsign || direction?.destination || "",
           directionKey,
           nextArrival: uniqueArrivals[0] ?? null,
-          upcoming: uniqueArrivals,
-          label: typeLabel(meta.type)
+          upcoming: uniqueArrivals
         });
       }
     }
@@ -270,10 +264,15 @@
       </div>
 
       <div class="virtual-board-live-line">
-        <span class="live-indicator" aria-hidden="true"></span>
-        <span>Следващи пристигания · ${escapeHtml(
-          isWeekendInSofia() ? "празнично разписание" : "делнично разписание"
-        )}</span>
+        <div class="virtual-board-live-copy">
+          <span class="live-indicator" aria-hidden="true"></span>
+          <span>Следващи пристигания · ${escapeHtml(
+            isWeekendInSofia() ? "празнично разписание" : "делнично разписание"
+          )}</span>
+        </div>
+        <button type="button" class="virtual-board-refresh" id="virtualBoardRefresh">
+          Обнови
+        </button>
       </div>
 
       <div class="virtual-board-list">
@@ -287,14 +286,9 @@
 
                   return `
                     <article class="vb-row">
-                      <div class="vb-row-main">
-                        <div class="vb-line-block">
-                          ${routePillHtml(meta)}
-                        </div>
-                        <div class="vb-route-block">
-                          ${destinationHtml(row.headsign)}
-                          <span class="vb-line-type">${escapeHtml(row.label)}</span>
-                        </div>
+                      <div class="schedule-summary-route-row vb-route-row">
+                        ${lineIdentityHtml(meta)}
+                        ${destinationHtml(row.headsign)}
                       </div>
 
                       <div class="vb-time-block">
@@ -344,6 +338,8 @@
       selectedStopId = null;
       renderEmptyBoard();
     });
+
+    document.getElementById("virtualBoardRefresh")?.addEventListener("click", refreshPage);
   }
 
   function renderEmptyBoard() {
@@ -356,6 +352,143 @@
         <p>Всички спирки от GTFS са показани на картата. При клик ще видите линиите, направленията, точния час и оставащите минути до следващото пристигане.</p>
       </div>
     `;
+  }
+
+  function refreshPage() {
+    window.location.reload();
+  }
+
+  function findStopById(stopId) {
+    return (transportData?.stops || []).find(
+      stop => String(stop.stop_id) === String(stopId)
+    ) || null;
+  }
+
+  function selectStopOnMap(stop) {
+    if (!stop || !map) return;
+    const lat = Number(stop.stop_lat);
+    const lon = Number(stop.stop_lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+    renderStopBoard(stop);
+    map.setView([lat, lon], Math.max(map.getZoom(), 15), { animate: true });
+  }
+
+  function setupStopSearch(stops) {
+    const input = document.getElementById("stopSearch");
+    const results = document.getElementById("stopSearchResults");
+    if (!input || !results) return;
+
+    const normalized = value => String(value || "")
+      .toLocaleLowerCase("bg-BG")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+
+    const searchStops = query => {
+      const needle = normalized(query).trim();
+      if (!needle) return [];
+
+      return stops
+        .filter(stop => {
+          const name = normalized(stop.name || stop.stop_name);
+          const code = normalized(stop.stop_code || stop.stop_id);
+          return name.includes(needle) || code.includes(needle);
+        })
+        .slice(0, 8);
+    };
+
+    const renderResults = matches => {
+      results.innerHTML = matches.length
+        ? matches.map(stop => `
+            <button type="button" class="virtual-stop-search-result" data-stop-id="${escapeHtml(stop.stop_id)}">
+              <strong>${escapeHtml(stop.name || stop.stop_name || "Спирка")}</strong>
+              <span>${escapeHtml(stop.stop_code || stop.stop_id || "")}</span>
+            </button>
+          `).join("")
+        : `<div class="virtual-stop-search-empty">Няма намерени спирки.</div>`;
+
+      results.hidden = false;
+
+      results.querySelectorAll("[data-stop-id]").forEach(button => {
+        button.addEventListener("click", () => {
+          const stop = findStopById(button.dataset.stopId);
+          if (stop) {
+            input.value = stop.name || stop.stop_name || "";
+            results.hidden = true;
+            selectStopOnMap(stop);
+          }
+        });
+      });
+    };
+
+    input.addEventListener("input", () => {
+      const query = input.value.trim();
+      if (!query) {
+        results.hidden = true;
+        results.innerHTML = "";
+        return;
+      }
+      renderResults(searchStops(query));
+    });
+
+    input.addEventListener("focus", () => {
+      if (input.value.trim()) renderResults(searchStops(input.value));
+    });
+
+    document.addEventListener("click", event => {
+      if (!event.target.closest(".virtual-stop-search")) {
+        results.hidden = true;
+      }
+    });
+  }
+
+  function setupGeolocation() {
+    const button = document.getElementById("locateUserButton");
+    if (!button) return;
+
+    let userMarker = null;
+    const locate = () => {
+      if (!navigator.geolocation) {
+        window.alert("Този браузър не поддържа определяне на локация.");
+        return;
+      }
+
+      button.disabled = true;
+      button.classList.add("is-loading");
+
+      navigator.geolocation.getCurrentPosition(
+        position => {
+          const lat = position.coords.latitude;
+          const lon = position.coords.longitude;
+
+          if (!userMarker) {
+            userMarker = L.circleMarker([lat, lon], {
+              radius: 8,
+              weight: 3,
+              color: "#ffffff",
+              fillColor: "#2563eb",
+              fillOpacity: 1
+            }).addTo(map);
+            userMarker.bindTooltip("Вашата локация", { direction: "top", offset: [0, -8] });
+          } else {
+            userMarker.setLatLng([lat, lon]);
+          }
+
+          map.setView([lat, lon], Math.max(map.getZoom(), 15), { animate: true });
+          button.disabled = false;
+          button.classList.remove("is-loading");
+        },
+        error => {
+          console.warn("Грешка при определяне на локацията:", error);
+          button.disabled = false;
+          button.classList.remove("is-loading");
+          window.alert("Не успяхме да определим вашата локация. Проверете разрешението за достъп до местоположението.");
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
+      );
+    };
+
+    button.addEventListener("click", locate);
   }
 
   function addStopMarkers(stops) {
@@ -387,8 +520,7 @@
       );
 
       marker.on("click", () => {
-        renderStopBoard(stop);
-        map.panTo([lat, lon], { animate: true, duration: 0.4 });
+        selectStopOnMap(stop);
       });
 
       marker.addTo(stopMarkers);
@@ -482,7 +614,10 @@
         lines.map(line => [String(line.id), line])
       );
 
-      initMap(transportData.stops || []);
+      const stops = transportData.stops || [];
+      initMap(stops);
+      setupStopSearch(stops);
+      setupGeolocation();
       startTimers();
     } catch (error) {
       console.error("Неуспешно зареждане на GTFS за виртуалните табла:", error);

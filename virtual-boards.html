@@ -36,6 +36,23 @@
 
     <section class="virtual-board-layout">
       <div class="virtual-map-card">
+        <div class="virtual-map-tools" aria-label="Инструменти на картата">
+          <div class="virtual-stop-search">
+            <label class="sr-only" for="stopSearch">Търсене по спирка</label>
+            <input
+              id="stopSearch"
+              type="search"
+              placeholder="Търсене по спирка…"
+              autocomplete="off"
+              aria-label="Търсене по спирка"
+            />
+            <div id="stopSearchResults" class="virtual-stop-search-results" hidden></div>
+          </div>
+          <button type="button" id="locateUserButton" class="map-tool-button">
+            <span aria-hidden="true">⌖</span>
+            <span>Моята локация</span>
+          </button>
+        </div>
         <div id="virtualMap" class="virtual-map" aria-label="Карта на спирките в София"></div>
         <div class="virtual-map-hint">Кликнете върху спирка, за да отворите виртуалното табло.</div>
       </div>
