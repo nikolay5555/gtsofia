@@ -36,8 +36,12 @@
 
     <section class="virtual-board-layout">
       <div class="virtual-map-card">
-        <div class="virtual-map-tools" aria-label="Инструменти на картата">
-          <div class="virtual-stop-search">
+        <div id="virtualMap" class="virtual-map" aria-label="Карта на спирките в София"></div>
+      </div>
+
+      <aside class="virtual-board-panel" id="virtualBoardPanel">
+        <div class="virtual-board-controls">
+          <div class="virtual-stop-search virtual-stop-search-panel">
             <label class="sr-only" for="stopSearch">Търсене по спирка</label>
             <input
               id="stopSearch"
@@ -58,14 +62,11 @@
             <span aria-hidden="true">⌖</span>
           </button>
         </div>
-        <div id="virtualMap" class="virtual-map" aria-label="Карта на спирките в София"></div>
-        <div class="virtual-map-hint">Кликнете върху спирка, за да отворите виртуалното табло.</div>
-      </div>
-
-      <aside class="virtual-board-panel" id="virtualBoardPanel">
-        <div class="virtual-board-empty">
-          <div class="virtual-board-empty-title">Изберете спирка</div>
-          <p>Всички спирки от GTFS са показани на картата. При клик ще видите линиите, направленията, точния час и оставащите минути до следващото пристигане.</p>
+        <div id="virtualBoardContent" class="virtual-board-content">
+          <div class="virtual-board-empty">
+            <div class="virtual-board-empty-title">Изберете спирка</div>
+            <p>Изберете спирка от картата или потърсете по име.</p>
+          </div>
         </div>
       </aside>
     </section>

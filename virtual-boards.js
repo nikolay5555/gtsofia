@@ -12,7 +12,7 @@
   let routeById = new Map();
   let routeMetaById = new Map();
 
-  const boardPanel = () => document.getElementById("virtualBoardPanel");
+  const boardPanel = () => document.getElementById("virtualBoardContent");
   const clock = () => document.getElementById("virtualBoardClock");
 
   function escapeHtml(value) {
@@ -155,6 +155,7 @@
 
     return `
       <span class="vb-arrival">
+        <span class="live-indicator vb-arrival-live" aria-hidden="true"></span>
         <span class="vb-arrival-time">${formatClockTime(arrivalSeconds)}</span>
         <span class="vb-arrival-countdown">
           ${minutes < 1 ? "след <1 мин" : `след ${minutes} мин`}
@@ -339,7 +340,7 @@
       renderEmptyBoard();
     });
 
-    document.getElementById("virtualBoardRefresh")?.addEventListener("click", refreshPage);
+    document.getElementById("virtualBoardRefresh")?.addEventListener("click", refreshSelectedBoard);
   }
 
   function renderEmptyBoard() {
@@ -352,11 +353,6 @@
         <p>Всички спирки от GTFS са показани на картата. При клик ще видите линиите, направленията, точния час и оставащите минути до следващото пристигане.</p>
       </div>
     `;
-  }
-
-  function refreshPage() {
-    refreshSelectedBoard();
-    updateClock();
   }
 
   function findStopById(stopId) {
@@ -506,8 +502,8 @@
       }
 
       const marker = L.circleMarker([lat, lon], {
-        radius: 7,
-        weight: 1,
+        radius: 11,
+        weight: 2,
         color: "#ffffff",
         fillColor: "#111827",
         fillOpacity: 0.9,
