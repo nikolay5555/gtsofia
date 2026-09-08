@@ -5,10 +5,10 @@
 
   let map = null;
   let selectedStopId = null;
-  let selectedStopMarker = null;
   let refreshTimer = null;
   let clockTimer = null;
   let stopMarkers = null;
+  let stopMarkersById = new Map();
   let transportData = null;
   let routeById = new Map();
   let routeMetaById = new Map();
