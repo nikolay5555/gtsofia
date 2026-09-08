@@ -1001,7 +1001,8 @@
           arrivals: (route.times || [])
             .map(time => ({
               timestamp: Number(time?.timestamp),
-              delay: Number.isFinite(Number(time?.delay)) ? Number(time.delay) : null
+              delay: Number.isFinite(Number(time?.delay)) ? Number(time.delay) : null,
+              scheduled: Boolean(time?.scheduled)
             }))
             .filter(time => Number.isFinite(time.timestamp))
             .filter(time => getArrivalMinutes(time.timestamp) >= 0)
