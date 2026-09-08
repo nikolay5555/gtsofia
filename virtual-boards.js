@@ -272,12 +272,28 @@
   }
 
   function normalizeProxyStopCode(stop) {
-    const raw = String(stop?.stop_code ?? stop?.stop_id ?? "").trim();
-    const isMetro = /^M/i.test(raw) || String(stop?.stop_id ?? "").toUpperCase().startsWith("M");
-    const digits = raw.replace(/\D/g, "");
-    if (isMetro) return { isMetro: true, value: digits };
-    const numeric = raw.replace(/\D/g, "");
-    return { isMetro: false, value: numeric ? numeric.padStart(4, "0") : raw };
+    const rawCode = String(stop?.stop_code ?? stop?.stop_id ?? "").trim();
+    if (!rawCode) return { candidates: [], isMetro: false };
+
+    const rawId = String(stop?.stop_id ?? "").trim();
+    const isMetro = /^M/i.test(rawCode) || /^M/i.test(rawId);
+    const digits = rawCode.replace(/\D/g, "");
+
+    // Dimitar's proxy is fed the public stop code. For surface stops the
+    // proxy expects the numeric code without GTFS left-padding; keep the
+    // original spelling as a second candidate because both forms exist in
+    // different Sofia Traffic data generations.
+    const candidates = [];
+    if (digits) {
+      candidates.push(String(Number(digits)));
+      candidates.push(digits);
+    }
+    candidates.push(rawCode);
+
+    return {
+      candidates: [...new Set(candidates.filter(Boolean))],
+      isMetro
+    };
   }
 
   function getLineMeta(routeId, routeRef) {
@@ -466,42 +482,74 @@
   }
 
   async function fetchVirtualBoardViaProxy(stop) {
-    const { isMetro, value } = normalizeProxyStopCode(stop);
-    if (!value) throw new Error("Липсва код на спирката.");
+    const { candidates, isMetro } = normalizeProxyStopCode(stop);
+    if (!candidates.length) throw new Error("Липсва код на спирката.");
 
-    const url = `https://sofiatraffic-proxy.onrender.com/virtual-board?stop_code=${encodeURIComponent(value)}${isMetro ? "&metro" : ""}`;
-    const response = await fetchWithTimeout(url);
-    if (!response.ok) {
-      throw new Error(`Realtime proxy заявката върна ${response.status}.`);
+    let lastError = null;
+    for (const stopCode of candidates) {
+      const url = `https://sofiatraffic-proxy.onrender.com/virtual-board?stop_code=${encodeURIComponent(stopCode)}${isMetro ? "&metro" : ""}`;
+      try {
+        const response = await fetchWithTimeout(url, {}, 20000);
+        if (!response.ok) {
+          throw new Error(`Realtime proxy заявката върна ${response.status}.`);
+        }
+
+        const data = await response.json();
+        if (!data || typeof data !== "object" || !Array.isArray(data.routes)) {
+          throw new Error("Realtime proxy върна невалиден отговор.");
+        }
+
+        return {
+          status: data.status || (data.routes.length ? "ok" : "empty"),
+          routes: data.routes.map(route => ({
+            ...route,
+            route_ref: route?.route_ref ?? route?.route_short_name ?? route?.route ?? "—",
+            destination: route?.destination ?? route?.headsign ?? "",
+            times: Array.isArray(route?.times) ? route.times : []
+          })),
+          generatedAt: data.generated_at || data.generatedAt || Date.now()
+        };
+      } catch (error) {
+        lastError = error;
+      }
     }
 
-    const data = await response.json();
-    if (!data || typeof data !== "object") {
-      throw new Error("Realtime proxy върна невалиден отговор.");
-    }
-
-    const routes = Array.isArray(data.routes) ? data.routes.map(route => ({
-      ...route,
-      subtype: route?.subtype || (/^N/i.test(String(route?.route_ref || "")) ? "night" : undefined)
-    })) : [];
-
-    return {
-      status: data.status || "error",
-      routes,
-      generatedAt: data.generated_at || Date.now()
-    };
+    throw lastError || new Error("Realtime proxy е недостъпен.");
   }
 
   async function fetchVirtualBoardDirect(stop) {
-    const response = await fetchWithTimeout("https://gtfs.sofiatraffic.bg/api/v1/trip-updates");
-    if (!response.ok) throw new Error(`Официалният GTFS-Realtime feed върна ${response.status}.`);
+    const feedUrl = "https://gtfs.sofiatraffic.bg/api/v1/trip-updates";
+    const proxiedUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(feedUrl)}`;
+    const response = await fetchWithTimeout(proxiedUrl, {}, 30000);
+    if (!response.ok) throw new Error(`CORS fallback за GTFS-Realtime върна ${response.status}.`);
+
     const buffer = await response.arrayBuffer();
+    if (!buffer.byteLength) throw new Error("GTFS-Realtime feed е празен.");
+
     const { updates, feedTimestamp } = decodeGtfsRealtimeFeed(buffer);
+    if (!updates.length) throw new Error("GTFS-Realtime feed не съдържа Trip Updates.");
+
     return buildRealtimeRoutes(updates, stop, feedTimestamp);
   }
 
   async function fetchVirtualBoard(stop) {
-    return fetchVirtualBoardViaProxy(stop);
+    let proxyError = null;
+
+    try {
+      return await fetchVirtualBoardViaProxy(stop);
+    } catch (error) {
+      proxyError = error;
+      console.warn("Realtime proxy не успя, използвам директен GTFS-Realtime fallback.", error);
+    }
+
+    try {
+      return await fetchVirtualBoardDirect(stop);
+    } catch (directError) {
+      console.error("Директният GTFS-Realtime fallback също не успя.", directError);
+      throw new Error(
+        `Realtime proxy: ${proxyError?.message || "недостъпен"}; GTFS-RT: ${directError?.message || "недостъпен"}`
+      );
+    }
   }
 
   async function renderStopBoard(stop, boardData = null) {
