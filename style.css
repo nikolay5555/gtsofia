@@ -1080,7 +1080,7 @@ VIRTUAL BOARDS
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font-size: 18px;
+  font-size: 19px;
   line-height: 1.2;
 }
 
@@ -1387,11 +1387,27 @@ RESPONSIVE
   }
 
   .vb-route-row .schedule-line-identity {
-    gap: 7px;
+    gap: 6px;
+  }
+
+  .vb-route-row .schedule-line-icon,
+  .vb-route-row .schedule-line-icon img {
+    width: 28px;
+    height: 28px;
+  }
+
+  .vb-route-row .schedule-line-pill {
+    width: 56px;
+    height: 28px;
+    font-size: 16px;
+  }
+
+  .vb-route-row .schedule-line-pill.metro {
+    width: 28px;
   }
 
   .vb-destination {
-    font-size: 17px;
+    font-size: 19px;
   }
 }
 
