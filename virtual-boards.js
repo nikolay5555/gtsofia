@@ -5,6 +5,7 @@
 
   let map = null;
   let selectedStopId = null;
+  let selectedStopMarker = null;
   let refreshTimer = null;
   let clockTimer = null;
   let stopMarkers = null;
@@ -778,6 +779,14 @@
 
     document.getElementById("virtualBoardClose")?.addEventListener("click", () => {
       selectedStopId = null;
+      if (selectedStopMarker) {
+        selectedStopMarker.setStyle({
+          fillColor: "#111827",
+          color: "#ffffff",
+          fillOpacity: 0.9
+        });
+        selectedStopMarker = null;
+      }
       renderEmptyBoard();
     });
 
@@ -859,9 +868,29 @@
 
   function selectStopOnMap(stop) {
     if (!stop || !map) return;
+
+    if (selectedStopMarker) {
+      selectedStopMarker.setStyle({
+        fillColor: "#111827",
+        color: "#ffffff",
+        fillOpacity: 0.9
+      });
+    }
     const lat = Number(stop.stop_lat);
     const lon = Number(stop.stop_lon);
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+    const marker = stopMarkersById.get(String(stop.stop_id));
+    if (marker) {
+      marker.setStyle({
+        fillColor: "#BE1E2D",
+        color: "#ffffff",
+        fillOpacity: 1
+      });
+      selectedStopMarker = marker;
+    } else {
+      selectedStopMarker = null;
+    }
 
     renderStopBoard(stop);
     map.setView([lat, lon], Math.max(map.getZoom(), 15), { animate: true });
@@ -986,6 +1015,8 @@
 
   function addStopMarkers(stops) {
     stopMarkers.clearLayers();
+    stopMarkersById.clear();
+    selectedStopMarker = null;
 
     const renderer = L.svg();
 
@@ -1027,6 +1058,7 @@
 
       clickTarget.addTo(stopMarkers);
       marker.addTo(stopMarkers);
+      stopMarkersById.set(String(stop.stop_id), marker);
     }
   }
 
