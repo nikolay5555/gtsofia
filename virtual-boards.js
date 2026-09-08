@@ -604,7 +604,7 @@
               ${destinationHtml(row.destination || row.headsign || "")}
             </div>
             <div class="vb-time-block">
-              ${countdownHtml(arrivals[0], index === 0)}
+              ${countdownHtml(arrivals[0], true)}
               ${arrivals.length > 1 ? `<div class="vb-next-times">${arrivals.slice(1).map(time => `<span>${escapeHtml(formatArrivalClock(time.timestamp))}</span>`).join("")}</div>` : ""}
             </div>
           </article>

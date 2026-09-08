@@ -427,7 +427,8 @@ SCHEDULES PAGE
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
+  background: var(--line-color, #BE1E2D);
+  color: var(--line-text-color, #fff);
   font-weight: 700;
   font-size: 17px;
   line-height: 1;
@@ -1092,6 +1093,40 @@ VIRTUAL BOARDS
   padding-left: 99px;
 }
 
+.vb-arrival-main {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.vb-arrival-live {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  border-radius: 50%;
+  background: #16a34a;
+  box-shadow: 0 0 0 0 rgba(22, 163, 74, .35);
+  animation: vb-pulse 1.8s infinite;
+}
+
+.vb-arrival-clock {
+  color: #111827;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.vb-arrival-minutes {
+  color: #6b7280;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+
 .vb-arrival {
   display: inline-flex;
   align-items: center;
@@ -1316,6 +1351,10 @@ RESPONSIVE
 
   .vb-arrival-time {
     font-size: 21px;
+  }
+
+  .vb-arrival-clock {
+    font-size: 24px;
   }
 
   .virtual-map {
