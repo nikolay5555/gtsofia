@@ -264,7 +264,7 @@ function buildBoard(updates, stopCode, feedTimestamp) {
       if (timestamp > now + LOOK_AHEAD_SECONDS) continue;
 
       const delay = eventDelay(stopUpdate);
-      const key = `${trip.routeId}|${trip.directionId}`;
+      const key = trip.tripId || `${trip.routeId}|${trip.directionId}`;
       if (!grouped.has(key)) {
         grouped.set(key, {
           trip_id: trip.tripId,

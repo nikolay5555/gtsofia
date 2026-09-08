@@ -704,15 +704,52 @@
     };
     const metroRoutes = getMetroScheduledArrivals(stop);
 
-    const realtimeRouteIds = new Set(
-      realtime.routes.map(route => String(route?.route_id || ''))
-    );
+    // Realtime rows are kept per trip by the API because Sofia's feed often
+    // does not populate direction_id. Merge them back by line + destination
+    // here, after terminal-direction filtering, so opposite directions never
+    // get mixed into the same row.
+    const mergedRealtime = new Map();
+    for (const route of realtime.routes) {
+      const staticTrip = findStaticTrip(route.trip_id);
+      const staticDirection = getStaticDirectionForTrip(staticTrip);
+      const destination = route.destination
+        || staticTrip?.trip_headsign
+        || staticDirection?.destination
+        || staticDirection?.headsign
+        || '';
+      const key = `${String(route.route_id || '')}|${destination}|${String(route.route_ref || '')}`;
+
+      if (!mergedRealtime.has(key)) {
+        mergedRealtime.set(key, {
+          ...route,
+          destination,
+          times: []
+        });
+      }
+      mergedRealtime.get(key).times.push(...(route.times || []));
+    }
+
+    const mergedSurfaceRoutes = [...mergedRealtime.values()]
+      .map(route => ({
+        ...route,
+        times: route.times
+          .sort((a, b) => Number(a.timestamp) - Number(b.timestamp))
+          .filter((time, index, list) =>
+            index === 0 || Number(time.timestamp) !== Number(list[index - 1].timestamp)
+          )
+          .slice(0, 4)
+      }))
+      .filter(route => route.times.length);
 
     // Sofia Traffic currently does not provide usable Trip Updates for metro.
     // Keep surface transport realtime-only and add metro from the static GTFS
     // timetable when the selected stop is a metro station.
+    const realtimeRouteIds = new Set(
+      mergedSurfaceRoutes.map(route => String(route?.route_id || ''))
+    );
+
     const routes = [
-      ...realtime.routes,
+      ...mergedSurfaceRoutes,
       ...metroRoutes.filter(route =>
         !realtimeRouteIds.has(String(route.route_id || ''))
       )
