@@ -401,6 +401,100 @@
     return tripById.get(String(tripId)) || null;
   }
 
+  function getStaticDirectionForTrip(staticTrip) {
+    if (!staticTrip?.route_id) return null;
+    const directions = transportData?.directions?.[String(staticTrip.route_id)] || {};
+    const headsign = String(staticTrip.trip_headsign || '').trim();
+    for (const [key, direction] of Object.entries(directions)) {
+      const directionHeadsign = String(direction?.headsign || direction?.destination || '').trim();
+      if (directionHeadsign === headsign) return { key, ...direction };
+    }
+    return null;
+  }
+
+  function shouldHideTerminalArrival(routeId, stopId, staticTrip) {
+    const directions = transportData?.directions?.[String(routeId)] || {};
+    const entries = Object.entries(directions).filter(([, direction]) =>
+      Array.isArray(direction?.pattern) && direction.pattern.length
+    );
+    if (entries.length < 2) return false;
+
+    const selected = normalizeStopKey(stopId);
+    let hasFirst = false;
+    let hasLast = false;
+    for (const [, direction] of entries) {
+      const pattern = direction.pattern.map(String);
+      const indexes = pattern.map((id, index) =>
+        stopIdsMatch(id, selected) ? index : -1
+      ).filter(index => index >= 0);
+      if (!indexes.length) continue;
+      if (indexes.includes(0)) hasFirst = true;
+      if (indexes.includes(pattern.length - 1)) hasLast = true;
+    }
+    if (!hasFirst || !hasLast) return false;
+
+    const staticDirection = getStaticDirectionForTrip(staticTrip);
+    if (!staticDirection?.pattern?.length) return false;
+    const pattern = staticDirection.pattern.map(String);
+    const indexes = pattern.map((id, index) =>
+      stopIdsMatch(id, selected) ? index : -1
+    ).filter(index => index >= 0);
+
+    // At a terminal that is simultaneously the origin of the reverse trip,
+    // do not show the trip whose destination is the selected terminal itself.
+    return indexes.includes(pattern.length - 1) && !indexes.includes(0);
+  }
+
+  function getMetroScheduledArrivals(stop) {
+    const now = getNowGtfsSeconds();
+    const weekend = isWeekendInSofia();
+    const selectedStop = String(stop?.stop_id || stop?.stop_code || '').trim();
+    if (!selectedStop) return [];
+
+    const result = [];
+    for (const route of (transportData?.routes || [])) {
+      if (String(route?.route_type) !== '1') continue;
+
+      const routeId = String(route.route_id || '').trim();
+      const directionSet = transportData?.directions?.[routeId] || {};
+      const scheduleSet = transportData?.schedules?.[routeId] || {};
+      const meta = getLineMeta(routeId, route.route_short_name || '');
+
+      for (const [directionKey, direction] of Object.entries(directionSet)) {
+        const pattern = Array.isArray(direction?.pattern) ? direction.pattern.map(String) : [];
+        const stopIndex = pattern.findIndex(id => stopIdsMatch(id, selectedStop));
+        if (stopIndex < 0) continue;
+
+        const daySchedules = scheduleSet?.[directionKey]?.[weekend ? 'weekend' : 'weekday'];
+        if (!Array.isArray(daySchedules)) continue;
+
+        const arrivals = [];
+        for (const schedule of daySchedules) {
+          const rawTime = Array.isArray(schedule?.times) ? schedule.times[stopIndex] : null;
+          const seconds = parseGtfsTime(rawTime);
+          if (seconds == null) continue;
+
+          let timestamp = seconds;
+          if (timestamp < now) timestamp += 86400;
+          arrivals.push(timestamp);
+        }
+
+        arrivals.sort((a, b) => a - b);
+        const unique = [...new Set(arrivals)].slice(0, 4);
+        if (!unique.length) continue;
+
+        result.push({
+          route_id: routeId,
+          route_ref: meta.number || route.route_short_name || '—',
+          destination: direction?.destination || direction?.headsign || '',
+          times: unique.map(timestamp => ({ timestamp, delay: null, scheduled: true })),
+          meta
+        });
+      }
+    }
+    return result;
+  }
+
   function buildRealtimeRoutes(updates, stop, generatedAt) {
     const selectedStopIds = [stop.stop_id, stop.stop_code, String(stop.stop_id || "").replace(/^M/i, "")]
       .filter(Boolean)
@@ -425,6 +519,8 @@
       });
 
       for (const update of relevant) {
+        if (shouldHideTerminalArrival(routeId, update.stopId, staticTrip)) continue;
+
         const event = update.arrival?.time != null
           ? update.arrival
           : update.departure?.time != null
@@ -490,49 +586,47 @@
     if (!stopCode) throw new Error('Липсва код на спирката.');
 
     const url = `api/virtual-board?stop_code=${encodeURIComponent(stopCode)}`;
-    const response = await fetchWithTimeout(url, {}, 20000);
-
-    let data = null;
-    try {
-      data = await response.json();
-    } catch {
-      throw new Error(`Realtime API върна невалиден JSON (${response.status}).`);
-    }
+    const response = await fetchWithTimeout(url, {
+      headers: {
+        Accept: 'application/x-protobuf, application/octet-stream'
+      }
+    }, 20000);
 
     if (!response.ok) {
-      throw new Error(data?.error || `Realtime API заявката върна ${response.status}.`);
+      let message = `Realtime API заявката върна ${response.status}.`;
+      try {
+        const data = await response.json();
+        message = data?.error || message;
+      } catch {
+        // The endpoint normally returns protobuf on success and JSON on errors.
+      }
+      throw new Error(message);
     }
 
-    if (!data || typeof data !== 'object' || !Array.isArray(data.routes)) {
-      throw new Error('Realtime API върна невалидни данни.');
-    }
+    const buffer = await response.arrayBuffer();
+    const feed = decodeGtfsRealtimeFeed(buffer);
+    const generatedAt = feed.feedTimestamp || Date.now();
+    const realtime = buildRealtimeRoutes(feed.updates, stop, generatedAt);
+    const metroRoutes = getMetroScheduledArrivals(stop);
+
+    const realtimeRouteIds = new Set(
+      realtime.routes.map(route => String(route?.route_id || ''))
+    );
+
+    // Sofia Traffic currently does not provide usable Trip Updates for metro.
+    // Keep surface transport realtime-only and add metro from the static GTFS
+    // timetable when the selected stop is a metro station.
+    const routes = [
+      ...realtime.routes,
+      ...metroRoutes.filter(route =>
+        !realtimeRouteIds.has(String(route.route_id || ''))
+      )
+    ];
 
     return {
-      status: data.status || (data.routes.length ? 'ok' : 'empty'),
-      generatedAt: data.generated_at || Math.floor(Date.now() / 1000),
-      routes: data.routes
-        .map(route => {
-          const staticTrip = findStaticTrip(route?.trip_id);
-          const staticRoute = routeById.get(String(route?.route_id || staticTrip?.route_id || ''));
-          const destination = staticTrip?.trip_headsign
-            || staticRoute?.route_long_name?.split(' - ').filter(Boolean).at(-1)?.trim()
-            || '';
-
-          return {
-            ...route,
-            route_id: route?.route_id || staticTrip?.route_id || '',
-            route_ref: route?.route_ref ?? staticRoute?.route_short_name ?? '—',
-            destination: route?.destination ?? destination,
-            times: Array.isArray(route?.times)
-              ? route.times.map(time => ({
-                  timestamp: Number(time?.timestamp),
-                  delay: Number.isFinite(Number(time?.delay)) ? Number(time?.delay) : null,
-                  t: Math.max(0, (Number(time?.timestamp) - Math.floor(Date.now() / 1000)) / 60)
-                })).filter(time => Number.isFinite(time.timestamp))
-              : []
-          };
-        })
-        .filter(route => route.times.length)
+      status: routes.length ? 'ok' : 'empty',
+      generatedAt,
+      routes
     };
   }
 
