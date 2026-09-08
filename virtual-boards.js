@@ -638,6 +638,71 @@
     return result;
   }
 
+  function getSurfaceScheduledArrivals(stop) {
+    const nowTimestamp = Date.now() / 1000;
+    const horizonTimestamp = nowTimestamp + 2 * 60 * 60;
+    const weekend = isWeekendInSofia();
+    const selectedStop = String(stop?.stop_id || stop?.stop_code || '').trim();
+    if (!selectedStop) return [];
+
+    const result = [];
+
+    for (const route of (transportData?.routes || [])) {
+      // Static fallback applies only to surface transport. Metro keeps its
+      // existing static timetable logic below.
+      if (String(route?.route_type) === '1') continue;
+
+      const routeId = String(route?.route_id || '').trim();
+      if (!routeId) continue;
+
+      const directionSet = transportData?.directions?.[routeId] || {};
+      const scheduleSet = transportData?.schedules?.[routeId] || {};
+      const meta = getLineMeta(routeId, route.route_short_name || '');
+
+      for (const [directionKey, direction] of Object.entries(directionSet)) {
+        const pattern = Array.isArray(direction?.pattern) ? direction.pattern.map(String) : [];
+        const stopIndex = pattern.findIndex(id => stopIdsMatch(id, selectedStop));
+        if (stopIndex < 0) continue;
+
+        // Keep the existing terminal-direction rule.
+        if (isTerminalDirectionForStop(routeId, selectedStop, direction)) continue;
+
+        const daySchedules = scheduleSet?.[directionKey]?.[weekend ? 'weekend' : 'weekday'];
+        if (!Array.isArray(daySchedules)) continue;
+
+        let nextTimestamp = null;
+        for (const schedule of daySchedules) {
+          const rawTime = Array.isArray(schedule?.times) ? schedule.times[stopIndex] : null;
+          const seconds = parseGtfsTime(rawTime);
+          if (seconds == null) continue;
+
+          let timestamp = gtfsSecondsToTodayTimestamp(seconds);
+          if (timestamp < nowTimestamp) {
+            timestamp += 86400;
+          }
+
+          // The fallback is allowed only inside the two-hour window before
+          // the scheduled arrival.
+          if (timestamp < nowTimestamp || timestamp > horizonTimestamp) continue;
+          if (nextTimestamp == null || timestamp < nextTimestamp) nextTimestamp = timestamp;
+        }
+
+        if (nextTimestamp == null) continue;
+
+        result.push({
+          route_id: routeId,
+          route_ref: meta.number || route.route_short_name || '—',
+          destination: direction?.destination || direction?.headsign || '',
+          times: [{ timestamp: nextTimestamp, delay: null, scheduled: true }],
+          meta,
+          scheduled: true
+        });
+      }
+    }
+
+    return result.sort((a, b) => a.times[0].timestamp - b.times[0].timestamp);
+  }
+
   function buildRealtimeRoutes(updates, stop, generatedAt) {
     const selectedStopIds = [stop.stop_id, stop.stop_code, String(stop.stop_id || "").replace(/^M/i, "")]
       .filter(Boolean)
@@ -833,6 +898,37 @@
       }))
       .filter(route => route.times.length);
 
+    // For surface transport, use the static timetable as a fallback during
+    // the two hours before the next scheduled course when CGM has not yet
+    // published realtime data for that line/direction. Once realtime appears,
+    // it wins and replaces the static fallback.
+    const scheduledSurfaceRoutes = isMetroStop(stop) ? [] : getSurfaceScheduledArrivals(stop);
+    const realtimeDestinationKeys = new Set(
+      mergedSurfaceRoutes.map(route =>
+        `${String(route.route_id || '')}|${normalizeDirectionText(route.destination || '')}`
+      )
+    );
+
+    const surfaceFallbackRoutes = scheduledSurfaceRoutes.filter(route => {
+      const key = `${String(route.route_id || '')}|${normalizeDirectionText(route.destination || '')}`;
+      return !realtimeDestinationKeys.has(key);
+    });
+
+    // Some GTFS exports contain duplicate static directions with the same
+    // destination/pattern. Keep only the earliest fallback row for a given
+    // line + destination so the board never shows duplicate static entries.
+    const fallbackByKey = new Map();
+    for (const route of surfaceFallbackRoutes) {
+      const key = `${String(route.route_id || '')}|${normalizeDirectionText(route.destination || '')}`;
+      const existing = fallbackByKey.get(key);
+      if (!existing || Number(route.times?.[0]?.timestamp) < Number(existing.times?.[0]?.timestamp)) {
+        fallbackByKey.set(key, route);
+      }
+    }
+
+    const surfaceRoutes = [...mergedSurfaceRoutes, ...fallbackByKey.values()]
+      .sort((a, b) => Number(a.times?.[0]?.timestamp) - Number(b.times?.[0]?.timestamp));
+
     // Sofia Traffic currently does not provide usable Trip Updates for metro.
     // Keep surface transport realtime-only and add metro from the static GTFS
     // timetable when the selected stop is a metro station.
@@ -841,7 +937,7 @@
     );
 
     const routes = [
-      ...mergedSurfaceRoutes,
+      ...surfaceRoutes,
       ...metroRoutes.filter(route =>
         !realtimeRouteIds.has(String(route.route_id || ''))
       )
@@ -895,7 +991,7 @@
       const list = panel.querySelector(".virtual-board-list");
 
       if (data.status !== "ok" || !data.routes.length) {
-        list.innerHTML = `<div class="virtual-board-no-data">Няма налични realtime пристигания за тази спирка.</div>`;
+        list.innerHTML = `<div class="virtual-board-no-data">Няма налични пристигания за тази спирка.</div>`;
         return;
       }
 
@@ -916,7 +1012,7 @@
         .sort((a, b) => a.arrivals[0].timestamp - b.arrivals[0].timestamp);
 
       if (!rows.length) {
-        list.innerHTML = `<div class="virtual-board-no-data">Няма налични realtime пристигания за тази спирка.</div>`;
+        list.innerHTML = `<div class="virtual-board-no-data">Няма налични пристигания за тази спирка.</div>`;
         return;
       }
 
@@ -930,8 +1026,8 @@
               ${destinationHtml(row.destination || row.headsign || "")}
             </div>
             <div class="vb-time-block">
-              ${countdownHtml(arrivals[0], true)}
-              ${arrivals.length > 1 ? `<div class="vb-next-times">${arrivals.slice(1).map(time => `<span>${escapeHtml(formatArrivalClock(time.timestamp))}</span>`).join("")}</div>` : ""}
+              ${countdownHtml(arrivals[0], !arrivals[0]?.scheduled)}
+              ${!arrivals[0]?.scheduled && arrivals.length > 1 ? `<div class="vb-next-times">${arrivals.slice(1).map(time => `<span>${escapeHtml(formatArrivalClock(time.timestamp))}</span>`).join("")}</div>` : ""}
             </div>
           </article>
         `;
