@@ -486,75 +486,39 @@
     if (!stopCode) throw new Error("Липсва код на спирката.");
 
     const url = `api/virtual-board?stop_code=${encodeURIComponent(stopCode)}`;
-    const response = await fetchWithTimeout(url, {}, 20000);
+    const response = await fetchWithTimeout(url, {}, 25000);
+
     if (!response.ok) {
-      throw new Error(`Realtime API заявката върна ${response.status}.`);
-    }
-
-    const buffer = await response.arrayBuffer();
-    if (!buffer.byteLength) throw new Error("GTFS-Realtime feed е празен.");
-
-    const { updates, feedTimestamp } = decodeGtfsRealtimeFeed(buffer);
-    if (!updates.length) throw new Error("GTFS-Realtime feed не съдържа Trip Updates.");
-
-    return buildRealtimeRoutes(updates, stop, feedTimestamp);
-  }
-
-  async function fetchVirtualBoardViaProxy(stop) {
-    const { candidates, isMetro } = normalizeProxyStopCode(stop);
-    if (!candidates.length) throw new Error("Липсва код на спирката.");
-
-    let lastError = null;
-    for (const stopCode of candidates) {
-      const url = `https://sofiatraffic-proxy.onrender.com/virtual-board?stop_code=${encodeURIComponent(stopCode)}${isMetro ? "&metro" : ""}`;
+      let details = "";
       try {
-        const response = await fetchWithTimeout(url, {}, 10000);
-        if (!response.ok) throw new Error(`Realtime proxy заявката върна ${response.status}.`);
-
-        const data = await response.json();
-        if (!data || typeof data !== "object" || !Array.isArray(data.routes)) {
-          throw new Error("Realtime proxy върна невалиден отговор.");
-        }
-
-        return {
-          status: data.status || (data.routes.length ? "ok" : "empty"),
-          routes: data.routes.map(route => ({
-            ...route,
-            route_ref: route?.route_ref ?? route?.route_short_name ?? route?.route ?? "—",
-            destination: route?.destination ?? route?.headsign ?? "",
-            times: Array.isArray(route?.times) ? route.times : []
-          })),
-          generatedAt: data.generated_at || data.generatedAt || Date.now()
-        };
-      } catch (error) {
-        lastError = error;
+        const errorData = await response.json();
+        details = errorData?.error ? ` ${errorData.error}` : "";
+      } catch {
+        // Ignore non-JSON error responses.
       }
+      throw new Error(`Realtime API заявката върна ${response.status}.${details}`);
     }
 
-    throw lastError || new Error("Realtime proxy е недостъпен.");
+    const data = await response.json();
+
+    if (!data || typeof data !== "object" || !Array.isArray(data.routes)) {
+      throw new Error("Realtime API върна невалиден отговор.");
+    }
+
+    return {
+      status: data.status || (data.routes.length ? "ok" : "empty"),
+      routes: data.routes.map(route => ({
+        ...route,
+        route_ref: route?.route_ref ?? route?.route_short_name ?? route?.route ?? "—",
+        destination: route?.destination ?? route?.headsign ?? "",
+        times: Array.isArray(route?.times) ? route.times : []
+      })),
+      generatedAt: data.generated_at || data.generatedAt || Date.now()
+    };
   }
 
   async function fetchVirtualBoard(stop) {
-    let serverError = null;
-
-    // Primary path: same-origin serverless endpoint. This avoids browser CORS
-    // restrictions and talks directly to the official Sofia Traffic GTFS-RT feed.
-    try {
-      return await fetchVirtualBoardViaServer(stop);
-    } catch (error) {
-      serverError = error;
-      console.warn("Same-origin GTFS-Realtime endpoint не успя.", error);
-    }
-
-    // Secondary path for deployments that still have Dimitar's public proxy.
-    try {
-      return await fetchVirtualBoardViaProxy(stop);
-    } catch (proxyError) {
-      console.error("GTFS-Realtime endpoints failed.", { serverError, proxyError });
-      throw new Error(
-        `Realtime API: ${serverError?.message || "недостъпен"}; proxy: ${proxyError?.message || "недостъпен"}`
-      );
-    }
+    return fetchVirtualBoardViaServer(stop);
   }
 
   async function renderStopBoard(stop, boardData = null) {

@@ -1,4 +1,31 @@
-const FEED_URL = 'https://gtfs.sofiatraffic.bg/api/v1/trip-updates';
+const PROXY_URL = 'https://sofiatraffic-proxy.onrender.com/virtual-board?stop_code=';
+
+function formatSurfaceStopCode(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  const digits = raw.replace(/\D/g, '');
+  if (!digits) return raw;
+  return digits.padStart(4, '0');
+}
+
+function normalizeStopCode(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return { code: '', metro: false };
+
+  const metro = /^M/i.test(raw);
+  if (metro) {
+    const digits = raw.replace(/\D/g, '');
+    return {
+      code: digits || raw.replace(/^M/i, ''),
+      metro: true
+    };
+  }
+
+  return {
+    code: formatSurfaceStopCode(raw),
+    metro: false
+  };
+}
 
 module.exports = async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -6,32 +33,54 @@ module.exports = async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  const { code, metro } = normalizeStopCode(req.query?.stop_code);
+  if (!code) {
+    return res.status(400).json({ error: 'Missing stop_code.' });
+  }
+
+  const url = `${PROXY_URL}${encodeURIComponent(code)}${metro ? '&metro' : ''}`;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
+  const timeout = setTimeout(() => controller.abort(), 20000);
 
   try {
-    const upstream = await fetch(FEED_URL, {
+    const upstream = await fetch(url, {
       signal: controller.signal,
       headers: {
-        'Accept': 'application/x-protobuf, application/octet-stream'
+        Accept: 'application/json'
       }
     });
 
+    const text = await upstream.text();
+
     if (!upstream.ok) {
-      return res.status(upstream.status).json({
-        error: `Sofia Traffic GTFS-RT returned ${upstream.status}`
+      return res.status(502).json({
+        error: `Virtual board upstream returned ${upstream.status}.`,
+        details: text.slice(0, 500)
       });
     }
 
-    const body = Buffer.from(await upstream.arrayBuffer());
-    res.setHeader('Content-Type', 'application/x-protobuf');
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      return res.status(502).json({
+        error: 'Virtual board upstream returned invalid JSON.'
+      });
+    }
+
+    if (!data || typeof data !== 'object' || !Array.isArray(data.routes)) {
+      return res.status(502).json({
+        error: 'Virtual board upstream returned an unexpected response.'
+      });
+    }
+
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store, max-age=0');
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    return res.status(200).send(body);
+    return res.status(200).json(data);
   } catch (error) {
     const message = error?.name === 'AbortError'
-      ? 'Upstream GTFS-RT request timed out.'
-      : (error?.message || 'Unable to fetch GTFS-RT.');
+      ? 'Virtual board upstream request timed out.'
+      : (error?.message || 'Unable to fetch virtual board data.');
 
     return res.status(502).json({ error: message });
   } finally {
