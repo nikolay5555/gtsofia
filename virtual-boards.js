@@ -588,7 +588,7 @@
     const url = `api/virtual-board?stop_code=${encodeURIComponent(stopCode)}`;
     const response = await fetchWithTimeout(url, {
       headers: {
-        Accept: 'application/x-protobuf, application/octet-stream'
+        Accept: 'application/json'
       }
     }, 20000);
 
@@ -598,15 +598,38 @@
         const data = await response.json();
         message = data?.error || message;
       } catch {
-        // The endpoint normally returns protobuf on success and JSON on errors.
+        // The endpoint normally returns JSON on success and errors.
       }
       throw new Error(message);
     }
 
-    const buffer = await response.arrayBuffer();
-    const feed = decodeGtfsRealtimeFeed(buffer);
-    const generatedAt = feed.feedTimestamp || Date.now();
-    const realtime = buildRealtimeRoutes(feed.updates, stop, generatedAt);
+    const data = await response.json();
+    const generatedAt = data?.generated_at || Date.now();
+    const realtime = {
+      status: data?.status || 'empty',
+      generatedAt,
+      routes: Array.isArray(data?.routes)
+        ? data.routes
+            .filter(route => route && Array.isArray(route.times))
+            .filter(route => {
+              const staticTrip = findStaticTrip(route.trip_id);
+              return !staticTrip || !shouldHideTerminalArrival(route.route_id, stop.stop_id, staticTrip);
+            })
+            .map(route => ({
+              ...route,
+              route_id: route.route_id || '',
+              route_ref: route.route_ref || getLineMeta(route.route_id || '', '').number || '—',
+              destination: route.destination || '',
+              times: route.times
+                .map(time => ({
+                  timestamp: Number(time?.timestamp),
+                  delay: Number.isFinite(Number(time?.delay)) ? Number(time.delay) : null
+                }))
+                .filter(time => Number.isFinite(time.timestamp))
+            }))
+            .filter(route => route.times.length)
+        : []
+    };
     const metroRoutes = getMetroScheduledArrivals(stop);
 
     const realtimeRouteIds = new Set(
