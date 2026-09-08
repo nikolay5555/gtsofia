@@ -534,9 +534,18 @@
     return getStopDistanceMeters(selectedStop, terminalStop) <= 300;
   }
 
-  function shouldHideTerminalArrival(routeId, stopId, staticTrip) {
+  function shouldHideTerminalArrival(routeId, stopId, staticTrip, destination = '') {
     const staticDirection = getStaticDirectionForTrip(staticTrip);
-    return !!staticDirection?.pattern?.length && isTerminalDirectionForStop(routeId, stopId, staticDirection);
+    if (staticDirection?.pattern?.length && isTerminalDirectionForStop(routeId, stopId, staticDirection)) return true;
+
+    // The same physical terminal can be represented by different GTFS stop IDs
+    // and even slightly different destination spellings (e.g. Ж.К. ДРУЖБА-2
+    // vs Ж.к. Дружба 2). A destination matching the selected stop name is
+    // therefore also treated as the terminal direction.
+    const selectedStop = getStopById(stopId);
+    const selectedName = normalizeStopName(selectedStop?.stop_name);
+    const destinationName = normalizeStopName(destination);
+    return !!selectedName && !!destinationName && selectedName === destinationName;
   }
 
   function getMetroScheduledArrivals(stop) {
@@ -615,7 +624,7 @@
       });
 
       for (const update of relevant) {
-        if (shouldHideTerminalArrival(routeId, update.stopId, staticTrip)) continue;
+        if (shouldHideTerminalArrival(routeId, update.stopId, staticTrip, destination)) continue;
 
         const event = update.arrival?.time != null
           ? update.arrival
@@ -706,10 +715,11 @@
           .filter(route => route && Array.isArray(route.times))
           .filter(route => {
             const staticTrip = findStaticTrip(route.trip_id);
-            return !staticTrip || !shouldHideTerminalArrival(
+            return !shouldHideTerminalArrival(
               route.route_id || staticTrip?.route_id || '',
               stop.stop_id,
-              staticTrip
+              staticTrip,
+              route.destination || ''
             );
           })
           .map(route => {
