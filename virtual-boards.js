@@ -453,48 +453,44 @@
     return tripById.get(String(tripId)) || null;
   }
 
+  function normalizeDirectionText(value) {
+    return String(value ?? '')
+      .trim()
+      .toLocaleLowerCase('bg-BG')
+      .replace(/\s+/g, ' ')
+      .replace(/[–—]/g, '-')
+      .replace(/[.]/g, '')
+      .trim();
+  }
+
   function getStaticDirectionForTrip(staticTrip) {
     if (!staticTrip?.route_id) return null;
     const directions = transportData?.directions?.[String(staticTrip.route_id)] || {};
-    const headsign = String(staticTrip.trip_headsign || '').trim();
+    const headsign = normalizeDirectionText(staticTrip.trip_headsign);
+    if (!headsign) return null;
     for (const [key, direction] of Object.entries(directions)) {
-      const directionHeadsign = String(direction?.headsign || direction?.destination || '').trim();
-      if (directionHeadsign === headsign) return { key, ...direction };
+      const directionHeadsign = normalizeDirectionText(direction?.headsign || direction?.destination);
+      if (directionHeadsign && directionHeadsign === headsign) return { key, ...direction };
     }
     return null;
   }
 
-  function shouldHideTerminalArrival(routeId, stopId, staticTrip) {
+  function isTerminalDirectionForStop(routeId, stopId, direction) {
+    const pattern = Array.isArray(direction?.pattern) ? direction.pattern.map(String) : [];
+    if (pattern.length < 2) return false;
+    const selected = String(stopId ?? '').trim();
+    const indexes = pattern.map((id, index) => stopIdsMatch(id, selected) ? index : -1).filter(index => index >= 0);
+    if (!indexes.includes(pattern.length - 1)) return false;
     const directions = transportData?.directions?.[String(routeId)] || {};
-    const entries = Object.entries(directions).filter(([, direction]) =>
-      Array.isArray(direction?.pattern) && direction.pattern.length
-    );
-    if (entries.length < 2) return false;
+    return Object.values(directions).some(other => {
+      if (other === direction || !Array.isArray(other?.pattern) || !other.pattern.length) return false;
+      return stopIdsMatch(other.pattern[0], selected);
+    });
+  }
 
-    const selected = String(stopId ?? "").trim();
-    let hasFirst = false;
-    let hasLast = false;
-    for (const [, direction] of entries) {
-      const pattern = direction.pattern.map(String);
-      const indexes = pattern.map((id, index) =>
-        stopIdsMatch(id, selected) ? index : -1
-      ).filter(index => index >= 0);
-      if (!indexes.length) continue;
-      if (indexes.includes(0)) hasFirst = true;
-      if (indexes.includes(pattern.length - 1)) hasLast = true;
-    }
-    if (!hasFirst || !hasLast) return false;
-
+  function shouldHideTerminalArrival(routeId, stopId, staticTrip) {
     const staticDirection = getStaticDirectionForTrip(staticTrip);
-    if (!staticDirection?.pattern?.length) return false;
-    const pattern = staticDirection.pattern.map(String);
-    const indexes = pattern.map((id, index) =>
-      stopIdsMatch(id, selected) ? index : -1
-    ).filter(index => index >= 0);
-
-    // At a terminal that is simultaneously the origin of the reverse trip,
-    // do not show the trip whose destination is the selected terminal itself.
-    return indexes.includes(pattern.length - 1) && !indexes.includes(0);
+    return !!staticDirection?.pattern?.length && isTerminalDirectionForStop(routeId, stopId, staticDirection);
   }
 
   function getMetroScheduledArrivals(stop) {
@@ -516,6 +512,7 @@
         const pattern = Array.isArray(direction?.pattern) ? direction.pattern.map(String) : [];
         const stopIndex = pattern.findIndex(id => stopIdsMatch(id, selectedStop));
         if (stopIndex < 0) continue;
+        if (isTerminalDirectionForStop(routeId, selectedStop, direction)) continue;
 
         const daySchedules = scheduleSet?.[directionKey]?.[weekend ? 'weekend' : 'weekday'];
         if (!Array.isArray(daySchedules)) continue;
