@@ -479,13 +479,7 @@
     const pattern = Array.isArray(direction?.pattern) ? direction.pattern.map(String) : [];
     if (pattern.length < 2) return false;
     const selected = String(stopId ?? '').trim();
-    const indexes = pattern.map((id, index) => stopIdsMatch(id, selected) ? index : -1).filter(index => index >= 0);
-    if (!indexes.includes(pattern.length - 1)) return false;
-    const directions = transportData?.directions?.[String(routeId)] || {};
-    return Object.values(directions).some(other => {
-      if (other === direction || !Array.isArray(other?.pattern) || !other.pattern.length) return false;
-      return stopIdsMatch(other.pattern[0], selected);
-    });
+    return stopIdsMatch(pattern[pattern.length - 1], selected);
   }
 
   function shouldHideTerminalArrival(routeId, stopId, staticTrip) {
