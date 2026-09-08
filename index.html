@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Начало | GTSofia</title>
+  <link href="https://fonts.googleapis.com/css2?family=Sofia+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="navbar">
+    <a href="index.html" class="nav-logo">GTSOFIA</a>
+    <button class="nav-toggle" onclick="toggleMenu()" aria-label="Отвори меню">☰</button>
+    <nav id="navMenu">
+      <a href="index.html" class="active">Начало</a>
+      <a href="virtual-boards.html">Виртуални табла</a>
+      <a href="schedules.html">Разписания</a>
+      <a href="rolling-stock.html">Подвижен състав</a>
+      <a href="about.html">За проекта</a>
+    </nav>
+  </header>
+
+  <main class="home">
+    <div class="promo-card">
+      <div class="empty-text">Разписания и информация в реално време</div>
+      <img class="promo-logo"
+           src="https://play-lh.googleusercontent.com/kJihhzXg33FMGIpa5Z0FjZaG5wHRpqfv63iG77FD3LmwtSw5SA8unoY0oTt-LDJca0TK2arPOpqpQY8-z-E6PQ=w240-h480-rw"
+           alt="Sofia Ride" />
+      <div class="promo-title">Sofia Ride</div>
+      <div class="promo-text">
+        Преглеждайте пристигания в реално време, разписания и информация за транспорта с помощта на Sofia Ride. Автор на приложението е Pablito86.
+      </div>
+      <div class="promo-actions">
+        <a href="https://play.google.com/store/apps/details?id=com.paf.sofiatrafficapp" target="_blank" class="promo-btn secondary">Изтегляне на приложението</a>
+        <a href="https://sofiaride.vercel.app/" class="promo-btn secondary">Отваряне на уеб версията</a>
+      </div>
+    </div>
+
+    <div class="home-grid">
+      <a href="virtual-boards.html" class="home-card">
+        <h2>Виртуални табла</h2>
+        <p>Карта на спирките в София и предстоящите пристигания според актуалните GTFS разписания.</p>
+      </a>
+
+      <a href="schedules.html" class="home-card">
+        <h2>Разписания</h2>
+        <p>Разписания по линия, направление и спирка.</p>
+      </a>
+
+      <a href="rolling-stock.html" class="home-card">
+        <h2>Подвижен състав</h2>
+        <p>Списък на целия подвижен състав, обслужващ града.</p>
+      </a>
+
+      <a href="about.html" class="home-card">
+        <h2>За проекта</h2>
+        <p>Информация за проекта и възможности за обратна връзка.</p>
+      </a>
+    </div>
+  </main>
+
+  <script src="navbar.js"></script>
+</body>
+</html>
