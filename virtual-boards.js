@@ -12,6 +12,7 @@
   let routeById = new Map();
   let routeMetaById = new Map();
   let tripById = new Map();
+  let tripStopsById = new Map();
 
   const boardPanel = () => document.getElementById("virtualBoardBody");
 
@@ -334,6 +335,17 @@
     return tripById.get(String(tripId)) || null;
   }
 
+  function getRealtimeStopId(stopUpdate, tripId) {
+    const explicitStopId = String(stopUpdate?.stopId || '').trim();
+    if (explicitStopId) return explicitStopId;
+
+    const stopSequence = Number(stopUpdate?.stopSequence);
+    if (!Number.isFinite(stopSequence) || stopSequence < 1) return '';
+
+    const tripStops = tripStopsById.get(String(tripId));
+    return tripStops?.[stopSequence - 1] || '';
+  }
+
   function collectRealtimeStopRows(stopId) {
     const groups = new Map();
     const updates = Array.isArray(window.gtfsRealtimeTripUpdates)
@@ -350,9 +362,10 @@
       const stopUpdates = Array.isArray(update.stopTimeUpdates)
         ? update.stopTimeUpdates
         : [];
-      const stopUpdate = stopUpdates.find(
-        item => String(item.stopId || "") === targetStopId
-      );
+      const stopUpdate = stopUpdates.find(item => {
+        const realtimeStopId = getRealtimeStopId(item, tripId);
+        return realtimeStopId === targetStopId;
+      });
       if (!stopUpdate) continue;
 
       // 1 = SKIPPED, 2 = NO_DATA, 3 = CANCELED.
@@ -802,6 +815,18 @@
           trip
         ])
       );
+
+      tripStopsById = new Map();
+      for (const directionSet of Object.values(transportData.directions || {})) {
+        for (const direction of Object.values(directionSet || {})) {
+          const tripId = String(direction?.trip_id || '').trim();
+          if (!tripId) continue;
+          const stopIds = Array.isArray(direction?.stops)
+            ? direction.stops.map(stop => String(stop?.stop_id || '').trim()).filter(Boolean)
+            : [];
+          if (stopIds.length) tripStopsById.set(tripId, stopIds);
+        }
+      }
 
       const lines = convertGtfsRoutes(
         transportData.routes || [],
