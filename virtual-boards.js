@@ -476,11 +476,62 @@
     return null;
   }
 
+  function normalizeStopName(value) {
+    return String(value ?? '')
+      .trim()
+      .toLocaleLowerCase('bg-BG')
+      .replace(/["„“”'’]/g, '')
+      .replace(/[–—-]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function getStopById(stopId) {
+    const wanted = String(stopId ?? '').trim();
+    if (!wanted) return null;
+    return (transportData?.stops || []).find(stop =>
+      stopIdsMatch(stop?.stop_id, wanted) || stopIdsMatch(stop?.stop_code, wanted)
+    ) || null;
+  }
+
+  function getStopDistanceMeters(left, right) {
+    const lat1 = Number(left?.stop_lat);
+    const lon1 = Number(left?.stop_lon);
+    const lat2 = Number(right?.stop_lat);
+    const lon2 = Number(right?.stop_lon);
+    if (![lat1, lon1, lat2, lon2].every(Number.isFinite)) return Infinity;
+
+    const toRad = value => value * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat / 2) ** 2
+      + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+    return 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
   function isTerminalDirectionForStop(routeId, stopId, direction) {
     const pattern = Array.isArray(direction?.pattern) ? direction.pattern.map(String) : [];
     if (pattern.length < 2) return false;
     const selected = String(stopId ?? '').trim();
-    return stopIdsMatch(pattern[pattern.length - 1], selected);
+    if (!selected) return false;
+
+    const terminalId = pattern[pattern.length - 1];
+    if (stopIdsMatch(terminalId, selected)) return true;
+
+    // GTFS can contain separate stop_ids for opposite platforms/approaches
+    // of the same physical terminal (e.g. 0611/0612 at Дружба 2). Treat
+    // those as the same terminal only when both the names match and the
+    // coordinates are genuinely close, so identical names elsewhere do not
+    // get filtered accidentally.
+    const selectedStop = getStopById(selected);
+    const terminalStop = getStopById(terminalId);
+    if (!selectedStop || !terminalStop) return false;
+
+    const selectedName = normalizeStopName(selectedStop.stop_name);
+    const terminalName = normalizeStopName(terminalStop.stop_name);
+    if (!selectedName || selectedName !== terminalName) return false;
+
+    return getStopDistanceMeters(selectedStop, terminalStop) <= 300;
   }
 
   function shouldHideTerminalArrival(routeId, stopId, staticTrip) {
