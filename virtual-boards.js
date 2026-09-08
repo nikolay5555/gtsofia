@@ -1055,11 +1055,11 @@
       const stopId = String(stop?.stop_id ?? "").trim();
       if (!activeStopIds.has(stopId)) return false;
 
-      // Keep only genuine metro stops as metro points. GTFS also contains
-      // standalone entrance/exit records named "метростанция ...".
-      // A surface stop with that name is kept only when a surface route
-      // actually serves it; unserved entrance/exit records stay hidden.
-      return true;
+      // GTFS contains station entrances/exits and other child locations
+      // (location_type 2/3/4) which reuse stop IDs of real transport stops.
+      // Virtual boards must show only actual boarding stops/stations.
+      const locationType = String(stop?.location_type ?? "0").trim();
+      return locationType === "0";
     });
   }
 
