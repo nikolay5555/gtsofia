@@ -11,6 +11,7 @@
   let transportData = null;
   let routeById = new Map();
   let routeMetaById = new Map();
+  let tripById = new Map();
 
   const boardPanel = () => document.getElementById("virtualBoardBody");
 
@@ -79,11 +80,177 @@
     const minute = Number(parts[1]);
     const second = Number(parts[2]);
 
-    if (![hour, minute, second].every(Number.isFinite)) {
-      return null;
+    if (![hour, minute, second].every(Number.isFinite)) return null;
+    return hour * 3600 + minute * 60 + second;
+  }
+
+  // Minimal GTFS-Realtime protobuf decoder for TripUpdates.
+  function readVarint(bytes, state) {
+    let value = 0n;
+    let shift = 0n;
+
+    while (state.index < bytes.length) {
+      const byte = bytes[state.index++];
+      value |= BigInt(byte & 0x7f) << shift;
+      if ((byte & 0x80) === 0) return value;
+      shift += 7n;
+      if (shift > 70n) throw new Error("Невалиден GTFS-RT varint.");
     }
 
-    return hour * 3600 + minute * 60 + second;
+    throw new Error("Непълен GTFS-RT varint.");
+  }
+
+  function readField(bytes, state) {
+    const tag = Number(readVarint(bytes, state));
+    const fieldNumber = tag >>> 3;
+    const wireType = tag & 7;
+
+    if (!fieldNumber) throw new Error("Невалидно GTFS-RT поле.");
+
+    if (wireType === 0) {
+      return { fieldNumber, wireType, value: readVarint(bytes, state) };
+    }
+
+    if (wireType === 1) {
+      const end = state.index + 8;
+      if (end > bytes.length) throw new Error("Непълно GTFS-RT съобщение.");
+      const value = bytes.subarray(state.index, end);
+      state.index = end;
+      return { fieldNumber, wireType, value };
+    }
+
+    if (wireType === 2) {
+      const length = Number(readVarint(bytes, state));
+      const end = state.index + length;
+      if (end > bytes.length) throw new Error("Непълно GTFS-RT protobuf съобщение.");
+      const value = bytes.subarray(state.index, end);
+      state.index = end;
+      return { fieldNumber, wireType, value };
+    }
+
+    if (wireType === 5) {
+      const end = state.index + 4;
+      if (end > bytes.length) throw new Error("Непълно GTFS-RT съобщение.");
+      const value = bytes.subarray(state.index, end);
+      state.index = end;
+      return { fieldNumber, wireType, value };
+    }
+
+    throw new Error(`Неподдържан GTFS-RT wire type: ${wireType}`);
+  }
+
+  function decodeString(bytes) {
+    return new TextDecoder().decode(bytes);
+  }
+
+  function toSignedInt32(value) {
+    const n = Number(value & 0xffffffffn) >>> 0;
+    return n > 0x7fffffff ? n - 0x100000000 : n;
+  }
+
+  function decodeTripDescriptor(bytes) {
+    const state = { index: 0 };
+    const trip = { tripId: "", routeId: "", directionId: "" };
+
+    while (state.index < bytes.length) {
+      const field = readField(bytes, state);
+      if (field.wireType !== 2) continue;
+      if (field.fieldNumber === 1) trip.tripId = decodeString(field.value);
+      else if (field.fieldNumber === 5) trip.routeId = decodeString(field.value);
+      else if (field.fieldNumber === 6) trip.directionId = decodeString(field.value);
+    }
+
+    return trip;
+  }
+
+  function decodeStopTimeEvent(bytes) {
+    const state = { index: 0 };
+    const result = { delay: null, time: null };
+
+    while (state.index < bytes.length) {
+      const field = readField(bytes, state);
+      if (field.fieldNumber === 1 && field.wireType === 0) {
+        result.delay = toSignedInt32(field.value);
+      } else if (field.fieldNumber === 2 && field.wireType === 0) {
+        result.time = Number(field.value);
+      }
+    }
+
+    return result;
+  }
+
+  function decodeStopTimeUpdate(bytes) {
+    const state = { index: 0 };
+    const result = {
+      stopSequence: null,
+      stopId: "",
+      arrival: null,
+      departure: null,
+      scheduleRelationship: null
+    };
+
+    while (state.index < bytes.length) {
+      const field = readField(bytes, state);
+      if (field.fieldNumber === 1 && field.wireType === 0) {
+        result.stopSequence = Number(field.value);
+      } else if (field.fieldNumber === 2 && field.wireType === 2) {
+        result.arrival = decodeStopTimeEvent(field.value);
+      } else if (field.fieldNumber === 3 && field.wireType === 2) {
+        result.departure = decodeStopTimeEvent(field.value);
+      } else if (field.fieldNumber === 4 && field.wireType === 2) {
+        result.stopId = decodeString(field.value);
+      } else if (field.fieldNumber === 5 && field.wireType === 0) {
+        result.scheduleRelationship = Number(field.value);
+      }
+    }
+
+    return result;
+  }
+
+  function decodeTripUpdate(bytes) {
+    const state = { index: 0 };
+    const result = { trip: null, stopTimeUpdates: [] };
+
+    while (state.index < bytes.length) {
+      const field = readField(bytes, state);
+      if (field.fieldNumber === 1 && field.wireType === 2) {
+        result.trip = decodeTripDescriptor(field.value);
+      } else if (field.fieldNumber === 2 && field.wireType === 2) {
+        result.stopTimeUpdates.push(decodeStopTimeUpdate(field.value));
+      }
+    }
+
+    return result;
+  }
+
+  function decodeFeedEntity(bytes) {
+    const state = { index: 0 };
+    let tripUpdate = null;
+
+    while (state.index < bytes.length) {
+      const field = readField(bytes, state);
+      if (field.fieldNumber === 3 && field.wireType === 2) {
+        tripUpdate = decodeTripUpdate(field.value);
+      }
+    }
+
+    return tripUpdate;
+  }
+
+  function decodeGtfsRealtimeFeed(buffer) {
+    const bytes = new Uint8Array(buffer);
+    const state = { index: 0 };
+    const updates = [];
+
+    while (state.index < bytes.length) {
+      const field = readField(bytes, state);
+      if (field.fieldNumber === 2 && field.wireType === 2) {
+        const entity = decodeFeedEntity(field.value);
+        if (entity?.trip?.tripId) updates.push(entity);
+      }
+    }
+
+    return updates;
   }
 
   function getLineMeta(routeId) {
@@ -140,111 +307,108 @@
     `;
   }
 
-  function countdownHtml(arrivalSeconds, nowSeconds) {
-    if (arrivalSeconds == null) {
-      return `
-        <span class="vb-arrival vb-arrival-empty">
-          Няма повече курсове
-        </span>
-      `;
+  function countdownHtml(arrivalUnix, isFirst) {
+    if (arrivalUnix == null) {
+      return `<span class="vb-arrival vb-arrival-empty">Няма realtime данни</span>`;
     }
 
-    const diffSeconds = Math.max(0, arrivalSeconds - nowSeconds);
+    const diffSeconds = Math.max(0, arrivalUnix - Math.floor(Date.now() / 1000));
     const minutes = Math.max(0, Math.ceil(diffSeconds / 60));
+    const time = new Intl.DateTimeFormat("bg-BG", {
+      timeZone: SOFIA_TIME_ZONE,
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23"
+    }).format(new Date(arrivalUnix * 1000));
 
     return `
       <span class="vb-arrival">
-        <span class="live-indicator vb-arrival-live" aria-hidden="true"></span>
-        <span class="vb-arrival-time">${formatClockTime(arrivalSeconds)}</span>
-        <span class="vb-arrival-countdown">
-          ${minutes < 1 ? "след <1 мин" : `след ${minutes} мин`}
-        </span>
+        ${isFirst ? '<span class="live-indicator vb-arrival-live" aria-hidden="true"></span>' : ''}
+        <span class="vb-arrival-time">${escapeHtml(time)}</span>
+        <span class="vb-arrival-countdown">${minutes < 1 ? "след <1 мин" : `след ${minutes} мин`}</span>
       </span>
     `;
   }
 
-  function collectStopRows(stopId) {
-    const rows = [];
-    const nowSeconds = getNowGtfsSeconds();
-    const dayType = isWeekendInSofia() ? "weekend" : "weekday";
+  function getStaticTrip(tripId) {
+    return tripById.get(String(tripId)) || null;
+  }
 
-    for (const [routeId, directionSet] of Object.entries(
-      transportData?.directions || {}
-    )) {
-      const meta = getLineMeta(routeId);
-      const route = routeById.get(String(routeId));
+  function collectRealtimeStopRows(stopId) {
+    const groups = new Map();
+    const updates = Array.isArray(window.gtfsRealtimeTripUpdates)
+      ? window.gtfsRealtimeTripUpdates
+      : [];
+    const nowUnix = Math.floor(Date.now() / 1000);
+    const targetStopId = String(stopId);
 
-      if (!route) continue;
+    for (const update of updates) {
+      const tripDescriptor = update?.trip || {};
+      const tripId = String(tripDescriptor.tripId || "");
+      if (!tripId) continue;
 
-      for (const [directionKey, direction] of Object.entries(directionSet || {})) {
-        const stops = Array.isArray(direction?.stops) ? direction.stops : [];
-        const stopIndexes = [];
+      const stopUpdates = Array.isArray(update.stopTimeUpdates)
+        ? update.stopTimeUpdates
+        : [];
+      const stopUpdate = stopUpdates.find(
+        item => String(item.stopId || "") === targetStopId
+      );
+      if (!stopUpdate) continue;
 
-        stops.forEach((stop, index) => {
-          if (String(stop?.stop_id ?? "") === String(stopId)) {
-            stopIndexes.push(index);
-          }
-        });
+      // 1 = SKIPPED, 2 = NO_DATA, 3 = CANCELED.
+      if ([1, 2, 3].includes(stopUpdate.scheduleRelationship)) continue;
 
-        if (!stopIndexes.length) continue;
+      const arrivalEvent = stopUpdate.arrival || stopUpdate.departure;
+      const arrivalUnix = Number(arrivalEvent?.time);
+      if (!Number.isFinite(arrivalUnix) || arrivalUnix < nowUnix - 60) continue;
 
-        const schedules =
-          transportData?.schedules?.[routeId]?.[directionKey]?.[dayType] || [];
+      const staticTrip = getStaticTrip(tripId);
+      const routeId = String(
+        tripDescriptor.routeId || staticTrip?.route_id || ""
+      );
+      if (!routeId) continue;
 
-        const arrivals = [];
+      const headsign = staticTrip?.trip_headsign || "";
+      const groupKey = `${routeId}|${headsign}`;
+      let group = groups.get(groupKey);
 
-        for (const schedule of schedules) {
-          const times = Array.isArray(schedule?.times) ? schedule.times : [];
-
-          for (const stopIndex of stopIndexes) {
-            const arrival = parseGtfsTime(times[stopIndex]);
-            if (arrival == null) continue;
-
-            if (arrival >= nowSeconds) {
-              arrivals.push(arrival);
-            }
-          }
-        }
-
-        arrivals.sort((a, b) => a - b);
-
-        const uniqueArrivals = [...new Set(arrivals)].slice(0, 3);
-
-        rows.push({
+      if (!group) {
+        group = {
           routeId,
-          number: meta.number,
-          type: meta.type,
-          headsign: direction?.headsign || direction?.destination || "",
-          directionKey,
-          nextArrival: uniqueArrivals[0] ?? null,
-          upcoming: uniqueArrivals
-        });
+          headsign,
+          arrivals: []
+        };
+        groups.set(groupKey, group);
       }
+
+      group.arrivals.push(arrivalUnix);
     }
 
-    rows.sort((a, b) => {
-      if (a.nextArrival == null && b.nextArrival == null) {
-        return a.number.localeCompare(b.number, "bg", {
-          numeric: true,
-          sensitivity: "base"
-        });
-      }
-      if (a.nextArrival == null) return 1;
-      if (b.nextArrival == null) return -1;
-      return a.nextArrival - b.nextArrival;
-    });
-
-    return rows;
+    return [...groups.values()]
+      .map(group => ({
+        ...group,
+        arrivals: [...new Set(group.arrivals)].sort((a, b) => a - b),
+      }))
+      .map(group => ({
+        ...group,
+        arrivals: group.arrivals.slice(0, 4),
+        nextArrivalUnix: group.arrivals[0] ?? null
+      }))
+      .sort((a, b) => {
+        if (a.nextArrivalUnix == null) return 1;
+        if (b.nextArrivalUnix == null) return -1;
+        return a.nextArrivalUnix - b.nextArrivalUnix;
+      });
   }
 
   function renderStopBoard(stop) {
     selectedStopId = String(stop.stop_id);
-    const rows = collectStopRows(stop.stop_id);
+    const rows = collectRealtimeStopRows(stop.stop_id);
     const panel = boardPanel();
 
     if (!panel) return;
 
-    const activeRows = rows.filter(row => row.nextArrival != null);
+    const activeRows = rows.filter(row => row.nextArrivalUnix != null);
     const titleName = stop.name || stop.stop_name || "Спирка";
     const titleCode = stop.stop_code || stop.stop_id || "";
 
@@ -271,8 +435,7 @@
             ? rows
                 .map((row, index) => {
                   const meta = getLineMeta(row.routeId);
-                  const upcoming = row.upcoming || [];
-                  const futureItems = upcoming.slice(0, 3);
+                  const futureItems = row.arrivals || [row.nextArrivalUnix];
 
                   return `
                     <article class="vb-row">
@@ -282,7 +445,7 @@
                       </div>
 
                       <div class="vb-time-block">
-                        ${countdownHtml(row.nextArrival, getNowGtfsSeconds())}
+                        ${countdownHtml(row.nextArrivalUnix, index === 0)}
                         ${
                           futureItems.length > 1
                             ? `
@@ -291,9 +454,12 @@
                                   .slice(1)
                                   .map(
                                     time =>
-                                      `<span>${escapeHtml(
-                                        formatClockTime(time)
-                                      )}</span>`
+                                      `<span>${escapeHtml(new Intl.DateTimeFormat("bg-BG", {
+                                        timeZone: SOFIA_TIME_ZONE,
+                                        hour: "2-digit",
+                                        minute: "2-digit",
+                                        hourCycle: "h23"
+                                      }).format(new Date(Number(time) * 1000)))}</span>`
                                   )
                                   .join("")}
                               </div>
@@ -564,24 +730,59 @@
     setTimeout(() => map.invalidateSize(), 100);
   }
 
-  function refreshSelectedBoard() {
-    if (!selectedStopId) return;
-
-    const selectedStop = (transportData?.stops || []).find(
-      stop => String(stop.stop_id) === selectedStopId
-    );
-
-    if (selectedStop) {
-      renderStopBoard(selectedStop);
-    }
-  }
 
   function startTimers() {
     clearInterval(refreshTimer);
     clearInterval(clockTimer);
 
-    refreshTimer = setInterval(refreshSelectedBoard, REFRESH_MS);
+    refreshTimer = setInterval(() => {
+      loadRealtimeTripUpdates()
+        .then(() => {
+          if (selectedStopId) {
+            const selectedStop = findStopById(selectedStopId);
+            if (selectedStop) renderStopBoard(selectedStop);
+          }
+        })
+        .catch(error => console.error("GTFS-Realtime refresh error:", error));
+    }, REFRESH_MS);
+
     refreshSelectedBoard();
+  }
+
+  async function loadRealtimeTripUpdates() {
+    const response = await fetch(
+      "https://gtfs.sofiatraffic.bg/api/v1/trip-updates",
+      {
+        cache: "no-store",
+        mode: "cors"
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`GTFS-Realtime заявката върна ${response.status}.`);
+    }
+
+    const buffer = await response.arrayBuffer();
+    window.gtfsRealtimeTripUpdates = decodeGtfsRealtimeFeed(buffer);
+    window.gtfsRealtimeUpdatedAt = Date.now();
+    return window.gtfsRealtimeTripUpdates;
+  }
+
+  async function refreshSelectedBoard() {
+    if (!selectedStopId) return;
+
+    const refreshButton = document.getElementById("virtualBoardRefresh");
+    refreshButton?.classList.add("is-loading");
+
+    try {
+      await loadRealtimeTripUpdates();
+      const selectedStop = findStopById(selectedStopId);
+      if (selectedStop) renderStopBoard(selectedStop);
+    } catch (error) {
+      console.error("Неуспешно зареждане на GTFS-Realtime:", error);
+    } finally {
+      refreshButton?.classList.remove("is-loading");
+    }
   }
 
   async function initializeVirtualBoards() {
@@ -595,6 +796,13 @@
         ])
       );
 
+      tripById = new Map(
+        (transportData.trips || []).map(trip => [
+          String(trip.trip_id),
+          trip
+        ])
+      );
+
       const lines = convertGtfsRoutes(
         transportData.routes || [],
         transportData.trips || [],
@@ -604,6 +812,8 @@
       routeMetaById = new Map(
         lines.map(line => [String(line.id), line])
       );
+
+      await loadRealtimeTripUpdates();
 
       const allStops = transportData.stops || [];
       const stops = getActiveStops(allStops);
