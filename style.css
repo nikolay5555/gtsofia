@@ -1080,7 +1080,7 @@ VIRTUAL BOARDS
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font-size: 16px;
+  font-size: 18px;
   line-height: 1.2;
 }
 
@@ -1114,7 +1114,7 @@ VIRTUAL BOARDS
 
 .vb-arrival-clock {
   color: #111827;
-  font-size: 28px;
+  font-size: 24px;
   font-weight: 700;
   line-height: 1;
 }
@@ -1354,7 +1354,7 @@ RESPONSIVE
   }
 
   .vb-arrival-clock {
-    font-size: 24px;
+    font-size: 22px;
   }
 
   .virtual-map {
@@ -1391,7 +1391,7 @@ RESPONSIVE
   }
 
   .vb-destination {
-    font-size: 15px;
+    font-size: 17px;
   }
 }
 
