@@ -355,7 +355,8 @@
   }
 
   function refreshPage() {
-    window.location.reload();
+    refreshSelectedBoard();
+    updateClock();
   }
 
   function findStopById(stopId) {
@@ -505,7 +506,7 @@
       }
 
       const marker = L.circleMarker([lat, lon], {
-        radius: 4.5,
+        radius: 7,
         weight: 1,
         color: "#ffffff",
         fillColor: "#111827",

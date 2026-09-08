@@ -886,6 +886,13 @@ VIRTUAL BOARDS
   white-space: nowrap;
 }
 
+.map-location-button {
+  width: 42px;
+  padding: 0;
+  justify-content: center;
+  font-size: 21px;
+}
+
 .map-tool-button:hover {
   background: #fff;
 }
@@ -1045,7 +1052,9 @@ VIRTUAL BOARDS
 
 .vb-route-row {
   min-width: 0;
-  gap: 14px;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: nowrap;
 }
 
 .vb-route-row .schedule-line-identity {
@@ -1057,6 +1066,8 @@ VIRTUAL BOARDS
   height: auto;
   flex: 0 0 13px;
   opacity: .7;
+  align-self: center;
+  display: block;
 }
 
 .vb-destination {
@@ -1064,6 +1075,7 @@ VIRTUAL BOARDS
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+  line-height: 1.2;
 }
 
 .vb-time-block {
@@ -1282,17 +1294,21 @@ RESPONSIVE
   }
 
   .virtual-map-tools {
-    flex-direction: column;
+    left: auto;
     right: 14px;
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: flex-end;
+    width: calc(100% - 28px);
   }
 
   .virtual-stop-search {
-    width: min(100%, 360px);
+    width: min(360px, calc(100vw - 86px));
   }
 
   .vb-route-row {
-    align-items: flex-start;
-    gap: 10px;
+    align-items: center;
+    gap: 8px;
   }
 
   .vb-route-row .schedule-line-identity {
@@ -1330,6 +1346,10 @@ RESPONSIVE
 
   .map-tool-button {
     align-self: flex-start;
+  }
+
+  .map-location-button {
+    flex: 0 0 42px;
   }
 
   .virtual-map {
