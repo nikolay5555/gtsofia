@@ -12,8 +12,7 @@
   let routeById = new Map();
   let routeMetaById = new Map();
 
-  const boardPanel = () => document.getElementById("virtualBoardContent");
-  const clock = () => document.getElementById("virtualBoardClock");
+  const boardPanel = () => document.getElementById("virtualBoardBody");
 
   function escapeHtml(value) {
     return String(value ?? "")
@@ -254,26 +253,16 @@
         <div>
           <div class="virtual-board-kicker">Спирка ${escapeHtml(titleCode)}</div>
           <h2>${escapeHtml(titleName)}</h2>
-          <p>${rows.length} направления по GTFS</p>
         </div>
-        <button
-          type="button"
-          class="virtual-board-close"
-          id="virtualBoardClose"
-          aria-label="Затвори таблото"
-        >×</button>
-      </div>
-
-      <div class="virtual-board-live-line">
-        <div class="virtual-board-live-copy">
-          <span class="live-indicator" aria-hidden="true"></span>
-          <span>Следващи пристигания · ${escapeHtml(
-            isWeekendInSofia() ? "празнично разписание" : "делнично разписание"
-          )}</span>
+        <div class="virtual-board-header-actions">
+          <button type="button" class="virtual-board-refresh" id="virtualBoardRefresh">Обнови</button>
+          <button
+            type="button"
+            class="virtual-board-close"
+            id="virtualBoardClose"
+            aria-label="Затвори таблото"
+          >×</button>
         </div>
-        <button type="button" class="virtual-board-refresh" id="virtualBoardRefresh">
-          Обнови
-        </button>
       </div>
 
       <div class="virtual-board-list">
@@ -330,9 +319,6 @@
           : ""
       }
 
-      <div class="virtual-board-footnote">
-        Времената са планови GTFS времена. Таблото се преизчислява автоматично според часовника на София.
-      </div>
     `;
 
     document.getElementById("virtualBoardClose")?.addEventListener("click", () => {
@@ -349,8 +335,7 @@
 
     panel.innerHTML = `
       <div class="virtual-board-empty">
-        <div class="virtual-board-empty-title">Изберете спирка</div>
-        <p>Всички спирки от GTFS са показани на картата. При клик ще видите линиите, направленията, точния час и оставащите минути до следващото пристигане.</p>
+        <p>Изберете спирка от картата, за да видите следващите пристигания</p>
       </div>
     `;
   }
@@ -491,7 +476,7 @@
   function addStopMarkers(stops) {
     stopMarkers.clearLayers();
 
-    const renderer = L.canvas({ padding: 0.5 });
+    const renderer = L.svg();
 
     for (const stop of stops) {
       const lat = Number(stop.stop_lat);
@@ -501,8 +486,18 @@
         continue;
       }
 
+      const clickTarget = L.circleMarker([lat, lon], {
+        radius: 16,
+        weight: 0,
+        stroke: false,
+        fillColor: "#111827",
+        fillOpacity: 0.01,
+        renderer,
+        pane: "markerPane"
+      });
+
       const marker = L.circleMarker([lat, lon], {
-        radius: 11,
+        radius: 7,
         weight: 2,
         color: "#ffffff",
         fillColor: "#111827",
@@ -511,17 +506,32 @@
         pane: "markerPane"
       });
 
-      marker.bindTooltip(
-        escapeHtml(stop.name || stop.stop_name || "Спирка"),
-        { direction: "top", offset: [0, -5] }
-      );
+      const stopTooltip = escapeHtml(stop.name || stop.stop_name || "Спирка");
+      marker.bindTooltip(stopTooltip, { direction: "top", offset: [0, -5] });
+      clickTarget.bindTooltip(stopTooltip, { direction: "top", offset: [0, -12] });
 
-      marker.on("click", () => {
-        selectStopOnMap(stop);
-      });
+      const select = () => selectStopOnMap(stop);
+      clickTarget.on("click", select);
+      marker.on("click", select);
 
+      clickTarget.addTo(stopMarkers);
       marker.addTo(stopMarkers);
     }
+  }
+
+  function getActiveStops(stops) {
+    const activeStopIds = new Set();
+
+    for (const directionSet of Object.values(transportData?.directions || {})) {
+      for (const direction of Object.values(directionSet || {})) {
+        for (const stop of direction?.stops || []) {
+          const stopId = String(stop?.stop_id ?? "").trim();
+          if (stopId) activeStopIds.add(stopId);
+        }
+      }
+    }
+
+    return stops.filter(stop => activeStopIds.has(String(stop?.stop_id ?? "").trim()));
   }
 
   function initMap(stops) {
@@ -554,19 +564,6 @@
     setTimeout(() => map.invalidateSize(), 100);
   }
 
-  function updateClock() {
-    const parts = getSofiaParts();
-    const target = clock();
-
-    if (!target) return;
-
-    target.textContent =
-      `${String(parts.hour).padStart(2, "0")}:${String(parts.minute).padStart(
-        2,
-        "0"
-      )}:${String(parts.second).padStart(2, "0")}`;
-  }
-
   function refreshSelectedBoard() {
     if (!selectedStopId) return;
 
@@ -583,10 +580,7 @@
     clearInterval(refreshTimer);
     clearInterval(clockTimer);
 
-    clockTimer = setInterval(updateClock, 1000);
     refreshTimer = setInterval(refreshSelectedBoard, REFRESH_MS);
-
-    updateClock();
     refreshSelectedBoard();
   }
 
@@ -611,7 +605,8 @@
         lines.map(line => [String(line.id), line])
       );
 
-      const stops = transportData.stops || [];
+      const allStops = transportData.stops || [];
+      const stops = getActiveStops(allStops);
       initMap(stops);
       setupStopSearch(stops);
       setupGeolocation();

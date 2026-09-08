@@ -25,12 +25,6 @@
     <section class="virtual-board-toolbar">
       <div>
         <h1>Виртуални табла</h1>
-        <p>Изберете спирка от картата, за да видите следващите пристигания по GTFS разписание.</p>
-      </div>
-      <div class="virtual-board-status" aria-live="polite">
-        <span class="live-indicator" aria-hidden="true"></span>
-        <span id="virtualBoardClock">--:--:--</span>
-        <span class="virtual-board-status-label">GTFS · автоматично обновяване</span>
       </div>
     </section>
 
@@ -40,32 +34,33 @@
       </div>
 
       <aside class="virtual-board-panel" id="virtualBoardPanel">
-        <div class="virtual-board-controls">
-          <div class="virtual-stop-search virtual-stop-search-panel">
-            <label class="sr-only" for="stopSearch">Търсене по спирка</label>
-            <input
-              id="stopSearch"
-              type="search"
-              placeholder="Търсене по спирка…"
-              autocomplete="off"
-              aria-label="Търсене по спирка"
-            />
-            <div id="stopSearchResults" class="virtual-stop-search-results" hidden></div>
-          </div>
-          <button
-            type="button"
-            id="locateUserButton"
-            class="map-tool-button map-location-button"
-            aria-label="Моята локация"
-            title="Моята локация"
-          >
-            <span aria-hidden="true">⌖</span>
-          </button>
-        </div>
         <div id="virtualBoardContent" class="virtual-board-content">
-          <div class="virtual-board-empty">
-            <div class="virtual-board-empty-title">Изберете спирка</div>
-            <p>Изберете спирка от картата или потърсете по име.</p>
+          <div class="virtual-board-controls">
+            <div class="virtual-stop-search virtual-stop-search-panel">
+              <label class="sr-only" for="stopSearch">Търсене по спирка</label>
+              <input
+                id="stopSearch"
+                type="search"
+                placeholder="Търсене по спирка…"
+                autocomplete="off"
+                aria-label="Търсене по спирка"
+              />
+              <div id="stopSearchResults" class="virtual-stop-search-results" hidden></div>
+            </div>
+            <button
+              type="button"
+              id="locateUserButton"
+              class="map-tool-button map-location-button"
+              aria-label="Моята локация"
+              title="Моята локация"
+            >
+              <span aria-hidden="true">⌖</span>
+            </button>
+          </div>
+          <div id="virtualBoardBody" class="virtual-board-body">
+            <div class="virtual-board-empty">
+              <p>Изберете спирка от картата, за да видите следващите пристигания</p>
+            </div>
           </div>
         </div>
       </aside>

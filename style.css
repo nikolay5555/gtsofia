@@ -502,7 +502,7 @@ SCHEDULES PAGE
 }
 
 .schedule-summary-destination {
-  font-size: 21px;
+  font-size: 18px;
 }
 
 .schedule-summary-stop {
@@ -721,27 +721,6 @@ VIRTUAL BOARDS
   line-height: 1.15;
 }
 
-.virtual-board-toolbar p {
-  margin-top: 5px;
-  color: #6b7280;
-  font-size: 14px;
-}
-
-.virtual-board-status {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  color: #374151;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-
-.virtual-board-status-label {
-  color: #6b7280;
-  font-size: 13px;
-  font-weight: 600;
-}
-
 .live-indicator {
   width: 9px;
   height: 9px;
@@ -818,6 +797,7 @@ VIRTUAL BOARDS
 .map-tool-button {
   width: 42px;
   height: 42px;
+  min-height: 42px;
   flex: 0 0 42px;
   display: inline-flex;
   align-items: center;
@@ -825,16 +805,18 @@ VIRTUAL BOARDS
   padding: 0;
   border: 1px solid #d1d5db;
   border-radius: 11px;
-  background: #fff;
+  background: rgba(255,255,255,.96);
   color: #111827;
   font: inherit;
   font-weight: 700;
-  box-shadow: 0 2px 8px rgba(0,0,0,.06);
+  box-shadow: 0 4px 14px rgba(0,0,0,.12);
   cursor: pointer;
+  pointer-events: auto;
+  white-space: nowrap;
 }
 
 .map-tool-button:hover {
-  background: #f9fafb;
+  background: #fff;
 }
 
 .map-tool-button:disabled {
@@ -936,10 +918,6 @@ VIRTUAL BOARDS
   cursor: wait;
 }
 
-.map-tool-button.is-loading span:last-child {
-  opacity: .7;
-}
-
 .virtual-map {
   width: 100%;
   height: 100%;
@@ -966,11 +944,19 @@ VIRTUAL BOARDS
   flex: 1 1 auto;
 }
 
+.virtual-board-body {
+  min-height: 0;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+}
+
 .virtual-board-empty,
 .virtual-board-error {
   margin: auto;
   max-width: 420px;
-  padding: 34px;
+  padding: 28px 24px;
   color: #6b7280;
   text-align: center;
 }
@@ -984,6 +970,13 @@ VIRTUAL BOARDS
 
 .virtual-board-empty p {
   line-height: 1.55;
+}
+
+.virtual-board-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
 }
 
 .virtual-board-header {
@@ -1032,25 +1025,6 @@ VIRTUAL BOARDS
   background: #e5e7eb;
 }
 
-.virtual-board-live-line {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 18px;
-  color: #6b7280;
-  font-size: 12px;
-  font-weight: 600;
-  border-bottom: 1px solid #f0f1f2;
-}
-
-.virtual-board-live-copy {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 .virtual-board-refresh {
   flex: 0 0 auto;
   border: 0;
@@ -1080,6 +1054,7 @@ VIRTUAL BOARDS
 
 .vb-route-row {
   min-width: 0;
+  width: 100%;
   gap: 10px;
   align-items: center;
   flex-wrap: nowrap;
@@ -1100,9 +1075,11 @@ VIRTUAL BOARDS
 
 .vb-destination {
   min-width: 0;
+  flex: 1 1 auto;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+  font-size: 16px;
   line-height: 1.2;
 }
 
@@ -1116,10 +1093,11 @@ VIRTUAL BOARDS
 }
 
 .vb-arrival {
-  display: flex;
-  align-items: baseline;
+  display: inline-flex;
+  align-items: center;
   gap: 9px;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .vb-arrival-live {
@@ -1172,15 +1150,6 @@ VIRTUAL BOARDS
   background: #f9fafb;
   color: #6b7280;
   font-size: 13px;
-  line-height: 1.45;
-}
-
-.virtual-board-footnote {
-  flex: 0 0 auto;
-  padding: 11px 16px;
-  border-top: 1px solid #eef0f2;
-  color: #9ca3af;
-  font-size: 11px;
   line-height: 1.45;
 }
 
@@ -1266,10 +1235,6 @@ RESPONSIVE
     flex-direction: column;
   }
 
-  .virtual-board-status {
-    white-space: normal;
-  }
-
   .virtual-board-layout {
     grid-template-columns: 1fr;
   }
@@ -1353,21 +1318,6 @@ RESPONSIVE
     font-size: 21px;
   }
 
-  .virtual-board-live-line {
-    align-items: flex-start;
-    flex-wrap: wrap;
-  }
-
-  .virtual-board-live-copy {
-    min-width: 0;
-    flex: 1 1 100%;
-  }
-
-  .virtual-board-refresh {
-    margin-left: auto;
-  }
-
-
   .virtual-map {
     min-height: 360px;
   }
@@ -1377,7 +1327,32 @@ RESPONSIVE
   }
 
   .virtual-board-controls {
-    padding: 12px;
+    padding: 10px 12px;
+  }
+
+  .virtual-board-header {
+    align-items: center;
+    padding: 15px 14px 11px;
+  }
+
+  .virtual-board-header-actions {
+    gap: 6px;
+  }
+
+  .virtual-board-refresh {
+    padding: 6px 8px;
+  }
+
+  .vb-route-row {
+    gap: 7px;
+  }
+
+  .vb-route-row .schedule-line-identity {
+    gap: 7px;
+  }
+
+  .vb-destination {
+    font-size: 15px;
   }
 }
 
