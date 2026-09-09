@@ -917,9 +917,60 @@
       )
     );
 
+    // If realtime reports a shortened destination that is an intermediate stop
+    // on the static direction (for example trolley 3 currently ending at
+    // "Пътностроителна техника" instead of the timetable's "Ж.К. ЛЕВСКИ Г"),
+    // do not re-add the stale full-route destination as a static fallback.
+    // This is intentionally generic so other temporarily shortened routes are
+    // handled the same way.
+    const realtimeDestinationsByRoute = new Map();
+    for (const route of mergedSurfaceRoutes) {
+      const routeId = String(route.route_id || '');
+      if (!realtimeDestinationsByRoute.has(routeId)) {
+        realtimeDestinationsByRoute.set(routeId, []);
+      }
+      realtimeDestinationsByRoute.get(routeId).push(destinationMatchKey(route.destination || ''));
+    }
+
+    const fallbackIsSupersededByShortenedRealtime = route => {
+      const routeId = String(route.route_id || '');
+      const realtimeDestinations = realtimeDestinationsByRoute.get(routeId) || [];
+      if (!realtimeDestinations.length) return false;
+
+      const directionSet = transportData?.directions?.[routeId] || {};
+      const destination = destinationMatchKey(route.destination || '');
+
+      for (const direction of Object.values(directionSet)) {
+        const pattern = Array.isArray(direction?.pattern) ? direction.pattern.map(String) : [];
+        if (!pattern.length || !pattern.some(id => stopIdsMatch(id, String(selectedStopId || '')))) continue;
+
+        const selectedIndex = pattern.findIndex(id => stopIdsMatch(id, String(selectedStopId || '')));
+        if (selectedIndex < 0) continue;
+
+        const staticDestinationIndex = pattern.findIndex(id => {
+          const stop = getStopById(id);
+          return destinationMatchKey(stop?.stop_name || stop?.name || '') === destination;
+        });
+        if (staticDestinationIndex <= selectedIndex) continue;
+
+        const realtimeShortDestination = realtimeDestinations.some(realtimeDestination => {
+          const realtimeIndex = pattern.findIndex(id => {
+            const stop = getStopById(id);
+            return destinationMatchKey(stop?.stop_name || stop?.name || '') === realtimeDestination;
+          });
+          return realtimeIndex > selectedIndex && realtimeIndex < staticDestinationIndex;
+        });
+
+        if (realtimeShortDestination) return true;
+      }
+
+      return false;
+    };
+
     const surfaceFallbackRoutes = scheduledSurfaceRoutes.filter(route => {
       const key = `${String(route.route_id || '')}|${destinationMatchKey(route.destination || '')}`;
-      return !realtimeDestinationKeys.has(key);
+      if (realtimeDestinationKeys.has(key)) return false;
+      return !fallbackIsSupersededByShortenedRealtime(route);
     });
 
     // Some GTFS exports contain duplicate static directions with the same
