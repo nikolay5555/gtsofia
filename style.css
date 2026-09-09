@@ -566,7 +566,7 @@ SCHEDULES PAGE
 }
 
 .schedule-summary-destination {
-  font-size: 18px;
+  font-size: 19px;
 }
 
 .schedule-summary-stop {
@@ -1396,6 +1396,7 @@ RESPONSIVE
   }
 
   .schedule-summary-destination {
+    font-size: 19px;
     flex: 1 1 auto;
     min-width: 0;
     overflow: hidden;
