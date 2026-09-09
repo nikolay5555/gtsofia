@@ -631,7 +631,8 @@
           route_ref: meta.number || route.route_short_name || '—',
           destination: direction?.destination || direction?.headsign || '',
           times: unique.map(timestamp => ({ timestamp, delay: null, scheduled: true })),
-          meta
+          meta,
+          direction_key: directionKey
         });
       }
     }
@@ -917,59 +918,50 @@
       )
     );
 
-    // If realtime reports a shortened destination that is an intermediate stop
-    // on the static direction (for example trolley 3 currently ending at
-    // "Пътностроителна техника" instead of the timetable's "Ж.К. ЛЕВСКИ Г"),
-    // do not re-add the stale full-route destination as a static fallback.
-    // This is intentionally generic so other temporarily shortened routes are
-    // handled the same way.
-    const realtimeDestinationsByRoute = new Map();
+    // Realtime rows can point to a specific static GTFS direction through
+    // their trip_id. Use that association first: if a direction is currently
+    // running with a shortened destination, its old static destination must
+    // not be added back as fallback. This handles branched routes such as
+    // trolley 3, where the shortened destination is not on the full branch
+    // pattern.
+    const realtimeDirectionKeysByRoute = new Map();
     for (const route of mergedSurfaceRoutes) {
       const routeId = String(route.route_id || '');
-      if (!realtimeDestinationsByRoute.has(routeId)) {
-        realtimeDestinationsByRoute.set(routeId, []);
-      }
-      realtimeDestinationsByRoute.get(routeId).push(destinationMatchKey(route.destination || ''));
-    }
-
-    const fallbackIsSupersededByShortenedRealtime = route => {
-      const routeId = String(route.route_id || '');
-      const realtimeDestinations = realtimeDestinationsByRoute.get(routeId) || [];
-      if (!realtimeDestinations.length) return false;
-
+      const staticTrip = findStaticTrip(route.trip_id);
       const directionSet = transportData?.directions?.[routeId] || {};
-      const destination = destinationMatchKey(route.destination || '');
+      let directionKey = '';
 
-      for (const direction of Object.values(directionSet)) {
-        const pattern = Array.isArray(direction?.pattern) ? direction.pattern.map(String) : [];
-        if (!pattern.length || !pattern.some(id => stopIdsMatch(id, String(selectedStopId || '')))) continue;
-
-        const selectedIndex = pattern.findIndex(id => stopIdsMatch(id, String(selectedStopId || '')));
-        if (selectedIndex < 0) continue;
-
-        const staticDestinationIndex = pattern.findIndex(id => {
-          const stop = getStopById(id);
-          return destinationMatchKey(stop?.stop_name || stop?.name || '') === destination;
-        });
-        if (staticDestinationIndex <= selectedIndex) continue;
-
-        const realtimeShortDestination = realtimeDestinations.some(realtimeDestination => {
-          const realtimeIndex = pattern.findIndex(id => {
-            const stop = getStopById(id);
-            return destinationMatchKey(stop?.stop_name || stop?.name || '') === realtimeDestination;
-          });
-          return realtimeIndex > selectedIndex && realtimeIndex < staticDestinationIndex;
-        });
-
-        if (realtimeShortDestination) return true;
+      if (staticTrip?.trip_id) {
+        const tripId = String(staticTrip.trip_id);
+        const match = Object.entries(directionSet).find(([, direction]) =>
+          String(direction?.trip_id || '') === tripId
+        );
+        if (match) directionKey = String(match[0]);
       }
 
-      return false;
-    };
+      if (!directionKey) {
+        const destination = destinationMatchKey(route.destination || '');
+        const match = Object.entries(directionSet).find(([, direction]) =>
+          destinationMatchKey(direction?.destination || direction?.headsign || '') === destination
+        );
+        if (match) directionKey = String(match[0]);
+      }
+
+      if (!directionKey) continue;
+      if (!realtimeDirectionKeysByRoute.has(routeId)) realtimeDirectionKeysByRoute.set(routeId, new Set());
+      realtimeDirectionKeysByRoute.get(routeId).add(directionKey);
+    }
 
     const surfaceFallbackRoutes = scheduledSurfaceRoutes.filter(route => {
       const key = `${String(route.route_id || '')}|${destinationMatchKey(route.destination || '')}`;
       if (realtimeDestinationKeys.has(key)) return false;
+
+      const routeId = String(route.route_id || '');
+      const realtimeDirectionKeys = realtimeDirectionKeysByRoute.get(routeId);
+      if (route.direction_key && realtimeDirectionKeys?.has(String(route.direction_key))) {
+        return false;
+      }
+
       return !fallbackIsSupersededByShortenedRealtime(route);
     });
 
