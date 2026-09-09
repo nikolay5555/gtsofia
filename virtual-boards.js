@@ -15,6 +15,7 @@
   let routeMetaByNumber = new Map();
   let tripById = new Map();
   let tripStopsById = new Map();
+  let routePreviewLayer = null;
 
   const boardPanel = () => document.getElementById("virtualBoardBody");
 
@@ -982,6 +983,7 @@
     `;
 
     document.getElementById("virtualBoardClose")?.addEventListener("click", () => {
+      clearRoutePreview();
       selectedStopId = null;
       if (selectedStopMarker) {
         selectedStopMarker.setStyle({
@@ -1029,7 +1031,7 @@
         const meta = getLineMeta(row.route_id || row.routeId, row.route_ref);
         const arrivals = row.arrivals;
         return `
-          <article class="vb-row">
+          <article class="vb-row vb-route-selectable" data-row-index="${index}" data-vb-route-id="${escapeHtml(row.route_id || row.routeId || "")}" data-vb-route-ref="${escapeHtml(row.route_ref || meta.number || "")}" data-vb-destination="${escapeHtml(row.destination || row.headsign || "")}" tabindex="0" role="button" aria-label="Покажи маршрута на линия ${escapeHtml(meta.number || row.route_ref || "")}">
             <div class="schedule-summary-route-row vb-route-row">
               ${lineIdentityHtml(meta)}
               ${destinationHtml(row.destination || row.headsign || "")}
@@ -1041,6 +1043,26 @@
           </article>
         `;
       }).join("");
+
+      list.querySelectorAll(".vb-route-selectable").forEach(rowElement => {
+        const selectRoute = () => {
+          const row = rows[Number(rowElement.dataset.rowIndex ?? -1)];
+          previewRouteOnMap({
+            routeId: rowElement.dataset.vbRouteId,
+            routeRef: rowElement.dataset.vbRouteRef,
+            destination: rowElement.dataset.vbDestination
+          });
+          list.querySelectorAll(".vb-route-selectable.is-route-selected").forEach(element => element.classList.remove("is-route-selected"));
+          rowElement.classList.add("is-route-selected");
+        };
+        rowElement.addEventListener("click", selectRoute);
+        rowElement.addEventListener("keydown", event => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            selectRoute();
+          }
+        });
+      });
     } catch (error) {
       console.error("Realtime virtual board error:", error);
       panel.querySelector(".virtual-board-list").innerHTML = `<div class="virtual-board-error">Realtime данните не могат да бъдат заредени.</div>`;
@@ -1051,6 +1073,131 @@
         refreshButton.classList.remove("is-loading");
         refreshButton.addEventListener("click", refreshSelectedBoard, { once: true });
       }
+    }
+  }
+
+  function clearRoutePreview() {
+    if (routePreviewLayer && map) {
+      map.removeLayer(routePreviewLayer);
+    }
+    routePreviewLayer = null;
+  }
+
+  function getRouteDirectionForPreview(routeId, stopId, destination = '') {
+    const directions = getDirectionsForRouteAtStop(routeId, stopId)
+      .filter(direction => !isTerminalDirectionForStop(routeId, stopId, direction));
+    if (!directions.length) return null;
+
+    const wantedDestination = normalizeDirectionText(destination);
+    if (wantedDestination) {
+      const exact = directions.find(direction =>
+        normalizeDirectionText(direction?.headsign || direction?.destination) === wantedDestination
+      );
+      if (exact) return exact;
+    }
+
+    return directions.length === 1 ? directions[0] : directions[0];
+  }
+
+  function findNearestShapeIndex(shape, lat, lon) {
+    let bestIndex = 0;
+    let bestDistance = Infinity;
+    for (let index = 0; index < shape.length; index += 1) {
+      const point = shape[index];
+      const pointLat = Number(point?.lat);
+      const pointLon = Number(point?.lon);
+      if (![pointLat, pointLon].every(Number.isFinite)) continue;
+      const distance = (pointLat - lat) ** 2 + (pointLon - lon) ** 2;
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = index;
+      }
+    }
+    return bestIndex;
+  }
+
+  function previewRouteOnMap({ routeId, routeRef, destination }) {
+    if (!map) return;
+
+    clearRoutePreview();
+
+    const stop = findStopById(selectedStopId);
+    const route = routeById.get(String(routeId || '').trim());
+    if (!stop || !route) return;
+
+    const direction = getRouteDirectionForPreview(routeId, stop.stop_id, destination);
+    if (!direction) return;
+
+    const meta = getLineMeta(routeId, routeRef);
+    const lineColor = meta?.color || getLineColor(route, meta?.type || getLineType(route));
+    const pattern = Array.isArray(direction.pattern)
+      ? direction.pattern.map(String)
+      : Array.isArray(direction.stops)
+        ? direction.stops.map(item => String(item?.stop_id || '').trim()).filter(Boolean)
+        : [];
+
+    const stopIndex = pattern.findIndex(id => stopIdsMatch(id, stop.stop_id));
+    if (stopIndex < 0) return;
+
+    const futureStopIds = pattern.slice(stopIndex);
+    const futureStops = futureStopIds
+      .map(id => getStopById(id))
+      .filter(item => Number.isFinite(Number(item?.stop_lat)) && Number.isFinite(Number(item?.stop_lon)));
+
+    if (!futureStops.length) return;
+
+    const shape = Array.isArray(transportData?.shapes?.[direction.shape_id])
+      ? transportData.shapes[direction.shape_id]
+          .map(point => ({ lat: Number(point?.lat), lon: Number(point?.lon) }))
+          .filter(point => Number.isFinite(point.lat) && Number.isFinite(point.lon))
+      : [];
+
+    const routeLayer = L.layerGroup();
+    const stopLat = Number(stop.stop_lat);
+    const stopLon = Number(stop.stop_lon);
+    let linePoints = [];
+
+    if (shape.length >= 2) {
+      const startIndex = findNearestShapeIndex(shape, stopLat, stopLon);
+      linePoints = shape.slice(startIndex).map(point => [point.lat, point.lon]);
+    } else {
+      linePoints = futureStops.map(item => [Number(item.stop_lat), Number(item.stop_lon)]);
+    }
+
+    if (linePoints.length >= 2) {
+      L.polyline(linePoints, {
+        color: lineColor,
+        weight: 6,
+        opacity: 0.9,
+        lineCap: 'round',
+        lineJoin: 'round'
+      }).addTo(routeLayer);
+    }
+
+    futureStops.forEach((futureStop, index) => {
+      const lat = Number(futureStop.stop_lat);
+      const lon = Number(futureStop.stop_lon);
+      const isCurrent = index === 0;
+      const marker = L.circleMarker([lat, lon], {
+        radius: isCurrent ? 7 : 5,
+        weight: 2,
+        color: '#ffffff',
+        fillColor: isCurrent ? '#BE1E2D' : lineColor,
+        fillOpacity: 1,
+        pane: 'markerPane'
+      });
+      marker.bindTooltip(escapeHtml(futureStop.stop_name || futureStop.name || 'Спирка'), {
+        direction: 'top',
+        offset: [0, -6]
+      });
+      marker.addTo(routeLayer);
+    });
+
+    routePreviewLayer = routeLayer.addTo(map);
+
+    const bounds = L.latLngBounds(linePoints.length ? linePoints : futureStops.map(item => [Number(item.stop_lat), Number(item.stop_lon)]));
+    if (bounds.isValid()) {
+      map.fitBounds(bounds, { padding: [45, 45], maxZoom: 16, animate: true });
     }
   }
 
@@ -1073,6 +1220,8 @@
 
   function selectStopOnMap(stop) {
     if (!stop || !map) return;
+
+    clearRoutePreview();
 
     if (selectedStopMarker) {
       selectedStopMarker.setStyle({
