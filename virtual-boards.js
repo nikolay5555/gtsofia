@@ -1038,7 +1038,7 @@
             </div>
             <div class="vb-time-block">
               ${countdownHtml(arrivals[0], !arrivals[0]?.scheduled)}
-              ${!arrivals[0]?.scheduled && arrivals.length > 1 ? `<div class="vb-next-times">${arrivals.slice(1).map(time => `<span>${escapeHtml(formatArrivalClock(time.timestamp))}</span>`).join("")}</div>` : ""}
+              ${arrivals.length > 1 ? `<div class="vb-next-times">${arrivals.slice(1).map(time => `<span>${escapeHtml(formatArrivalClock(time.timestamp))}</span>`).join("")}</div>` : ""}
             </div>
           </article>
         `;
