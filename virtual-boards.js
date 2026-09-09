@@ -903,14 +903,22 @@
     // published realtime data for that line/direction. Once realtime appears,
     // it wins and replaces the static fallback.
     const scheduledSurfaceRoutes = isMetroStop(stop) ? [] : getSurfaceScheduledArrivals(stop);
+    // Match realtime and scheduled directions using a display-independent
+    // destination key. CGM can spell the same destination differently, e.g.
+    // "Ж.к. Дружба 2" vs "Ж.К. ДРУЖБА-2".
+    const destinationMatchKey = value => normalizeDirectionText(value)
+      .replace(/[-]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
     const realtimeDestinationKeys = new Set(
       mergedSurfaceRoutes.map(route =>
-        `${String(route.route_id || '')}|${normalizeDirectionText(route.destination || '')}`
+        `${String(route.route_id || '')}|${destinationMatchKey(route.destination || '')}`
       )
     );
 
     const surfaceFallbackRoutes = scheduledSurfaceRoutes.filter(route => {
-      const key = `${String(route.route_id || '')}|${normalizeDirectionText(route.destination || '')}`;
+      const key = `${String(route.route_id || '')}|${destinationMatchKey(route.destination || '')}`;
       return !realtimeDestinationKeys.has(key);
     });
 
@@ -919,7 +927,7 @@
     // line + destination so the board never shows duplicate static entries.
     const fallbackByKey = new Map();
     for (const route of surfaceFallbackRoutes) {
-      const key = `${String(route.route_id || '')}|${normalizeDirectionText(route.destination || '')}`;
+      const key = `${String(route.route_id || '')}|${destinationMatchKey(route.destination || '')}`;
       const existing = fallbackByKey.get(key);
       if (!existing || Number(route.times?.[0]?.timestamp) < Number(existing.times?.[0]?.timestamp)) {
         fallbackByKey.set(key, route);
