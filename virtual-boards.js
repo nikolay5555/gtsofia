@@ -631,8 +631,7 @@
           route_ref: meta.number || route.route_short_name || '—',
           destination: direction?.destination || direction?.headsign || '',
           times: unique.map(timestamp => ({ timestamp, delay: null, scheduled: true })),
-          meta,
-          direction_key: directionKey
+          meta
         });
       }
     }
@@ -899,70 +898,19 @@
       }))
       .filter(route => route.times.length);
 
-    // For surface transport, use the static timetable as a fallback during
-    // the two hours before the next scheduled course when CGM has not yet
-    // published realtime data for that line/direction. Once realtime appears,
-    // it wins and replaces the static fallback.
+    // For surface transport, realtime has priority at LINE level. If a line
+    // has any usable realtime rows at this stop, do not add static fallback
+    // rows for that same line. If the line has no realtime data at all, use
+    // the timetable directions as fallback.
     const scheduledSurfaceRoutes = isMetroStop(stop) ? [] : getSurfaceScheduledArrivals(stop);
-    // Match realtime and scheduled directions using a display-independent
-    // destination key. CGM can spell the same destination differently, e.g.
-    // "Ж.к. Дружба 2" vs "Ж.К. ДРУЖБА-2".
-    const destinationMatchKey = value => normalizeDirectionText(value)
-      .replace(/[-]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
 
-    const realtimeDestinationKeys = new Set(
-      mergedSurfaceRoutes.map(route =>
-        `${String(route.route_id || '')}|${destinationMatchKey(route.destination || '')}`
-      )
+    const surfaceRealtimeRouteIds = new Set(
+      mergedSurfaceRoutes.map(route => String(route.route_id || '').trim()).filter(Boolean)
     );
 
-    // Realtime rows can point to a specific static GTFS direction through
-    // their trip_id. Use that association first: if a direction is currently
-    // running with a shortened destination, its old static destination must
-    // not be added back as fallback. This handles branched routes such as
-    // trolley 3, where the shortened destination is not on the full branch
-    // pattern.
-    const realtimeDirectionKeysByRoute = new Map();
-    for (const route of mergedSurfaceRoutes) {
-      const routeId = String(route.route_id || '');
-      const staticTrip = findStaticTrip(route.trip_id);
-      const directionSet = transportData?.directions?.[routeId] || {};
-      let directionKey = '';
-
-      if (staticTrip?.trip_id) {
-        const tripId = String(staticTrip.trip_id);
-        const match = Object.entries(directionSet).find(([, direction]) =>
-          String(direction?.trip_id || '') === tripId
-        );
-        if (match) directionKey = String(match[0]);
-      }
-
-      if (!directionKey) {
-        const destination = destinationMatchKey(route.destination || '');
-        const match = Object.entries(directionSet).find(([, direction]) =>
-          destinationMatchKey(direction?.destination || direction?.headsign || '') === destination
-        );
-        if (match) directionKey = String(match[0]);
-      }
-
-      if (!directionKey) continue;
-      if (!realtimeDirectionKeysByRoute.has(routeId)) realtimeDirectionKeysByRoute.set(routeId, new Set());
-      realtimeDirectionKeysByRoute.get(routeId).add(directionKey);
-    }
-
     const surfaceFallbackRoutes = scheduledSurfaceRoutes.filter(route => {
-      const key = `${String(route.route_id || '')}|${destinationMatchKey(route.destination || '')}`;
-      if (realtimeDestinationKeys.has(key)) return false;
-
-      const routeId = String(route.route_id || '');
-      const realtimeDirectionKeys = realtimeDirectionKeysByRoute.get(routeId);
-      if (route.direction_key && realtimeDirectionKeys?.has(String(route.direction_key))) {
-        return false;
-      }
-
-      return !fallbackIsSupersededByShortenedRealtime(route);
+      const routeId = String(route.route_id || '').trim();
+      return !surfaceRealtimeRouteIds.has(routeId);
     });
 
     // Some GTFS exports contain duplicate static directions with the same
@@ -970,7 +918,8 @@
     // line + destination so the board never shows duplicate static entries.
     const fallbackByKey = new Map();
     for (const route of surfaceFallbackRoutes) {
-      const key = `${String(route.route_id || '')}|${destinationMatchKey(route.destination || '')}`;
+      const destination = normalizeDirectionText(route.destination || '');
+      const key = `${String(route.route_id || '')}|${destination}`;
       const existing = fallbackByKey.get(key);
       if (!existing || Number(route.times?.[0]?.timestamp) < Number(existing.times?.[0]?.timestamp)) {
         fallbackByKey.set(key, route);
