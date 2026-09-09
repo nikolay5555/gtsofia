@@ -302,6 +302,14 @@ ROLLING STOCK
   padding: 18px;
 }
 
+.stock-author {
+  text-align: center;
+  font-size: 13px;
+  color: #6b7280;
+  margin-top: 6px;
+  margin-bottom: 4px;
+}
+
 .stock-lines {
   display: flex;
   flex-wrap: wrap;
