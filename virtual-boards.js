@@ -898,19 +898,28 @@
       }))
       .filter(route => route.times.length);
 
-    // For surface transport, realtime has priority at LINE level. If a line
-    // has any usable realtime rows at this stop, do not add static fallback
-    // rows for that same line. If the line has no realtime data at all, use
-    // the timetable directions as fallback.
+    // For surface transport, use the static timetable as a fallback during
+    // the two hours before the next scheduled course when CGM has not yet
+    // published realtime data for that line/direction. Once realtime appears,
+    // it wins and replaces the static fallback.
     const scheduledSurfaceRoutes = isMetroStop(stop) ? [] : getSurfaceScheduledArrivals(stop);
+    // Match realtime and scheduled directions using a display-independent
+    // destination key. CGM can spell the same destination differently, e.g.
+    // "Ж.к. Дружба 2" vs "Ж.К. ДРУЖБА-2".
+    const destinationMatchKey = value => normalizeDirectionText(value)
+      .replace(/[-]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
 
-    const surfaceRealtimeRouteIds = new Set(
-      mergedSurfaceRoutes.map(route => String(route.route_id || '').trim()).filter(Boolean)
+    const realtimeDestinationKeys = new Set(
+      mergedSurfaceRoutes.map(route =>
+        `${String(route.route_id || '')}|${destinationMatchKey(route.destination || '')}`
+      )
     );
 
     const surfaceFallbackRoutes = scheduledSurfaceRoutes.filter(route => {
-      const routeId = String(route.route_id || '').trim();
-      return !surfaceRealtimeRouteIds.has(routeId);
+      const key = `${String(route.route_id || '')}|${destinationMatchKey(route.destination || '')}`;
+      return !realtimeDestinationKeys.has(key);
     });
 
     // Some GTFS exports contain duplicate static directions with the same
@@ -918,8 +927,7 @@
     // line + destination so the board never shows duplicate static entries.
     const fallbackByKey = new Map();
     for (const route of surfaceFallbackRoutes) {
-      const destination = normalizeDirectionText(route.destination || '');
-      const key = `${String(route.route_id || '')}|${destination}`;
+      const key = `${String(route.route_id || '')}|${destinationMatchKey(route.destination || '')}`;
       const existing = fallbackByKey.get(key);
       if (!existing || Number(route.times?.[0]?.timestamp) < Number(existing.times?.[0]?.timestamp)) {
         fallbackByKey.set(key, route);
