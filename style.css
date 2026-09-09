@@ -1116,22 +1116,6 @@ VIRTUAL BOARDS
   border-bottom: 1px solid #f0f1f2;
 }
 
-.vb-route-selectable {
-  cursor: pointer;
-  transition: background-color .15s ease, box-shadow .15s ease;
-}
-
-.vb-route-selectable:hover,
-.vb-route-selectable:focus-visible {
-  background: #f7f8fa;
-  outline: none;
-}
-
-.vb-route-selectable.is-route-selected {
-  background: #f3f4f6;
-  box-shadow: inset 3px 0 0 #111827;
-}
-
 .vb-route-row {
   min-width: 0;
   width: 100%;
