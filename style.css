@@ -566,7 +566,7 @@ SCHEDULES PAGE
 }
 
 .schedule-summary-destination {
-  font-size: 19px;
+  font-size: 25px;
 }
 
 .schedule-summary-stop {
@@ -1143,7 +1143,7 @@ VIRTUAL BOARDS
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font-size: 19px;
+  font-size: 20px;
   line-height: 1.2;
 }
 
@@ -1396,7 +1396,7 @@ RESPONSIVE
   }
 
   .schedule-summary-destination {
-    font-size: 19px;
+    font-size: 20px;
     flex: 1 1 auto;
     min-width: 0;
     overflow: hidden;
@@ -1491,7 +1491,7 @@ RESPONSIVE
   }
 
   .vb-destination {
-    font-size: 19px;
+    font-size: 20px;
   }
 }
 
