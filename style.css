@@ -1090,16 +1090,39 @@ VIRTUAL BOARDS
 }
 
 .virtual-board-refresh {
-  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 50%;
   background: #f3f4f6;
-  color: #374151;
-  padding: 6px 9px;
+  color: #111827;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font: inherit;
-  font-size: 12px;
-  font-weight: 700;
   cursor: pointer;
+}
+
+.virtual-board-refresh > span {
+  display: block;
+  font-size: 23px;
+  line-height: 1;
+  font-weight: 400;
+}
+
+.virtual-board-refresh.is-loading > span {
+  animation: virtual-board-refresh-spin 0.9s linear infinite;
+}
+
+@keyframes virtual-board-refresh-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .virtual-board-refresh:hover {
@@ -1463,7 +1486,9 @@ RESPONSIVE
   }
 
   .virtual-board-refresh {
-    padding: 6px 8px;
+    width: 34px;
+    height: 34px;
+    flex-basis: 34px;
   }
 
   .vb-route-row {
