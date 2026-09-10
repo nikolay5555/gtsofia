@@ -254,24 +254,6 @@ function buildBoard(updates, stopCode, feedTimestamp) {
     // SCHEDULED=0, SKIPPED=1, CANCELED=2, MODIFIED=3, DELETED=6.
     if ([1, 2, 6].includes(trip.scheduleRelationship)) continue;
 
-    // Determine the final stop from the complete trip update, not from the
-    // selected board stop. This gives the frontend a stable direction key
-    // even when the realtime trip_id is missing from the current static GTFS.
-    const terminalUpdates = (tripUpdate.stopTimeUpdates || [])
-      .filter(update => update?.stopId && ![1, 2].includes(update.scheduleRelationship));
-    let tripTerminalStopId = '';
-    let tripTerminalSequence = -1;
-    for (let index = 0; index < terminalUpdates.length; index += 1) {
-      const update = terminalUpdates[index];
-      const sequence = Number.isFinite(Number(update.stopSequence))
-        ? Number(update.stopSequence)
-        : index;
-      if (sequence >= tripTerminalSequence) {
-        tripTerminalSequence = sequence;
-        tripTerminalStopId = String(update.stopId || '').trim();
-      }
-    }
-
     for (const stopUpdate of tripUpdate.stopTimeUpdates || []) {
       if (!stopUpdate?.stopId || !stopIdsMatch(stopUpdate.stopId, target)) continue;
       if ([1, 2].includes(stopUpdate.scheduleRelationship)) continue;
@@ -288,26 +270,11 @@ function buildBoard(updates, stopCode, feedTimestamp) {
           trip_id: trip.tripId,
           route_id: trip.routeId || '',
           direction_id: trip.directionId || '',
-          terminal_stop_id: tripTerminalStopId,
-          terminal_stop_sequence: tripTerminalSequence,
           times: []
         });
       }
 
-      const row = grouped.get(key);
-      if (tripTerminalStopId) {
-        row.terminal_stop_id = tripTerminalStopId;
-        row.terminal_stop_sequence = tripTerminalSequence;
-      }
-      const stopSequence = Number.isFinite(Number(stopUpdate.stopSequence))
-        ? Number(stopUpdate.stopSequence)
-        : -1;
-      if (stopSequence >= Number(row.terminal_stop_sequence || -1)) {
-        row.terminal_stop_sequence = stopSequence;
-        row.terminal_stop_id = String(stopUpdate.stopId || '').trim();
-      }
-
-      row.times.push({
+      grouped.get(key).times.push({
         timestamp,
         delay: Number.isFinite(delay) ? delay : null
       });
@@ -319,30 +286,15 @@ function buildBoard(updates, stopCode, feedTimestamp) {
       ...row,
       times: row.times
         .sort((a, b) => a.timestamp - b.timestamp)
-        .slice(0, MAX_RESULTS_PER_ROUTE),
-      terminal_stop_id: row.terminal_stop_id || '',
-      terminal_stop_sequence: Number.isFinite(Number(row.terminal_stop_sequence))
-        ? Number(row.terminal_stop_sequence)
-        : null
+        .slice(0, MAX_RESULTS_PER_ROUTE)
     }))
     .filter(row => row.times.length)
     .sort((a, b) => a.times[0].timestamp - b.times[0].timestamp);
-
-  // The stop-specific board rows above are not enough to determine which
-  // static directions are actually in service. Expose every trip_id present
-  // in the current GTFS-RT feed so the frontend can map those trips back to
-  // its static route directions.
-  const activeTripIds = [...new Set(
-    (updates || [])
-      .map(update => String(update?.trip?.tripId || '').trim())
-      .filter(Boolean)
-  )];
 
   return {
     status: routes.length ? 'ok' : 'empty',
     stop_code: String(stopCode),
     generated_at: feedTimestamp,
-    active_trip_ids: activeTripIds,
     routes
   };
 }
@@ -354,12 +306,6 @@ module.exports = async function handler(req, res) {
   }
 
   const stopCode = String(req.query?.stop_code || '').trim();
-  const requestedRouteIds = new Set(
-    String(req.query?.route_ids || '')
-      .split(',')
-      .map(value => value.trim())
-      .filter(Boolean)
-  );
   if (!stopCode) {
     return res.status(400).json({ error: 'Missing stop_code.' });
   }
@@ -389,17 +335,6 @@ module.exports = async function handler(req, res) {
 
     const feed = decodeGtfsRealtimeFeed(body);
     const board = buildBoard(feed.updates, stopCode, feed.feedTimestamp);
-    if (requestedRouteIds.size) {
-      const tripRouteById = new Map(
-        feed.updates.map(item => [
-          String(item?.trip?.tripId || '').trim(),
-          String(item?.trip?.routeId || '').trim()
-        ])
-      );
-      board.active_trip_ids = board.active_trip_ids.filter(tripId =>
-        requestedRouteIds.has(tripRouteById.get(String(tripId)) || '')
-      );
-    }
 
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store, max-age=0');
