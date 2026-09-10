@@ -467,13 +467,50 @@
   function getStaticDirectionForTrip(staticTrip) {
     if (!staticTrip?.route_id) return null;
     const directions = transportData?.directions?.[String(staticTrip.route_id)] || {};
+    const entries = Object.entries(directions);
+    if (!entries.length) return null;
+
+    // Prefer an exact representative trip, then the published shape, and
+    // only then fall back to the destination/headsign. This matters for
+    // branches such as trolley 3 where two directions can share the same
+    // headsign but use different shapes/patterns.
+    const exactTrip = entries.find(([, direction]) =>
+      String(direction?.trip_id || '').trim() &&
+      String(direction.trip_id).trim() === String(staticTrip.trip_id || '').trim()
+    );
+    if (exactTrip) return { key: exactTrip[0], ...exactTrip[1] };
+
+    const shapeId = String(staticTrip.shape_id || '').trim();
+    if (shapeId) {
+      const byShape = entries.filter(([, direction]) =>
+        String(direction?.shape_id || '').trim() === shapeId
+      );
+      if (byShape.length === 1) return { key: byShape[0][0], ...byShape[0][1] };
+    }
+
     const headsign = normalizeDirectionText(staticTrip.trip_headsign);
     if (!headsign) return null;
-    for (const [key, direction] of Object.entries(directions)) {
+    const byHeadsign = entries.filter(([, direction]) => {
       const directionHeadsign = normalizeDirectionText(direction?.headsign || direction?.destination);
-      if (directionHeadsign && directionHeadsign === headsign) return { key, ...direction };
-    }
+      return directionHeadsign && directionHeadsign === headsign;
+    });
+    if (byHeadsign.length === 1) return { key: byHeadsign[0][0], ...byHeadsign[0][1] };
+
     return null;
+  }
+
+  function getActiveDirectionKeys(activeTripIds) {
+    const activeByRoute = new Map();
+    for (const tripId of activeTripIds || []) {
+      const staticTrip = findStaticTrip(tripId);
+      const direction = getStaticDirectionForTrip(staticTrip);
+      if (!staticTrip?.route_id || !direction?.key) continue;
+
+      const routeId = String(staticTrip.route_id);
+      if (!activeByRoute.has(routeId)) activeByRoute.set(routeId, new Set());
+      activeByRoute.get(routeId).add(String(direction.key));
+    }
+    return activeByRoute;
   }
 
   function normalizeStopName(value) {
@@ -691,6 +728,7 @@
 
         result.push({
           route_id: routeId,
+          direction_key: String(directionKey),
           route_ref: meta.number || route.route_short_name || '—',
           destination: direction?.destination || direction?.headsign || '',
           times: [{ timestamp: nextTimestamp, delay: null, scheduled: true }],
@@ -739,10 +777,12 @@
         const arrivalSeconds = Number(event.time);
         if (arrivalSeconds < nowSeconds - 30 || arrivalSeconds > nowSeconds + 3 * 3600) continue;
 
-        const key = `${String(routeId)}|${String(destination)}|${String(meta.number || "")}`;
+        const staticDirection = getStaticDirectionForTrip(staticTrip);
+        const key = `${String(routeId)}|${String(staticDirection?.key || destination)}|${String(meta.number || "")}`;
         if (!grouped.has(key)) {
           grouped.set(key, {
             route_id: routeId,
+            direction_key: staticDirection?.key || '',
             route_ref: meta.number || route?.route_short_name || "—",
             destination,
             times: [],
@@ -793,7 +833,20 @@
     const stopCode = String(stop?.stop_code || stop?.stop_id || '').trim();
     if (!stopCode) throw new Error('Липсва код на спирката.');
 
-    const url = `api/virtual-board?stop_code=${encodeURIComponent(stopCode)}`;
+    const stopId = String(stop?.stop_id || stop?.stop_code || '').trim();
+    const routeIds = new Set();
+    for (const [routeId, directionSet] of Object.entries(transportData?.directions || {})) {
+      if (Object.values(directionSet || {}).some(direction =>
+        Array.isArray(direction?.pattern) && direction.pattern.some(id => stopIdsMatch(id, stopId))
+      )) {
+        routeIds.add(String(routeId));
+      }
+    }
+
+    const routeParam = routeIds.size
+      ? `&route_ids=${encodeURIComponent([...routeIds].join(','))}`
+      : '';
+    const url = `api/virtual-board?stop_code=${encodeURIComponent(stopCode)}${routeParam}`;
     const response = await fetchWithTimeout(url, {
       headers: {
         Accept: 'application/json'
@@ -837,6 +890,7 @@
             return {
               ...route,
               route_id: route.route_id || staticTrip?.route_id || '',
+              direction_key: staticDirection?.key || '',
               route_ref: route.route_ref || routeMeta.number || '—',
               destination: route.destination
                 || staticTrip?.trip_headsign
@@ -903,15 +957,35 @@
     // published realtime data for that line/direction. Once realtime appears,
     // it wins and replaces the static fallback.
     const scheduledSurfaceRoutes = isMetroStop(stop) ? [] : getSurfaceScheduledArrivals(stop);
-    const realtimeDestinationKeys = new Set(
-      mergedSurfaceRoutes.map(route =>
-        `${String(route.route_id || '')}|${normalizeDirectionText(route.destination || '')}`
-      )
+    const activeDirectionKeys = getActiveDirectionKeys(
+      Array.isArray(data?.active_trip_ids) ? data.active_trip_ids : []
+    );
+    const realtimeDirectionKeys = new Set(
+      mergedSurfaceRoutes
+        .map(route => `${String(route.route_id || '')}|${String(route.direction_key || '')}`)
     );
 
     const surfaceFallbackRoutes = scheduledSurfaceRoutes.filter(route => {
-      const key = `${String(route.route_id || '')}|${normalizeDirectionText(route.destination || '')}`;
-      return !realtimeDestinationKeys.has(key);
+      const routeId = String(route.route_id || '');
+      const activeDirections = activeDirectionKeys.get(routeId);
+
+      // If realtime tells us which directions are currently active on the
+      // line, only those directions are allowed to use the static fallback.
+      // This is what suppresses stale GTFS directions such as trolley 3 →
+      // Ж.К. ЛЕВСКИ Г when realtime trips currently run only to
+      // Пътностроителна техника.
+      if (activeDirections?.size) {
+        const directionKey = String(route.direction_key || '');
+        if (!activeDirections.has(directionKey)) return false;
+        if (realtimeDirectionKeys.has(`${routeId}|${directionKey}`)) return false;
+        return true;
+      }
+
+      // No realtime trips for the line: use all valid static directions as
+      // before, subject to the normal terminal filter.
+      const key = `${routeId}|${String(route.direction_key || '')}`;
+      if (realtimeDirectionKeys.has(key)) return false;
+      return true;
     });
 
     // Some GTFS exports contain duplicate static directions with the same
@@ -966,9 +1040,7 @@
           <h2>${escapeHtml(stop.stop_name || stop.name || "Спирка")}</h2>
         </div>
         <div class="virtual-board-header-actions">
-          <button type="button" class="virtual-board-refresh is-loading" id="virtualBoardRefresh" disabled aria-label="Обнови таблото">
-            <span aria-hidden="true">↻</span>
-          </button>
+          <button type="button" class="virtual-board-refresh is-loading" id="virtualBoardRefresh" disabled aria-label="Обнови таблото"><span aria-hidden="true">↻</span></button>
           <button type="button" class="virtual-board-close" id="virtualBoardClose" aria-label="Затвори таблото">×</button>
         </div>
       </div>
