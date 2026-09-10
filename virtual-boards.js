@@ -613,14 +613,12 @@
     const direction = resolveDirectionForRealtimeRoute(routeId, stopId, staticTrip, destination, directionId);
     if (direction?.pattern?.length && isTerminalDirectionForStop(routeId, stopId, direction)) return true;
 
-    // The same physical terminal can be represented by different GTFS stop IDs
-    // and even slightly different destination spellings (e.g. Ж.К. ДРУЖБА-2
-    // vs Ж.к. Дружба 2). A destination matching the selected stop name is
-    // therefore also treated as the terminal direction.
-    const selectedStop = getStopById(stopId);
-    const selectedName = normalizeStopName(selectedStop?.stop_name);
-    const destinationName = normalizeStopName(destination);
-    return !!selectedName && !!destinationName && selectedName === destinationName;
+    // Do not treat a concrete realtime short-turn destination as the line terminal.
+    // A partial course can legitimately end at an intermediate stop (for example
+    // tram 3 -> пл. Възраждане), and that arrival must remain visible on the board.
+    // Terminal hiding is therefore based only on the resolved static direction
+    // and its actual terminal stop.
+    return false;
   }
 
   function getMetroScheduledArrivals(stop) {
