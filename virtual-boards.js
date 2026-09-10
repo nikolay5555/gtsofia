@@ -468,6 +468,9 @@
     if (!staticTrip?.route_id) return null;
     const directions = transportData?.directions?.[String(staticTrip.route_id)] || {};
     const headsign = normalizeDirectionText(staticTrip.trip_headsign);
+
+    // Prefer an exact headsign match when the trip uses the same terminal
+    // name as the published direction.
     if (headsign) {
       for (const [key, direction] of Object.entries(directions)) {
         const directionHeadsign = normalizeDirectionText(direction?.headsign || direction?.destination);
@@ -475,20 +478,17 @@
       }
     }
 
-    // CGM can occasionally publish a temporary/intermediate trip headsign
-    // even though the underlying trip still follows the normal full route.
-    // When the headsign does not match a known static direction, use the
-    // unique shape_id match as the stronger indication of the actual route
-    // direction. This lets us recognise cases such as a false "пл. Македония"
-    // destination on tram 10 while keeping genuine partial directions intact
-    // when they have their own static shape.
-    const shapeId = String(staticTrip?.shape_id || '').trim();
+    // Some Sofia Traffic trip records use an intermediate/operational
+    // headsign even though the trip follows the full published pattern.
+    // In that case the shape_id is a much better way to resolve the actual
+    // static direction (e.g. tram 10 / TM919 -> Западен парк).
+    const shapeId = String(staticTrip.shape_id ?? '').trim();
     if (shapeId) {
-      const matches = Object.entries(directions).filter(([, direction]) =>
-        String(direction?.shape_id || '').trim() === shapeId
+      const shapeMatches = Object.entries(directions).filter(([, direction]) =>
+        String(direction?.shape_id ?? '').trim() === shapeId
       );
-      if (matches.length === 1) {
-        const [key, direction] = matches[0];
+      if (shapeMatches.length === 1) {
+        const [key, direction] = shapeMatches[0];
         return { key, ...direction };
       }
     }
@@ -856,17 +856,15 @@
               route.route_ref || ''
             );
 
-            const realtimeDestination = String(route.destination || '').trim();
-            const correctedDestination = staticDirection?.destination
-              || staticDirection?.headsign
-              || staticTrip?.trip_headsign
-              || realtimeDestination;
-
             return {
               ...route,
               route_id: route.route_id || staticTrip?.route_id || '',
               route_ref: route.route_ref || routeMeta.number || '—',
-              destination: correctedDestination,
+              destination: route.destination
+                || staticTrip?.trip_headsign
+                || staticDirection?.destination
+                || staticDirection?.headsign
+                || '',
               times: route.times
                 .map(time => ({
                   timestamp: Number(time?.timestamp),
