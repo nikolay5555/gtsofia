@@ -1038,6 +1038,27 @@
     // destination. This is especially important for partial courses: realtime
     // identifies them by their actual terminal stop, while the static schedule
     // still originates from the parent/full direction.
+    // Realtime and timetable fallback must be matched by the SAME logical
+    // static direction, not only by the displayed destination. A partial
+    // realtime course may display its actual short terminal (for example
+    // trolley 3: "Пътностроителна техника"), while its static trip still
+    // belongs to the full logical direction ("Ж.К. ЛЕВСКИ Г").
+    //
+    // At the same time, this must remain stop-specific: realtime in the
+    // opposite direction (for example N4 -> Дружба 2) must not suppress the
+    // timetable fallback for N4 -> Гоце Делчев.
+    const realtimeLogicalDirectionKeys = new Set();
+    for (const route of realtime.routes) {
+      const staticTrip = findStaticTrip(route.trip_id);
+      const staticDirection = getStaticDirectionForTrip(staticTrip);
+      const routeId = String(route.route_id || staticTrip?.route_id || '');
+      const directionKey = String(staticDirection?.key || '');
+      const routeRef = String(route.route_ref || '');
+      if (routeId && directionKey) {
+        realtimeLogicalDirectionKeys.add(`${routeId}|${directionKey}|${routeRef}`);
+      }
+    }
+
     const realtimeDirectionKeys = new Set(
       mergedSurfaceRoutes.map(route => {
         const routeId = String(route.route_id || '');
@@ -1046,50 +1067,19 @@
       })
     );
 
-    // IMPORTANT: a realtime trip elsewhere on the line must not suppress
-    // timetable fallback at this stop. Determine active logical directions
-    // only from realtime trips that actually produce a row for THIS board.
-    // This preserves fallback for an opposite direction (N4), while still
-    // suppressing the normal static destination when a trip in that direction
-    // is currently running a shortened/exceptional route (e.g. trolley 3).
-    const activeDirectionKeys = new Map();
-    for (const route of realtime.routes) {
-      const staticTrip = findStaticTrip(route.trip_id);
-      const staticDirection = getStaticDirectionForTrip(staticTrip);
-      if (!staticDirection?.key) continue;
-
-      const routeId = String(route.route_id || staticTrip?.route_id || '');
-      if (!routeId) continue;
-
-      if (!activeDirectionKeys.has(routeId)) {
-        activeDirectionKeys.set(routeId, new Set());
-      }
-      activeDirectionKeys.get(routeId).add(String(staticDirection.key));
-    }
-
     const surfaceFallbackRoutes = scheduledSurfaceRoutes.filter(route => {
-      const destinationKey = normalizeDirectionText(route.destination || '');
-      const key = `${String(route.route_id || '')}|${destinationKey}|${String(route.route_ref || '')}`;
-      if (realtimeDirectionKeys.has(key)) return false;
-
-      // A realtime trip suppresses the static fallback only for the SAME
-      // logical direction. This is important when one direction has realtime
-      // while the opposite direction does not (for example N4).
-      //
-      // Do not use "any realtime on this line" as the criterion: a line can
-      // legitimately have realtime in one direction and need timetable
-      // fallback in the other. Conversely, a shortened/exception service
-      // (for example trolley 3 ending at Пътностроителна техника) may keep the
-      // same static direction key as the normal destination, in which case
-      // the normal timetable row must not appear as a second active direction.
       const routeId = String(route.route_id || '');
+      const routeRef = String(route.route_ref || '');
       const directionKey = String(route.direction_key || '');
-      const activeKeys = activeDirectionKeys.get(routeId);
-      if (activeKeys?.size && directionKey) {
-        return !activeKeys.has(directionKey);
-      }
+      const logicalKey = `${routeId}|${directionKey}|${routeRef}`;
+      if (realtimeLogicalDirectionKeys.has(logicalKey)) return false;
 
-      return true;
+      // Keep the passenger-facing merge as an additional guard. This covers
+      // duplicate GTFS directions that have different direction keys but the
+      // same displayed destination (for example 94 / stop 1699 vs 1700).
+      const destinationKey = normalizeDirectionText(route.destination || '');
+      const displayedKey = `${routeId}|${destinationKey}|${routeRef}`;
+      return !realtimeDirectionKeys.has(displayedKey);
     });
 
     // Some GTFS exports contain duplicate static directions with the same
