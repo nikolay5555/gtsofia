@@ -1871,6 +1871,18 @@ def build_output_directions(
                         else ""
                     ),
 
+                # Keep the exact original GTFS trip ids belonging to this
+                # logical direction. This mirrors Dimitar5555's data model,
+                # where every trip carries a stable direction code and the
+                # board never has to infer a direction from display text.
+                "trip_ids": [
+                    original_trip_id
+                    for logical_trip in direction_trips
+                    for original_trip_id in logical_trip.get(
+                        "original_trip_ids", []
+                    )
+                ],
+
                 "direction_id":
                     (
                         representative[

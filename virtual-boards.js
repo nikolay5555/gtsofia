@@ -466,30 +466,51 @@
 
   function getStaticDirectionForTrip(staticTrip) {
     if (!staticTrip?.route_id) return null;
-    const directions = transportData?.directions?.[String(staticTrip.route_id)] || {};
-    const headsign = normalizeDirectionText(staticTrip.trip_headsign);
 
-    // Prefer an exact headsign match when the trip uses the same terminal
-    // name as the published direction.
-    if (headsign) {
-      for (const [key, direction] of Object.entries(directions)) {
-        const directionHeadsign = normalizeDirectionText(direction?.headsign || direction?.destination);
-        if (directionHeadsign && directionHeadsign === headsign) return { key, ...direction };
+    const routeId = String(staticTrip.route_id);
+    const directions = transportData?.directions?.[routeId] || {};
+    const tripId = String(staticTrip.trip_id || '').trim();
+    if (!tripId) return null;
+
+    // Direction identity follows the same model as Dimitar5555's data: a
+    // trip belongs to a logical direction, and that direction is the unit
+    // used by the board. Display text is not the identifier.
+    for (const [key, direction] of Object.entries(directions)) {
+      const tripIds = Array.isArray(direction?.trip_ids)
+        ? direction.trip_ids.map(String)
+        : [];
+      if (tripIds.includes(tripId)) return { key, ...direction };
+    }
+
+    // Backward-compatible fallback for an older transport.json that does not
+    // yet contain trip_ids on directions. Prefer the representative trip id,
+    // then a unique shape id, and only finally the display headsign.
+    for (const [key, direction] of Object.entries(directions)) {
+      if (String(direction?.trip_id || '').trim() === tripId) {
+        return { key, ...direction };
       }
     }
 
-    // Some Sofia Traffic trip records use an intermediate/operational
-    // headsign even though the trip follows the full published pattern.
-    // In that case the shape_id is a much better way to resolve the actual
-    // static direction (e.g. tram 10 / TM919 -> Западен парк).
-    const shapeId = String(staticTrip.shape_id ?? '').trim();
+    const shapeId = String(staticTrip.shape_id || '').trim();
     if (shapeId) {
       const shapeMatches = Object.entries(directions).filter(([, direction]) =>
-        String(direction?.shape_id ?? '').trim() === shapeId
+        String(direction?.shape_id || '').trim() === shapeId
       );
       if (shapeMatches.length === 1) {
         const [key, direction] = shapeMatches[0];
         return { key, ...direction };
+      }
+    }
+
+    const headsign = normalizeDirectionText(staticTrip.trip_headsign);
+    if (headsign) {
+      for (const [key, direction] of Object.entries(directions)) {
+        const directionHeadsign = normalizeDirectionText(
+          direction?.headsign || direction?.destination
+        );
+        if (directionHeadsign && directionHeadsign === headsign) {
+          return { key, ...direction };
+        }
       }
     }
 
@@ -740,7 +761,12 @@
       const routeId = trip.routeId || staticTrip?.route_id || "";
       const route = routeById.get(String(routeId));
       const meta = getLineMeta(routeId, route?.route_short_name || "");
-      const destination = staticTrip?.trip_headsign || route?.route_long_name?.split("-")?.at(-1)?.trim() || "";
+      const staticDirection = getStaticDirectionForTrip(staticTrip);
+      const destination = staticDirection?.destination
+        || staticDirection?.headsign
+        || staticTrip?.trip_headsign
+        || route?.route_long_name?.split("-")?.at(-1)?.trim()
+        || "";
 
       const relevant = (entity.stopTimeUpdates || []).filter(update => {
         if (!update?.stopId || update.scheduleRelationship === 1 || update.scheduleRelationship === 2) return false;
@@ -760,7 +786,8 @@
         const arrivalSeconds = Number(event.time);
         if (arrivalSeconds < nowSeconds - 30 || arrivalSeconds > nowSeconds + 3 * 3600) continue;
 
-        const key = `${String(routeId)}|${String(destination)}|${String(meta.number || "")}`;
+        const directionIdentity = String(staticDirection?.key || normalizeDirectionText(destination) || "");
+      const key = `${String(routeId)}|${directionIdentity}|${String(meta.number || "")}`;
         if (!grouped.has(key)) {
           grouped.set(key, {
             route_id: routeId,
@@ -891,12 +918,13 @@
     for (const route of realtime.routes) {
       const staticTrip = findStaticTrip(route.trip_id);
       const staticDirection = getStaticDirectionForTrip(staticTrip);
-      const destination = route.destination
-        || staticTrip?.trip_headsign
-        || staticDirection?.destination
+      const destination = staticDirection?.destination
         || staticDirection?.headsign
+        || route.destination
+        || staticTrip?.trip_headsign
         || '';
-      const key = `${String(route.route_id || '')}|${destination}|${String(route.route_ref || '')}`;
+      const directionIdentity = String(staticDirection?.key || normalizeDirectionText(destination) || '');
+      const key = `${String(route.route_id || staticTrip?.route_id || '')}|${directionIdentity}|${String(route.route_ref || '')}`;
 
       if (!mergedRealtime.has(key)) {
         mergedRealtime.set(key, {
@@ -925,15 +953,17 @@
     // published realtime data for that line/direction. Once realtime appears,
     // it wins and replaces the static fallback.
     const scheduledSurfaceRoutes = isMetroStop(stop) ? [] : getSurfaceScheduledArrivals(stop);
-    const realtimeDestinationKeys = new Set(
-      mergedSurfaceRoutes.map(route =>
-        `${String(route.route_id || '')}|${normalizeDirectionText(route.destination || '')}`
-      )
+    const realtimeDirectionKeys = new Set(
+      mergedSurfaceRoutes.map(route => {
+        const staticTrip = findStaticTrip(route.trip_id);
+        const staticDirection = getStaticDirectionForTrip(staticTrip);
+        return `${String(route.route_id || staticTrip?.route_id || '')}|${String(staticDirection?.key || '')}`;
+      })
     );
 
     const surfaceFallbackRoutes = scheduledSurfaceRoutes.filter(route => {
-      const key = `${String(route.route_id || '')}|${normalizeDirectionText(route.destination || '')}`;
-      if (realtimeDestinationKeys.has(key)) return false;
+      const key = `${String(route.route_id || '')}|${String(route.direction_key || '')}`;
+      if (realtimeDirectionKeys.has(key)) return false;
 
       // If GTFS-RT has active trips for this line and they map to known
       // static directions, only those active directions are eligible for
@@ -955,7 +985,7 @@
     // line + destination so the board never shows duplicate static entries.
     const fallbackByKey = new Map();
     for (const route of surfaceFallbackRoutes) {
-      const key = `${String(route.route_id || '')}|${normalizeDirectionText(route.destination || '')}`;
+      const key = `${String(route.route_id || '')}|${String(route.direction_key || '')}`;
       const existing = fallbackByKey.get(key);
       if (!existing || Number(route.times?.[0]?.timestamp) < Number(existing.times?.[0]?.timestamp)) {
         fallbackByKey.set(key, route);
