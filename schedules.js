@@ -6,255 +6,147 @@ let selectedDayType = "weekday";
 let selectedCourse = null;
 
 const typeLabels = {
-  bus: "Автобуси",
-  trolleybus: "Тролейбуси",
-  tram: "Трамваи",
-  metro: "Метролинии",
-  night: "Нощни линии"
+  bus: "Автобус",
+  trolleybus: "Тролейбус",
+  tram: "Трамвай",
+  metro: "Метро",
+  night: "Нощен"
 };
-
-const typeOrder = [
-  "bus",
-  "trolleybus",
-  "tram",
-  "metro",
-  "night"
-];
 
 function escapeHtml(value) {
   return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 function parseTime(value) {
-  const match = String(value || "").match(
-    /^(\d+):(\d{2})(?::(\d{2}))?$/
-  );
+  if (value == null) {
+    return null;
+  }
 
-  if (!match) {
+  const text = String(value).trim();
+
+  if (!text) {
+    return null;
+  }
+
+  const parts = text.split(":").map(Number);
+
+  if (
+    parts.length !== 2 &&
+    parts.length !== 3
+  ) {
+    return null;
+  }
+
+  let hours;
+  let minutes;
+  let seconds;
+
+  if (parts.length === 2) {
+    [hours, minutes] = parts;
+    seconds = 0;
+  } else {
+    [hours, minutes, seconds] = parts;
+  }
+
+  if (
+    !Number.isFinite(hours) ||
+    !Number.isFinite(minutes) ||
+    !Number.isFinite(seconds)
+  ) {
     return null;
   }
 
   return (
-    Number(match[1]) * 3600 +
-    Number(match[2]) * 60 +
-    Number(match[3] || 0)
+    hours * 3600 +
+    minutes * 60 +
+    seconds
   );
 }
 
 function formatTime(value) {
-  const match = String(value || "").match(
-    /^(\d+):(\d{2})/
-  );
+  const seconds = parseTime(value);
 
-  if (!match) {
+  if (seconds == null) {
     return "—";
   }
 
-  const hour =
-    Number(match[1]) % 24;
+  const totalMinutes =
+    Math.floor(seconds / 60) % (24 * 60);
 
-  return `${String(hour).padStart(2, "0")}:${match[2]}`;
+  const hours =
+    Math.floor(totalMinutes / 60);
+
+  const minutes =
+    totalMinutes % 60;
+
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 }
 
 function linePillHtml(line) {
-  if (line.type === "metro") {
-    return `
-      <span
-        class="schedule-line-pill metro"
-        style="background:${line.color};color:${line.textColor}"
-      >
-        ${escapeHtml(line.number)}
-      </span>`;
-  }
+  const type =
+    line?.route_type ||
+    line?.type ||
+    "bus";
+
+  const label =
+    typeLabels[type] ||
+    "Транспорт";
 
   return `
-    <span
-      class="schedule-line-pill"
-      style="background:${line.color}"
-    >
-      ${escapeHtml(line.number)}
+    <span class="line-type-pill">
+      ${escapeHtml(label)}
     </span>`;
 }
 
 function lineIdentityHtml(line) {
+  const name =
+    line?.short_name ||
+    line?.name ||
+    line?.route_short_name ||
+    line?.id ||
+    "";
+
   return `
-    <span class="schedule-line-identity">
-      <span class="schedule-line-icon">
-        <img src="${escapeHtml(line.icon)}" alt="" />
+    <div class="line-identity">
+      <span class="line-number">
+        ${escapeHtml(name)}
       </span>
-
       ${linePillHtml(line)}
-    </span>`;
+    </div>`;
 }
 
-function renderLineDropdown() {
-  const menu =
-    document.getElementById(
-      "lineDropdownMenu"
-    );
-
-  menu.innerHTML = "";
-
-  for (const type of typeOrder) {
-    const lines =
-      scheduleLines
-        .filter(
-          line =>
-            line.type === type
-        )
-        .sort(
-          (a, b) =>
-            String(a.number).localeCompare(
-              String(b.number),
-              "bg",
-              {
-                numeric: true,
-                sensitivity: "base"
-              }
-            )
-        );
-
-    if (!lines.length) {
-      continue;
-    }
-
-    const group =
-      document.createElement(
-        "div"
-      );
-
-    group.className =
-      "schedule-dropdown-group";
-
-    group.innerHTML = `
-      <div class="schedule-dropdown-group-title">
-        ${typeLabels[type]}
-      </div>`;
-
-    for (const line of lines) {
-      const item =
-        document.createElement(
-          "button"
-        );
-
-      item.type = "button";
-
-      item.className =
-        "schedule-line-option";
-
-      item.innerHTML = `
-        ${lineIdentityHtml(line)}
-        <span class="schedule-option-arrow">›</span>`;
-
-      item.addEventListener(
-        "click",
-        () =>
-          selectScheduleLine(line)
-      );
-
-      group.appendChild(item);
-    }
-
-    menu.appendChild(group);
-  }
-}
-
-function openLineDropdown() {
-  const button =
-    document.getElementById(
-      "lineDropdownButton"
-    );
-
-  const menu =
-    document.getElementById(
-      "lineDropdownMenu"
-    );
-
-  const isOpen =
-    !menu.hidden;
-
-  menu.hidden =
-    isOpen;
-
-  button.setAttribute(
-    "aria-expanded",
-    String(!isOpen)
+function getLineDisplayName(line) {
+  return (
+    line?.short_name ||
+    line?.name ||
+    line?.route_short_name ||
+    line?.id ||
+    ""
   );
 }
 
-function closeLineDropdown() {
-  document.getElementById(
-    "lineDropdownMenu"
-  ).hidden = true;
-
-  document
-    .getElementById(
-      "lineDropdownButton"
-    )
-    .setAttribute(
-      "aria-expanded",
-      "false"
-    );
+function getDirectionLabel(direction) {
+  return (
+    direction?.label ||
+    direction?.name ||
+    direction?.headsign ||
+    direction?.direction_name ||
+    ""
+  );
 }
 
-function selectScheduleLine(line) {
-  selectedScheduleLine =
-    line;
-
-  selectedDirectionKey =
-    line.directions?.[0]?.key
-      || "A";
-
-  selectedStopIndex = 0;
-  selectedCourse = null;
-
-  closeLineDropdown();
-
-  const button =
-    document.getElementById(
-      "lineDropdownButton"
-    );
-
-  button
-    .querySelector(
-      ".schedule-placeholder"
-    )
-    ?.remove();
-
-  button
-    .querySelector(
-      ".schedule-selected-line"
-    )
-    ?.remove();
-
-  const chevron =
-    button.querySelector(
-      ".schedule-chevron"
-    );
-
-  const selected =
-    document.createElement(
-      "span"
-    );
-
-  selected.className =
-    "schedule-selected-line";
-
-  selected.innerHTML =
-    lineIdentityHtml(line);
-
-  button.insertBefore(
-    selected,
-    chevron
+function getDirectionKey(direction, index) {
+  return (
+    direction?.direction_id ??
+    direction?.id ??
+    direction?.key ??
+    index
   );
-
-  renderDirections();
-  renderSchedule();
 }
 
 function getSelectedDirection() {
@@ -263,249 +155,104 @@ function getSelectedDirection() {
   }
 
   const directions =
-    Array.isArray(
-      selectedScheduleLine.directions
-    )
-      ? selectedScheduleLine.directions
-      : [];
+    selectedScheduleLine.directions ||
+    selectedScheduleLine.direction_variants ||
+    [];
 
-  if (directions.length) {
-    return (
-      directions.find(
-        direction =>
-          direction.key ===
-          selectedDirectionKey
-      )
-      || directions[0]
-      || null
-    );
+  if (!directions.length) {
+    return null;
   }
+
+  const found =
+    directions.find(
+      (direction, index) =>
+        String(
+          getDirectionKey(
+            direction,
+            index
+          )
+        ) ===
+        String(selectedDirectionKey)
+    );
 
   return (
-    selectedScheduleLine[
-      selectedDirectionKey === "A"
-        ? "directionA"
-        : "directionB"
-    ] || null
+    found ||
+    directions[0]
   );
 }
 
-function renderDirections() {
-  const select =
-    document.getElementById(
-      "directionSelect"
-    );
-
-  const directions =
-    Array.isArray(
-      selectedScheduleLine?.directions
-    )
-      ? selectedScheduleLine.directions
-      : [];
-
-  if (directions.length) {
-    if (
-      !directions.some(
-        direction =>
-          direction.key ===
-          selectedDirectionKey
-      )
-    ) {
-      selectedDirectionKey =
-        directions[0].key;
-    }
-
-    select.innerHTML =
-      directions
-        .filter(
-          direction =>
-            direction &&
-            direction.headsign
-        )
-        .map(
-          direction => `
-            <option value="${escapeHtml(
-              direction.key
-            )}">
-              ${escapeHtml(
-                direction.headsign
-              )}
-            </option>`
-        )
-        .join("");
-
-    select.disabled =
-      !directions.length;
-
-    select.value =
-      selectedDirectionKey || "";
-
-    renderStops();
-
-    return;
-  }
-
-  const directionA =
-    selectedScheduleLine?.directionA;
-
-  const directionB =
-    selectedScheduleLine?.directionB;
-
-  const legacyDirections = [
-    ["A", directionA],
-    ["B", directionB]
-  ].filter(
-    ([, direction]) =>
-      direction &&
-      direction.headsign
-  );
-
-  select.innerHTML =
-    legacyDirections
-      .map(
-        ([key, direction]) => `
-          <option value="${key}">
-            ${escapeHtml(
-              direction.headsign
-            )}
-          </option>`
-      )
-      .join("");
-
-  select.disabled =
-    !legacyDirections.length;
-
-  if (
-    !legacyDirections.some(
-      ([key]) =>
-        key === selectedDirectionKey
-    )
-  ) {
-    selectedDirectionKey =
-      legacyDirections[0]?.[0]
-      || "A";
-  }
-
-  select.value =
-    selectedDirectionKey;
-
-  renderStops();
-}
-
-function renderStops() {
-  const select =
-    document.getElementById(
-      "stopSelect"
-    );
-
-  const direction =
-    getSelectedDirection();
-
-  const stops =
-    direction?.stops || [];
-
-  select.innerHTML =
-    stops
-      .map(
-        (stop, index) => `
-          <option value="${index}">
-            ${index + 1}. ${escapeHtml(
-              stop.name
-            )}
-          </option>`
-      )
-      .join("");
-
-  select.disabled =
-    !stops.length;
-
-  selectedStopIndex =
-    Math.min(
-      selectedStopIndex,
-      Math.max(
-        0,
-        stops.length - 1
-      )
-    );
-
-  if (stops.length) {
-    select.value =
-      String(
-        selectedStopIndex
-      );
-  }
-}
-
-function getCourses() {
-  if (!selectedScheduleLine) {
+function getDirectionStops(direction) {
+  if (!direction) {
     return [];
   }
 
-  const schedules =
-    window.transportData?.schedules
-      || {};
-
-  const routeSchedule =
-    schedules[
-      selectedScheduleLine.id
-    ];
-
-  /*
-   * Новият модел:
-   *
-   * D1 / D2 / D3 / ...
-   */
-  if (
-    routeSchedule &&
-    routeSchedule[
-      selectedDirectionKey
-    ]
-  ) {
-    return (
-      routeSchedule[
-        selectedDirectionKey
-      ]?.[
-        selectedDayType
-      ] || []
-    );
-  }
-
-  /*
-   * Стар fallback.
-   */
-  const legacyKey =
-    selectedDirectionKey === "B"
-      ? "B"
-      : "A";
-
-  const directionSchedule =
-    routeSchedule?.[
-      legacyKey
-    ];
-
   return (
-    directionSchedule?.[
-      selectedDayType
-    ] || []
+    direction.stops ||
+    direction.stop_times ||
+    direction.stopSequence ||
+    []
   );
 }
 
-function getStopTime(
-  course,
-  index
-) {
+function getStopName(stop) {
+  if (typeof stop === "string") {
+    return stop;
+  }
+
   return (
-    course?.times?.[index] ||
+    stop?.name ||
+    stop?.stop_name ||
+    stop?.stopName ||
+    stop?.title ||
+    stop?.id ||
     ""
   );
 }
 
-/*
- * Проверява дали даден курс е частичен.
- *
- * Частичният курс има поне едно липсващо
- * време след последното реално време.
- */
+function getStopId(stop) {
+  if (typeof stop === "string") {
+    return stop;
+  }
+
+  return (
+    stop?.stop_id ||
+    stop?.stopId ||
+    stop?.id ||
+    ""
+  );
+}
+
+function getStopTime(course, stopIndex) {
+  if (!course) {
+    return null;
+  }
+
+  const times =
+    Array.isArray(course.times)
+      ? course.times
+      : [];
+
+  return times[stopIndex] ?? null;
+}
+
+function getCoursesForDirection(direction) {
+  if (!direction) {
+    return [];
+  }
+
+  const courses =
+    direction.courses ||
+    direction.trips ||
+    direction.schedule ||
+    [];
+
+  if (!Array.isArray(courses)) {
+    return [];
+  }
+
+  return courses;
+}
+
 function isPartialCourse(course) {
   const times =
     Array.isArray(course?.times)
@@ -526,9 +273,7 @@ function isPartialCourse(course) {
     if (
       times[index] !== null &&
       times[index] !== undefined &&
-      String(
-        times[index]
-      ).trim() !== ""
+      String(times[index]).trim() !== ""
     ) {
       lastRealIndex = index;
     }
@@ -539,17 +284,14 @@ function isPartialCourse(course) {
   }
 
   for (
-    let index =
-      lastRealIndex + 1;
+    let index = lastRealIndex + 1;
     index < times.length;
     index++
   ) {
     if (
       times[index] === null ||
       times[index] === undefined ||
-      String(
-        times[index]
-      ).trim() === ""
+      String(times[index]).trim() === ""
     ) {
       return true;
     }
@@ -558,17 +300,8 @@ function isPartialCourse(course) {
   return false;
 }
 
-/*
- * Частичните курсове са с:
- *   background: #dc3545
- *   color: white
- */
-function getCourseMinuteStyle(
-  course
-) {
-  if (
-    !isPartialCourse(course)
-  ) {
+function getCourseMinuteStyle(course) {
+  if (!isPartialCourse(course)) {
     return "";
   }
 
@@ -579,40 +312,435 @@ function getCourseMinuteStyle(
   `;
 }
 
-function renderSummary(courses) {
+function populateLineDropdown() {
+  const select =
+    document.getElementById(
+      "scheduleLineSelect"
+    );
+
+  if (!select) {
+    return;
+  }
+
+  select.innerHTML = `
+    <option value="">
+      Избери линия
+    </option>
+    ${scheduleLines
+      .map(
+        (line, index) => `
+          <option value="${index}">
+            ${escapeHtml(
+              getLineDisplayName(line)
+            )}
+          </option>`
+      )
+      .join("")}
+  `;
+}
+
+function openLineDropdown() {
+  const wrapper =
+    document.querySelector(
+      ".schedule-line-dropdown"
+    );
+
+  if (!wrapper) {
+    return;
+  }
+
+  wrapper.classList.add("open");
+}
+
+function closeLineDropdown() {
+  const wrapper =
+    document.querySelector(
+      ".schedule-line-dropdown"
+    );
+
+  if (!wrapper) {
+    return;
+  }
+
+  wrapper.classList.remove("open");
+}
+
+function renderLineOptions() {
+  const container =
+    document.getElementById(
+      "scheduleLineOptions"
+    );
+
+  if (!container) {
+    return;
+  }
+
+  container.innerHTML =
+    scheduleLines
+      .map(
+        (line, index) => `
+          <button
+            type="button"
+            class="schedule-line-option"
+            data-line-index="${index}"
+          >
+            ${lineIdentityHtml(line)}
+          </button>`
+      )
+      .join("");
+
+  container
+    .querySelectorAll(
+      ".schedule-line-option"
+    )
+    .forEach(button => {
+      button.addEventListener(
+        "click",
+        () => {
+          const index =
+            Number(
+              button.dataset.lineIndex
+            );
+
+          selectScheduleLine(
+            index
+          );
+
+          closeLineDropdown();
+        }
+      );
+    });
+}
+
+function selectScheduleLine(index) {
+  const line =
+    scheduleLines[index];
+
+  if (!line) {
+    return;
+  }
+
+  selectedScheduleLine = line;
+
+  const directions =
+    line.directions ||
+    line.direction_variants ||
+    [];
+
+  if (directions.length) {
+    selectedDirectionKey =
+      getDirectionKey(
+        directions[0],
+        0
+      );
+  } else {
+    selectedDirectionKey = null;
+  }
+
+  selectedStopIndex = 0;
+  selectedCourse = null;
+
+  renderSelectedLine();
+  renderDirections();
+  renderSchedule();
+}
+
+function renderSelectedLine() {
+  const selected =
+    document.getElementById(
+      "selectedScheduleLine"
+    );
+
+  if (!selected) {
+    return;
+  }
+
+  if (!selectedScheduleLine) {
+    selected.innerHTML = `
+      <span class="schedule-select-placeholder">
+        Избери линия
+      </span>`;
+
+    return;
+  }
+
+  selected.innerHTML =
+    lineIdentityHtml(
+      selectedScheduleLine
+    );
+}
+
+function renderDirections() {
+  const select =
+    document.getElementById(
+      "scheduleDirectionSelect"
+    );
+
+  if (!select) {
+    return;
+  }
+
+  const directions =
+    selectedScheduleLine?.directions ||
+    selectedScheduleLine?.direction_variants ||
+    [];
+
+  select.innerHTML =
+    directions
+      .map(
+        (direction, index) => {
+          const key =
+            getDirectionKey(
+              direction,
+              index
+            );
+
+          const label =
+            getDirectionLabel(
+              direction
+            );
+
+          return `
+            <option
+              value="${escapeHtml(key)}"
+              ${
+                String(key) ===
+                String(selectedDirectionKey)
+                  ? "selected"
+                  : ""
+              }
+            >
+              ${escapeHtml(label)}
+            </option>`;
+        }
+      )
+      .join("");
+
+  if (!directions.length) {
+    select.innerHTML = `
+      <option value="">
+        Няма направления
+      </option>`;
+  }
+}
+
+function renderStops() {
+  const direction =
+    getSelectedDirection();
+
+  const stops =
+    getDirectionStops(
+      direction
+    );
+
+  const select =
+    document.getElementById(
+      "scheduleStopSelect"
+    );
+
+  if (!select) {
+    return;
+  }
+
+  select.innerHTML =
+    stops
+      .map(
+        (stop, index) => `
+          <option
+            value="${index}"
+            ${
+              index === selectedStopIndex
+                ? "selected"
+                : ""
+            }
+          >
+            ${escapeHtml(
+              getStopName(stop)
+            )}
+          </option>`
+      )
+      .join("");
+
+  if (!stops.length) {
+    select.innerHTML = `
+      <option value="">
+        Няма спирки
+      </option>`;
+  }
+}
+
+function getDayTypeLabel(dayType) {
+  const labels = {
+    weekday: "Делник",
+    saturday: "Събота",
+    sunday: "Неделя"
+  };
+
+  return (
+    labels[dayType] ||
+    dayType
+  );
+}
+
+function getCoursesForDay(
+  direction,
+  dayType
+) {
+  if (!direction) {
+    return [];
+  }
+
+  const byDay =
+    direction.coursesByDay ||
+    direction.byDay ||
+    direction.scheduleByDay;
+
+  if (
+    byDay &&
+    Array.isArray(byDay[dayType])
+  ) {
+    return byDay[dayType];
+  }
+
+  const courses =
+    getCoursesForDirection(
+      direction
+    );
+
+  return courses.filter(
+    course => {
+      if (!course) {
+        return false;
+      }
+
+      const courseDay =
+        course.day_type ||
+        course.dayType ||
+        course.service_type ||
+        course.serviceType;
+
+      if (!courseDay) {
+        return true;
+      }
+
+      if (
+        Array.isArray(courseDay)
+      ) {
+        return courseDay.includes(
+          dayType
+        );
+      }
+
+      return (
+        String(courseDay) ===
+        String(dayType)
+      );
+    }
+  );
+}
+
+function renderStopList(
+  direction
+) {
+  const stops =
+    getDirectionStops(
+      direction
+    );
+
+  const container =
+    document.getElementById(
+      "scheduleStops"
+    );
+
+  if (!container) {
+    return;
+  }
+
+  if (!stops.length) {
+    container.innerHTML = `
+      <div class="schedule-no-data">
+        Няма налични спирки.
+      </div>`;
+
+    return;
+  }
+
+  container.innerHTML = `
+    <div class="schedule-stop-list">
+      ${stops
+        .map(
+          (stop, index) => `
+            <button
+              type="button"
+              class="schedule-stop-item ${
+                index === selectedStopIndex
+                  ? "active"
+                  : ""
+              }"
+              data-stop-index="${index}"
+            >
+              <span class="schedule-stop-number">
+                ${index + 1}
+              </span>
+
+              <span class="schedule-stop-name">
+                ${escapeHtml(
+                  getStopName(stop)
+                )}
+              </span>
+            </button>`
+        )
+        .join("")}
+    </div>`;
+
+  container
+    .querySelectorAll(
+      ".schedule-stop-item"
+    )
+    .forEach(button => {
+      button.addEventListener(
+        "click",
+        () => {
+          selectedStopIndex =
+            Number(
+              button.dataset.stopIndex
+            );
+
+          renderSchedule();
+        }
+      );
+    });
+}
+
+function renderSummary(
+  courses
+) {
   const summary =
     document.getElementById(
       "scheduleSummary"
     );
 
-  if (
-    !selectedScheduleLine ||
-    !getSelectedDirection()
-  ) {
-    summary.hidden = true;
+  if (!summary) {
     return;
   }
 
-  const direction =
-    getSelectedDirection();
+  if (!courses.length) {
+    summary.hidden = true;
+    summary.innerHTML = "";
+    return;
+  }
 
-  /*
-   * Търсим всички реални времена
-   * за избраната спирка.
-   */
-  const validTimes =
+  const times =
     courses
-      .map(
-        course =>
-          getStopTime(
-            course,
-            selectedStopIndex
-          )
+      .map(course =>
+        getStopTime(
+          course,
+          selectedStopIndex
+        )
       )
       .filter(
         time =>
-          parseTime(time) !==
-          null
+          parseTime(time) != null
       )
       .sort(
         (a, b) =>
@@ -620,58 +748,25 @@ function renderSummary(courses) {
           parseTime(b)
       );
 
+  if (!times.length) {
+    summary.hidden = true;
+    summary.innerHTML = "";
+    return;
+  }
+
   const first =
-    validTimes.length
-      ? formatTime(
-          validTimes[0]
-        )
-      : "—";
+    formatTime(times[0]);
 
   const last =
-    validTimes.length
-      ? formatTime(
-          validTimes[
-            validTimes.length - 1
-          ]
-        )
-      : "—";
-
-  const stop =
-    direction.stops?.[
-      selectedStopIndex
-    ];
+    formatTime(
+      times[times.length - 1]
+    );
 
   const courseCount =
-    validTimes.length;
+    courses.length;
 
   summary.innerHTML = `
-    <div class="schedule-summary-main">
-      <div class="schedule-summary-route-row">
-        ${lineIdentityHtml(
-          selectedScheduleLine
-        )}
-
-        <img
-          class="direction-arrow"
-          src="https://raw.githubusercontent.com/nikolay5555/gtsofia/3f6b5990600fe465c2fed6bd3da2582f31c45860/Icons/destinationarrow.svg"
-          alt=""
-        />
-
-        <strong class="schedule-summary-destination">
-          ${escapeHtml(
-            direction.headsign
-          )}
-        </strong>
-      </div>
-
-      <span class="schedule-summary-stop">
-        От спирка: ${escapeHtml(
-          stop?.name || ""
-        )}
-      </span>
-    </div>
-
-    <div class="schedule-summary-stats">
+    <div class="schedule-summary-grid">
       <div>
         <span>Първи курс</span>
         <strong>${first}</strong>
@@ -824,6 +919,8 @@ function renderTimetable(courses) {
                     );
 
                   /*
+                   * КЛЮЧОВАТА ПРОМЯНА:
+                   *
                    * Не използваме trip_id за намиране
                    * на курса, защото няколко курса могат
                    * да имат един и същ trip_id след
@@ -853,29 +950,20 @@ function renderTimetable(courses) {
       })
       .join("");
 
-  /*
-   * ВАЖНО:
-   *
-   * timetable-scroll съдържа САМО таблицата.
-   * Бележката е извън него, за да не изглежда
-   * като част от таблицата/рамката.
-   */
   container.innerHTML = `
-    <div class="timetable-scroll">
-      <table class="schedule-timetable">
-        <thead>
-          <tr>
-            ${header}
-          </tr>
-        </thead>
+    <table class="schedule-timetable">
+      <thead>
+        <tr>
+          ${header}
+        </tr>
+      </thead>
 
-        <tbody>
-          <tr>
-            ${cells}
-          </tr>
-        </tbody>
-      </table>
-    </div>
+      <tbody>
+        <tr>
+          ${cells}
+        </tr>
+      </tbody>
+    </table>
 
     <div class="schedule-partial-note">
       Частичните курсове са отбелязани с червен фон.
@@ -889,7 +977,6 @@ function renderTimetable(courses) {
       button.addEventListener(
         "click",
         () => {
-
           /*
            * Вече взимаме точно курса,
            * който е представен от този бутон.
@@ -930,91 +1017,49 @@ function showCourse(course) {
     getSelectedDirection();
 
   const stops =
-    direction?.stops || [];
+    getDirectionStops(
+      direction
+    );
 
-  /*
-   * Намираме последната спирка,
-   * за която конкретният курс има
-   * реално време.
-   */
-  let lastRealIndex = -1;
+  const times =
+    Array.isArray(course?.times)
+      ? course.times
+      : [];
 
-  for (
-    let index = 0;
-    index < stops.length;
-    index++
-  ) {
-    const time =
-      course.times?.[
-        index
-      ];
-
-    if (
-      time !== null &&
-      time !== undefined &&
-      String(time).trim() !== ""
-    ) {
-      lastRealIndex =
-        index;
-    }
+  if (!section || !container) {
+    return;
   }
 
-  /*
-   * Показваме ВСИЧКИ спирки на
-   * редовното направление.
-   *
-   * След последната обслужена спирка
-   * конкретният курс получава "—".
-   */
-  container.innerHTML =
-    stops
-      .map(
-        (stop, index) => {
+  container.innerHTML = `
+    <div class="course-detail-list">
+      ${stops
+        .map(
+          (stop, index) => {
+            const time =
+              times[index];
 
-          const rawTime =
-            course.times?.[
-              index
-            ];
+            return `
+              <div class="course-detail-stop">
+                <div class="course-detail-stop-number">
+                  ${index + 1}
+                </div>
 
-          const hasRealTime =
-            rawTime !== null &&
-            rawTime !== undefined &&
-            String(rawTime).trim() !== "";
+                <div class="course-detail-stop-name">
+                  ${escapeHtml(
+                    getStopName(stop)
+                  )}
+                </div>
 
-          const displayTime =
-            hasRealTime
-              ? formatTime(
-                  rawTime
-                )
-              : "—";
-
-          const selected =
-            index ===
-            selectedStopIndex;
-
-          return `
-            <div
-              class="course-stop ${
-                selected
-                  ? "selected"
-                  : ""
-              }"
-            >
-              <div class="course-stop-marker"></div>
-
-              <div class="course-stop-name">
-                ${escapeHtml(
-                  stop.name
-                )}
-              </div>
-
-              <div class="course-stop-time">
-                ${displayTime}
-              </div>
-            </div>`;
-        }
-      )
-      .join("");
+                <div class="course-detail-time">
+                  ${escapeHtml(
+                    formatTime(time)
+                  )}
+                </div>
+              </div>`;
+          }
+        )
+        .join("")}
+    </div>`;
 
   section.hidden = false;
 
@@ -1025,35 +1070,92 @@ function showCourse(course) {
 }
 
 function renderSchedule() {
-  const empty =
+  const emptyState =
     document.getElementById(
-      "scheduleEmpty"
+      "scheduleEmptyState"
+    );
+
+  const directionSection =
+    document.getElementById(
+      "directionSection"
+    );
+
+  const stopSection =
+    document.getElementById(
+      "stopSection"
+    );
+
+  const summarySection =
+    document.getElementById(
+      "summarySection"
+    );
+
+  const timetableSection =
+    document.getElementById(
+      "timetableSection"
+    );
+
+  const courseSection =
+    document.getElementById(
+      "courseSection"
     );
 
   if (!selectedScheduleLine) {
-    empty.hidden = false;
+    if (emptyState) {
+      emptyState.hidden = false;
+    }
 
-    document.getElementById(
-      "scheduleSummary"
-    ).hidden = true;
+    if (directionSection) {
+      directionSection.hidden = true;
+    }
 
-    document.getElementById(
-      "timetableSection"
-    ).hidden = true;
+    if (stopSection) {
+      stopSection.hidden = true;
+    }
 
-    document.getElementById(
-      "courseSection"
-    ).hidden = true;
+    if (summarySection) {
+      summarySection.hidden = true;
+    }
+
+    if (timetableSection) {
+      timetableSection.hidden = true;
+    }
+
+    if (courseSection) {
+      courseSection.hidden = true;
+    }
 
     return;
   }
 
-  empty.hidden = true;
+  if (emptyState) {
+    emptyState.hidden = true;
+  }
 
-  const courses =
-    getCourses();
+  if (directionSection) {
+    directionSection.hidden = false;
+  }
+
+  if (stopSection) {
+    stopSection.hidden = false;
+  }
+
+  renderDirections();
+
+  const direction =
+    getSelectedDirection();
+
+  renderStopList(
+    direction
+  );
 
   renderStops();
+
+  const courses =
+    getCoursesForDay(
+      direction,
+      selectedDayType
+    );
 
   renderSummary(
     courses
@@ -1063,164 +1165,258 @@ function renderSchedule() {
     courses
   );
 
-  document.getElementById(
-    "courseSection"
-  ).hidden = true;
+  if (courseSection) {
+    courseSection.hidden = true;
+  }
 }
 
-async function initializeSchedules() {
+function setDayType(dayType) {
+  selectedDayType =
+    dayType;
+
+  document
+    .querySelectorAll(
+      ".schedule-day-tab"
+    )
+    .forEach(tab => {
+      tab.classList.toggle(
+        "active",
+        tab.dataset.dayType ===
+          dayType
+      );
+    });
+
+  renderSchedule();
+}
+
+function convertGtfsRoutes(data) {
+  if (!data) {
+    return [];
+  }
+
+  if (Array.isArray(data)) {
+    return data;
+  }
+
+  if (
+    Array.isArray(
+      data.routes
+    )
+  ) {
+    return data.routes;
+  }
+
+  return Object.values(
+    data
+  ).filter(
+    item =>
+      item &&
+      typeof item ===
+        "object"
+  );
+}
+
+async function loadTransportData() {
   try {
+    const response =
+      await fetch(
+        "data/routes.json"
+      );
+
+    if (!response.ok) {
+      throw new Error(
+        `HTTP ${response.status}`
+      );
+    }
+
     const data =
-      await loadTransportData();
+      await response.json();
 
     scheduleLines =
       convertGtfsRoutes(
-        data.routes || [],
-        data.trips || [],
-        data.directions || {}
+        data
       );
 
-    window.scheduleLines =
-      scheduleLines;
-
-    renderLineDropdown();
-
+    renderLineOptions();
+    renderSchedule();
   } catch (error) {
-    console.error(error);
+    console.error(
+      "Грешка при зареждане на транспортните данни:",
+      error
+    );
 
-    document.getElementById(
-      "scheduleEmpty"
-    ).textContent =
-      "Разписанията не могат да бъдат заредени в момента.";
+    scheduleLines = [];
+
+    const container =
+      document.getElementById(
+        "scheduleLineOptions"
+      );
+
+    if (container) {
+      container.innerHTML = `
+        <div class="schedule-no-data">
+          Данните за линиите не могат да бъдат заредени.
+        </div>`;
+    }
   }
+}
+
+function initializeSchedules() {
+  loadTransportData();
 }
 
 document.addEventListener(
   "DOMContentLoaded",
   () => {
-
-    document
-      .getElementById(
-        "lineDropdownButton"
-      )
-      .addEventListener(
-        "click",
-        openLineDropdown
+    const selectedLine =
+      document.getElementById(
+        "selectedScheduleLine"
       );
+
+    const lineDropdown =
+      document.querySelector(
+        ".schedule-line-dropdown"
+      );
+
+    const lineToggle =
+      document.getElementById(
+        "scheduleLineToggle"
+      );
+
+    const directionSelect =
+      document.getElementById(
+        "scheduleDirectionSelect"
+      );
+
+    const stopSelect =
+      document.getElementById(
+        "scheduleStopSelect"
+      );
+
+    const dayTabs =
+      document.querySelectorAll(
+        ".schedule-day-tab"
+      );
+
+    const closeCourseButton =
+      document.getElementById(
+        "closeCourseButton"
+      );
+
+    if (lineToggle) {
+      lineToggle.addEventListener(
+        "click",
+        event => {
+          event.stopPropagation();
+
+          if (
+            lineDropdown?.classList.contains(
+              "open"
+            )
+          ) {
+            closeLineDropdown();
+          } else {
+            openLineDropdown();
+          }
+        }
+      );
+    }
+
+    if (selectedLine) {
+      selectedLine.addEventListener(
+        "click",
+        event => {
+          event.stopPropagation();
+
+          if (
+            lineDropdown?.classList.contains(
+              "open"
+            )
+          ) {
+            closeLineDropdown();
+          } else {
+            openLineDropdown();
+          }
+        }
+      );
+    }
 
     document.addEventListener(
       "click",
       event => {
-
         if (
-          !event.target.closest(
-            "#lineDropdown"
+          lineDropdown &&
+          !lineDropdown.contains(
+            event.target
           )
         ) {
           closeLineDropdown();
         }
-
       }
     );
 
-    document
-      .getElementById(
-        "directionSelect"
-      )
-      .addEventListener(
+    if (directionSelect) {
+      directionSelect.addEventListener(
         "change",
-        event => {
-
+        () => {
           selectedDirectionKey =
-            event.target.value;
+            directionSelect.value;
 
-          selectedStopIndex =
-            0;
-
-          selectedCourse =
-            null;
+          selectedStopIndex = 0;
+          selectedCourse = null;
 
           renderSchedule();
         }
       );
+    }
 
-    document
-      .getElementById(
-        "stopSelect"
-      )
-      .addEventListener(
+    if (stopSelect) {
+      stopSelect.addEventListener(
         "change",
-        event => {
-
+        () => {
           selectedStopIndex =
             Number(
-              event.target.value
+              stopSelect.value
             );
 
-          selectedCourse =
-            null;
+          selectedCourse = null;
 
           renderSchedule();
         }
       );
+    }
 
-    document
-      .querySelectorAll(
-        ".schedule-day-tab"
-      )
-      .forEach(
-        button => {
+    dayTabs.forEach(
+      tab => {
+        tab.addEventListener(
+          "click",
+          () => {
+            setDayType(
+              tab.dataset.dayType
+            );
+          }
+        );
+      }
+    );
 
-          button.addEventListener(
-            "click",
-            () => {
-
-              document
-                .querySelectorAll(
-                  ".schedule-day-tab"
-                )
-                .forEach(
-                  item =>
-                    item.classList.remove(
-                      "active"
-                    )
-                );
-
-              button.classList.add(
-                "active"
-              );
-
-              selectedDayType =
-                button.dataset.dayType;
-
-              selectedCourse =
-                null;
-
-              renderSchedule();
-            }
-          );
-
-        }
-      );
-
-    document
-      .getElementById(
-        "closeCourseButton"
-      )
-      .addEventListener(
+    if (closeCourseButton) {
+      closeCourseButton.addEventListener(
         "click",
         () => {
+          const courseSection =
+            document.getElementById(
+              "courseSection"
+            );
 
-          document.getElementById(
-            "courseSection"
-          ).hidden = true;
+          selectedCourse = null;
 
-          selectedCourse =
-            null;
+          if (courseSection) {
+            courseSection.hidden = true;
+          }
         }
       );
+    }
 
     initializeSchedules();
-
   }
 );
