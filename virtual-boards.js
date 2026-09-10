@@ -586,6 +586,41 @@
     return !!selectedName && !!destinationName && selectedName === destinationName;
   }
 
+  function resolveRealtimeDirection(routeId, stopId, staticTrip, destination = '', directionId = '') {
+    const directions = getDirectionsForRouteAtStop(routeId, stopId);
+    if (!directions.length) return null;
+
+    // Prefer the exact static trip -> direction mapping when available.
+    // GTFS directions already carry a representative trip_id, which is more
+    // reliable than comparing destination text for branched routes such as
+    // trolley 3.
+    const tripId = String(staticTrip?.trip_id || staticTrip?.tripId || '').trim();
+    if (tripId) {
+      const byTrip = directions.find(direction =>
+        String(direction?.trip_id || '').trim() === tripId
+      );
+      if (byTrip) return byTrip;
+    }
+
+    const wantedDirectionId = String(directionId ?? '').trim();
+    if (wantedDirectionId) {
+      const byDirectionId = directions.find(direction =>
+        String(direction?.direction_id ?? direction?.key ?? '').trim() === wantedDirectionId
+      );
+      if (byDirectionId) return byDirectionId;
+    }
+
+    const wantedDestination = normalizeDirectionText(destination);
+    if (wantedDestination) {
+      const byDestination = directions.find(direction =>
+        normalizeDirectionText(direction?.headsign || direction?.destination) === wantedDestination
+      );
+      if (byDestination) return byDestination;
+    }
+
+    return directions.length === 1 ? directions[0] : null;
+  }
+
   function getMetroScheduledArrivals(stop) {
     const now = getNowGtfsSeconds();
     const weekend = isWeekendInSofia();
@@ -898,33 +933,62 @@
       }))
       .filter(route => route.times.length);
 
-    // For surface transport, use the static timetable as a fallback during
-    // the two hours before the next scheduled course when CGM has not yet
-    // published realtime data for that line/direction. Once realtime appears,
-    // it wins and replaces the static fallback.
+    // Work out which GTFS directions are currently represented by realtime
+    // vehicles for each line at this stop. This is stronger than a simple
+    // line-level realtime/fallback switch because some lines can temporarily
+    // operate only one branch/direction (e.g. trolley 3).
+    const activeDirectionKeysByRoute = new Map();
+    for (const route of realtime.routes) {
+      const routeId = String(route?.route_id || '').trim();
+      if (!routeId) continue;
+
+      const staticTrip = findStaticTrip(route.trip_id);
+      const direction = resolveRealtimeDirection(
+        routeId,
+        stop.stop_id,
+        staticTrip,
+        route.destination || '',
+        route.direction_id || route.directionId || ''
+      );
+      if (!direction?.key) continue;
+
+      if (!activeDirectionKeysByRoute.has(routeId)) {
+        activeDirectionKeysByRoute.set(routeId, new Set());
+      }
+      activeDirectionKeysByRoute.get(routeId).add(String(direction.key));
+    }
+
+    // For surface transport, realtime keeps priority within an active
+    // direction. Static fallback remains available for the same active
+    // directions when realtime has no usable upcoming arrival there.
+    // Directions that have no realtime representation at this stop are
+    // suppressed while another direction of the same line is active, which
+    // prevents stale GTFS branches from appearing as if they were running.
     const scheduledSurfaceRoutes = isMetroStop(stop) ? [] : getSurfaceScheduledArrivals(stop);
-    // Match realtime and scheduled directions using a display-independent
-    // destination key. CGM can spell the same destination differently, e.g.
-    // "Ж.к. Дружба 2" vs "Ж.К. ДРУЖБА-2".
+
+    const surfaceFallbackRoutes = scheduledSurfaceRoutes.filter(route => {
+      const routeId = String(route?.route_id || '');
+      const activeKeys = activeDirectionKeysByRoute.get(routeId);
+      if (!activeKeys?.size) return !mergedSurfaceRoutes.some(realtimeRoute =>
+        String(realtimeRoute?.route_id || '') === routeId
+      );
+
+      const directions = transportData?.directions?.[routeId] || {};
+      const directionEntry = Object.entries(directions).find(([, direction]) =>
+        normalizeDirectionText(direction?.destination || direction?.headsign || '')
+          === normalizeDirectionText(route?.destination || '')
+      );
+
+      return !!directionEntry && activeKeys.has(String(directionEntry[0]));
+    });
+
+    // Some GTFS exports contain duplicate static directions. Keep the earliest
+    // fallback row for a given line + destination, while preserving different
+    // destinations when realtime is unavailable for the line.
     const destinationMatchKey = value => normalizeDirectionText(value)
       .replace(/[-]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
-
-    const realtimeDestinationKeys = new Set(
-      mergedSurfaceRoutes.map(route =>
-        `${String(route.route_id || '')}|${destinationMatchKey(route.destination || '')}`
-      )
-    );
-
-    const surfaceFallbackRoutes = scheduledSurfaceRoutes.filter(route => {
-      const key = `${String(route.route_id || '')}|${destinationMatchKey(route.destination || '')}`;
-      return !realtimeDestinationKeys.has(key);
-    });
-
-    // Some GTFS exports contain duplicate static directions with the same
-    // destination/pattern. Keep only the earliest fallback row for a given
-    // line + destination so the board never shows duplicate static entries.
     const fallbackByKey = new Map();
     for (const route of surfaceFallbackRoutes) {
       const key = `${String(route.route_id || '')}|${destinationMatchKey(route.destination || '')}`;
@@ -940,10 +1004,6 @@
     // Sofia Traffic currently does not provide usable Trip Updates for metro.
     // Keep surface transport realtime-only and add metro from the static GTFS
     // timetable when the selected stop is a metro station.
-    const realtimeRouteIds = new Set(
-      mergedSurfaceRoutes.map(route => String(route?.route_id || ''))
-    );
-
     const routes = [
       ...surfaceRoutes,
       ...metroRoutes.filter(route =>
@@ -1038,7 +1098,7 @@
             </div>
             <div class="vb-time-block">
               ${countdownHtml(arrivals[0], !arrivals[0]?.scheduled)}
-              ${arrivals.length > 1 ? `<div class="vb-next-times">${arrivals.slice(1).map(time => `<span>${escapeHtml(formatArrivalClock(time.timestamp))}</span>`).join("")}</div>` : ""}
+              ${!arrivals[0]?.scheduled && arrivals.length > 1 ? `<div class="vb-next-times">${arrivals.slice(1).map(time => `<span>${escapeHtml(formatArrivalClock(time.timestamp))}</span>`).join("")}</div>` : ""}
             </div>
           </article>
         `;
