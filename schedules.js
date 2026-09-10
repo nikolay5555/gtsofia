@@ -872,7 +872,10 @@ function renderTimetable(courses) {
           ${cells}
         </tr>
       </tbody>
-    </table>`;
+    </table>
+    <div class="schedule-partial-note">
+      Частичните курсове са отбелязани с червен фон.
+    </div>`;
 
   container
     .querySelectorAll(
