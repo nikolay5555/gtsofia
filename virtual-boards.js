@@ -997,11 +997,12 @@
           || route.destination
           || staticTrip?.trip_headsign
           || '');
-      const directionIdentity = realtimeTerminalId
-        ? (isPartialRealtime
-            ? realtimeTerminalId
-            : getDirectionIdentity(staticDirection, realtimeTerminalId))
-        : getDirectionIdentity(staticDirection, normalizeDirectionText(destination));
+      // The board row is a displayed line + destination, not a raw GTFS
+      // stop_id. The same physical terminal can have multiple GTFS stop IDs
+      // (platforms / approaches), which previously split one direction into
+      // two rows. Partial courses still remain separate because their
+      // displayed destination is their actual terminal stop name.
+      const directionIdentity = normalizeDirectionText(destination);
       const key = `${String(route.route_id || staticTrip?.route_id || '')}|${directionIdentity}|${String(route.route_ref || '')}`;
 
       if (!mergedRealtime.has(key)) {
@@ -1063,7 +1064,10 @@
     // line + destination so the board never shows duplicate static entries.
     const fallbackByKey = new Map();
     for (const route of surfaceFallbackRoutes) {
-      const key = `${String(route.route_id || '')}|${String(route.terminal_stop_id || getDirectionIdentity(route.direction, route.direction_key || ''))}`;
+      // Deduplicate by the direction the passenger actually sees. Different
+      // GTFS terminal stop IDs can represent the same named destination.
+      const destinationKey = normalizeDirectionText(route.destination || '');
+      const key = `${String(route.route_id || '')}|${destinationKey}|${String(route.route_ref || '')}`;
       const existing = fallbackByKey.get(key);
       if (!existing || Number(route.times?.[0]?.timestamp) < Number(existing.times?.[0]?.timestamp)) {
         fallbackByKey.set(key, route);
