@@ -625,16 +625,16 @@
 
   function shouldHideTerminalArrival(routeId, stopId, staticTrip, destination = '', directionId = '') {
     const direction = resolveDirectionForRealtimeRoute(routeId, stopId, staticTrip, destination, directionId);
-    if (direction?.pattern?.length && isTerminalDirectionForStop(routeId, stopId, direction)) return true;
 
-    // The same physical terminal can be represented by different GTFS stop IDs
-    // and even slightly different destination spellings (e.g. Ж.К. ДРУЖБА-2
-    // vs Ж.к. Дружба 2). A destination matching the selected stop name is
-    // therefore also treated as the terminal direction.
-    const selectedStop = getStopById(stopId);
-    const selectedName = normalizeStopName(selectedStop?.stop_name);
-    const destinationName = normalizeStopName(destination);
-    return !!selectedName && !!destinationName && selectedName === destinationName;
+    // Hide an arrival only when the selected stop is the actual terminal of
+    // the matched static direction. Do not use trip_headsign/destination text
+    // as a terminal test: partial courses may end at an intermediate stop
+    // before leaving the regular route for the depot, and their destination
+    // text can still describe that intermediate stop.
+    return !!(
+      direction?.pattern?.length
+      && isTerminalDirectionForStop(routeId, stopId, direction)
+    );
   }
 
   function getMetroScheduledArrivals(stop) {
