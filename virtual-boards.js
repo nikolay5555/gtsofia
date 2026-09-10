@@ -1032,16 +1032,22 @@
     // published realtime data for that line/direction. Once realtime appears,
     // it wins and replaces the static fallback.
     const scheduledSurfaceRoutes = isMetroStop(stop) ? [] : getSurfaceScheduledArrivals(stop);
+    // A realtime row and a static fallback row must be considered the same
+    // passenger-facing direction when they have the same line and displayed
+    // destination. This is especially important for partial courses: realtime
+    // identifies them by their actual terminal stop, while the static schedule
+    // still originates from the parent/full direction.
     const realtimeDirectionKeys = new Set(
       mergedSurfaceRoutes.map(route => {
-        const staticTrip = findStaticTrip(route.trip_id);
-        const staticDirection = getStaticDirectionForTrip(staticTrip);
-        return `${String(route.route_id || staticTrip?.route_id || '')}|${getDirectionIdentity(staticDirection, route.destination_stop_id || '')}`;
+        const routeId = String(route.route_id || '');
+        const destinationKey = normalizeDirectionText(route.destination || '');
+        return `${routeId}|${destinationKey}|${String(route.route_ref || '')}`;
       })
     );
 
     const surfaceFallbackRoutes = scheduledSurfaceRoutes.filter(route => {
-      const key = `${String(route.route_id || '')}|${getDirectionIdentity(route.direction, String(route.direction_key || ''))}`;
+      const destinationKey = normalizeDirectionText(route.destination || '');
+      const key = `${String(route.route_id || '')}|${destinationKey}|${String(route.route_ref || '')}`;
       if (realtimeDirectionKeys.has(key)) return false;
 
       // If GTFS-RT has active trips for this line and they map to known
