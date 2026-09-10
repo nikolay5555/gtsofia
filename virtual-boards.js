@@ -694,6 +694,40 @@
     return stop?.stop_name || direction?.stops?.[lastIndex]?.name || direction?.destination || direction?.headsign || '';
   }
 
+  function findPatternStopIndex(pattern, stopId) {
+    const ids = Array.isArray(pattern) ? pattern.map(String) : [];
+    const wanted = String(stopId ?? '').trim();
+    if (!ids.length || !wanted) return -1;
+
+    const exactIndex = ids.findIndex(id => stopIdsMatch(id, wanted));
+    if (exactIndex >= 0) return exactIndex;
+
+    // GTFS-RT can occasionally identify the opposite platform/approach of
+    // the same physical stop. Resolve that to the corresponding stop in the
+    // static pattern by name + proximity (for example 1271/1272 at
+    // пл. Възраждане), otherwise a genuine realtime short-turn can be lost.
+    const wantedStop = getStopById(wanted);
+    if (!wantedStop) return -1;
+
+    const wantedName = normalizeStopName(wantedStop.stop_name);
+    if (!wantedName) return -1;
+
+    let bestIndex = -1;
+    let bestDistance = Infinity;
+    ids.forEach((id, index) => {
+      const stop = getStopById(id);
+      if (!stop || normalizeStopName(stop.stop_name) !== wantedName) return;
+
+      const distance = getStopDistanceMeters(wantedStop, stop);
+      if (distance <= 300 && distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = index;
+      }
+    });
+
+    return bestIndex;
+  }
+
   function getRealtimeTripDestination(route, staticDirection, selectedStopId) {
     const endStopId = String(route?.trip_end_stop_id || '').trim();
     if (!endStopId) return '';
@@ -706,8 +740,8 @@
       : [];
     if (!pattern.length) return endStop.stop_name;
 
-    const selectedIndex = pattern.findIndex(id => stopIdsMatch(id, selectedStopId));
-    const endIndex = pattern.findIndex(id => stopIdsMatch(id, endStopId));
+    const selectedIndex = findPatternStopIndex(pattern, selectedStopId);
+    const endIndex = findPatternStopIndex(pattern, endStopId);
     if (selectedIndex < 0 || endIndex < 0) return '';
     if (endIndex <= selectedIndex) return '';
 
