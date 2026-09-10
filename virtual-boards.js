@@ -583,20 +583,34 @@
     }).map(([key, direction]) => ({ key, ...direction }));
   }
 
-  function getDirectionTerminalId(direction) {
-    const pattern = Array.isArray(direction?.pattern) ? direction.pattern : [];
-    return pattern.length ? String(pattern[pattern.length - 1]).trim() : '';
+  function getDirectionsForRouteByTerminalStop(routeId, terminalStopId) {
+    const wanted = String(terminalStopId ?? '').trim();
+    if (!wanted) return [];
+
+    const directionSet = transportData?.directions?.[String(routeId)] || {};
+    return Object.entries(directionSet).filter(([, direction]) => {
+      const pattern = Array.isArray(direction?.pattern) ? direction.pattern : [];
+      return pattern.length > 0 && stopIdsMatch(pattern[pattern.length - 1], wanted);
+    }).map(([key, direction]) => ({ key, ...direction }));
   }
 
-  function getDirectionIdentity(direction, fallback = '') {
-    const terminalId = getDirectionTerminalId(direction);
-    if (terminalId) return terminalId;
-    return String(direction?.key || fallback || '').trim();
-  }
-
-  function resolveDirectionForRealtimeRoute(routeId, stopId, staticTrip, destination = '', directionId = '') {
+  function resolveDirectionForRealtimeRoute(
+    routeId,
+    stopId,
+    staticTrip,
+    destination = '',
+    directionId = '',
+    terminalStopId = ''
+  ) {
     const staticDirection = getStaticDirectionForTrip(staticTrip);
     if (staticDirection) return staticDirection;
+
+    // The realtime feed can contain trip IDs that are not present in the
+    // current static GTFS export. In that case the most reliable direction
+    // identity is the actual final stop ID carried by the trip's stop-time
+    // updates, not the human-readable destination text.
+    const terminalDirections = getDirectionsForRouteByTerminalStop(routeId, terminalStopId);
+    if (terminalDirections.length === 1) return terminalDirections[0];
 
     const directions = getDirectionsForRouteAtStop(routeId, stopId);
     if (!directions.length) return null;
@@ -617,15 +631,11 @@
       if (byKey) return byKey;
     }
 
-    // Sofia's realtime feed often leaves direction_id empty. If this stop
-    // belongs to only one static direction for the route, that direction is
-    // unambiguous and can safely be used. This is what lets terminal stops
-    // with separate GTFS stop IDs (such as 0611/0612) work correctly.
     return directions.length === 1 ? directions[0] : null;
   }
 
-  function shouldHideTerminalArrival(routeId, stopId, staticTrip, destination = '', directionId = '') {
-    const direction = resolveDirectionForRealtimeRoute(routeId, stopId, staticTrip, destination, directionId);
+  function shouldHideTerminalArrival(routeId, stopId, staticTrip, destination = '', directionId = '', terminalStopId = '') {
+    const direction = resolveDirectionForRealtimeRoute(routeId, stopId, staticTrip, destination, directionId, terminalStopId);
     if (direction?.pattern?.length && isTerminalDirectionForStop(routeId, stopId, direction)) return true;
 
     // The same physical terminal can be represented by different GTFS stop IDs
@@ -772,7 +782,14 @@
       const routeId = trip.routeId || staticTrip?.route_id || "";
       const route = routeById.get(String(routeId));
       const meta = getLineMeta(routeId, route?.route_short_name || "");
-      const staticDirection = getStaticDirectionForTrip(staticTrip);
+      const staticDirection = resolveDirectionForRealtimeRoute(
+        route.route_id || staticTrip?.route_id || '',
+        stop.stop_id,
+        staticTrip,
+        route.destination || '',
+        route.direction_id || route.directionId || '',
+        route.terminal_stop_id || ''
+      );
       const destination = staticDirection?.destination
         || staticDirection?.headsign
         || staticTrip?.trip_headsign
@@ -883,12 +900,20 @@
               stop.stop_id,
               staticTrip,
               route.destination || '',
-              route.direction_id || route.directionId || ''
+              route.direction_id || route.directionId || '',
+              route.terminal_stop_id || ''
             );
           })
           .map(route => {
             const staticTrip = findStaticTrip(route.trip_id);
-            const staticDirection = getStaticDirectionForTrip(staticTrip);
+            const staticDirection = resolveDirectionForRealtimeRoute(
+              route.route_id || staticTrip?.route_id || '',
+              stop.stop_id,
+              staticTrip,
+              route.destination || '',
+              route.direction_id || route.directionId || '',
+              route.terminal_stop_id || ''
+            );
             const routeMeta = getLineMeta(
               route.route_id || staticTrip?.route_id || '',
               route.route_ref || ''
@@ -928,7 +953,14 @@
     const mergedRealtime = new Map();
     for (const route of realtime.routes) {
       const staticTrip = findStaticTrip(route.trip_id);
-      const staticDirection = getStaticDirectionForTrip(staticTrip);
+      const staticDirection = resolveDirectionForRealtimeRoute(
+        route.route_id || staticTrip?.route_id || '',
+        stop.stop_id,
+        staticTrip,
+        route.destination || '',
+        route.direction_id || route.directionId || '',
+        route.terminal_stop_id || ''
+      );
       const destination = staticDirection?.destination
         || staticDirection?.headsign
         || route.destination
@@ -967,15 +999,20 @@
     const realtimeDirectionKeys = new Set(
       mergedSurfaceRoutes.map(route => {
         const staticTrip = findStaticTrip(route.trip_id);
-        const staticDirection = getStaticDirectionForTrip(staticTrip);
-        return `${String(route.route_id || staticTrip?.route_id || '')}|${getDirectionIdentity(staticDirection)}`;
+        const staticDirection = resolveDirectionForRealtimeRoute(
+          route.route_id || staticTrip?.route_id || '',
+          stop.stop_id,
+          staticTrip,
+          route.destination || '',
+          route.direction_id || route.directionId || '',
+          route.terminal_stop_id || ''
+        );
+        return `${String(route.route_id || staticTrip?.route_id || '')}|${String(staticDirection?.key || '')}`;
       })
     );
 
     const surfaceFallbackRoutes = scheduledSurfaceRoutes.filter(route => {
-      const direction = (transportData?.directions?.[String(route.route_id || '')] || {})[String(route.direction_key || '')];
-      const directionIdentity = getDirectionIdentity(direction, route.direction_key || '');
-      const key = `${String(route.route_id || '')}|${directionIdentity}`;
+      const key = `${String(route.route_id || '')}|${String(route.direction_key || '')}`;
       if (realtimeDirectionKeys.has(key)) return false;
 
       // If GTFS-RT has active trips for this line and they map to known
@@ -985,8 +1022,7 @@
       const routeId = String(route.route_id || '');
       const activeKeys = activeDirectionKeys.get(routeId);
       if (activeKeys?.size) {
-        const direction = (transportData?.directions?.[routeId] || {})[String(route.direction_key || '')];
-        return activeKeys.has(getDirectionIdentity(direction, route.direction_key || ''));
+        return activeKeys.has(String(route.direction_key || ''));
       }
 
       // No active direction information for this line: keep the original
@@ -999,9 +1035,7 @@
     // line + destination so the board never shows duplicate static entries.
     const fallbackByKey = new Map();
     for (const route of surfaceFallbackRoutes) {
-      const direction = (transportData?.directions?.[String(route.route_id || '')] || {})[String(route.direction_key || '')];
-      const directionIdentity = getDirectionIdentity(direction, route.direction_key || '');
-      const key = `${String(route.route_id || '')}|${directionIdentity}`;
+      const key = `${String(route.route_id || '')}|${String(route.direction_key || '')}`;
       const existing = fallbackByKey.get(key);
       if (!existing || Number(route.times?.[0]?.timestamp) < Number(existing.times?.[0]?.timestamp)) {
         fallbackByKey.set(key, route);
@@ -1044,7 +1078,7 @@
 
       const routeId = String(staticTrip.route_id);
       if (!activeByRoute.has(routeId)) activeByRoute.set(routeId, new Set());
-      activeByRoute.get(routeId).add(getDirectionIdentity(direction, direction.key));
+      activeByRoute.get(routeId).add(String(direction.key));
     }
 
     return activeByRoute;
