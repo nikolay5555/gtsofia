@@ -242,6 +242,26 @@ function eventDelay(update) {
   return null;
 }
 
+function getTripEndStopInfo(tripUpdate) {
+  const updates = (tripUpdate?.stopTimeUpdates || []).filter(update =>
+    update?.stopId && ![1, 2].includes(update.scheduleRelationship)
+  );
+  if (!updates.length) return null;
+
+  const sorted = [...updates].sort((left, right) => {
+    const leftSeq = Number.isFinite(left?.stopSequence) ? left.stopSequence : -1;
+    const rightSeq = Number.isFinite(right?.stopSequence) ? right.stopSequence : -1;
+    if (leftSeq !== rightSeq) return leftSeq - rightSeq;
+    return 0;
+  });
+
+  const last = sorted[sorted.length - 1];
+  return {
+    stop_id: String(last.stopId),
+    stop_sequence: Number.isFinite(last.stopSequence) ? last.stopSequence : null
+  };
+}
+
 function buildBoard(updates, stopCode, feedTimestamp) {
   const now = Math.floor(Date.now() / 1000);
   const target = normalizeStopKey(stopCode);
@@ -266,10 +286,13 @@ function buildBoard(updates, stopCode, feedTimestamp) {
       const delay = eventDelay(stopUpdate);
       const key = trip.tripId || `${trip.routeId}|${trip.directionId}`;
       if (!grouped.has(key)) {
+        const endStop = getTripEndStopInfo(tripUpdate);
         grouped.set(key, {
           trip_id: trip.tripId,
           route_id: trip.routeId || '',
           direction_id: trip.directionId || '',
+          trip_end_stop_id: endStop?.stop_id || '',
+          trip_end_stop_sequence: endStop?.stop_sequence ?? null,
           times: []
         });
       }
