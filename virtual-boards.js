@@ -586,41 +586,6 @@
     return !!selectedName && !!destinationName && selectedName === destinationName;
   }
 
-  function resolveRealtimeDirection(routeId, stopId, staticTrip, destination = '', directionId = '') {
-    const directions = getDirectionsForRouteAtStop(routeId, stopId);
-    if (!directions.length) return null;
-
-    // Prefer the exact static trip -> direction mapping when available.
-    // GTFS directions already carry a representative trip_id, which is more
-    // reliable than comparing destination text for branched routes such as
-    // trolley 3.
-    const tripId = String(staticTrip?.trip_id || staticTrip?.tripId || '').trim();
-    if (tripId) {
-      const byTrip = directions.find(direction =>
-        String(direction?.trip_id || '').trim() === tripId
-      );
-      if (byTrip) return byTrip;
-    }
-
-    const wantedDirectionId = String(directionId ?? '').trim();
-    if (wantedDirectionId) {
-      const byDirectionId = directions.find(direction =>
-        String(direction?.direction_id ?? direction?.key ?? '').trim() === wantedDirectionId
-      );
-      if (byDirectionId) return byDirectionId;
-    }
-
-    const wantedDestination = normalizeDirectionText(destination);
-    if (wantedDestination) {
-      const byDestination = directions.find(direction =>
-        normalizeDirectionText(direction?.headsign || direction?.destination) === wantedDestination
-      );
-      if (byDestination) return byDestination;
-    }
-
-    return directions.length === 1 ? directions[0] : null;
-  }
-
   function getMetroScheduledArrivals(stop) {
     const now = getNowGtfsSeconds();
     const weekend = isWeekendInSofia();
@@ -933,75 +898,28 @@
       }))
       .filter(route => route.times.length);
 
-    // Work out which GTFS directions are currently represented by realtime
-    // vehicles for each line at this stop. This is stronger than a simple
-    // line-level realtime/fallback switch because some lines can temporarily
-    // operate only one branch/direction (e.g. trolley 3).
-    const activeDirectionKeysByRoute = new Map();
-    for (const route of realtime.routes) {
-      const routeId = String(route?.route_id || '').trim();
-      if (!routeId) continue;
-
-      const staticTrip = findStaticTrip(route.trip_id);
-      const direction = resolveRealtimeDirection(
-        routeId,
-        stop.stop_id,
-        staticTrip,
-        route.destination || '',
-        route.direction_id || route.directionId || ''
-      );
-      if (!direction?.key) continue;
-
-      if (!activeDirectionKeysByRoute.has(routeId)) {
-        activeDirectionKeysByRoute.set(routeId, new Set());
-      }
-      activeDirectionKeysByRoute.get(routeId).add(String(direction.key));
-    }
-
-    // Realtime has priority per direction, not per line:
-    // - a direction with a realtime arrival does NOT get a static duplicate;
-    // - a different direction of the same line may still use static fallback;
-    // - if realtime exists for a line but no direction can be mapped safely,
-    //   keep the conservative line-level suppression to avoid duplicates.
+    // For surface transport, use the static timetable as a fallback during
+    // the two hours before the next scheduled course when CGM has not yet
+    // published realtime data for that line/direction. Once realtime appears,
+    // it wins and replaces the static fallback.
     const scheduledSurfaceRoutes = isMetroStop(stop) ? [] : getSurfaceScheduledArrivals(stop);
-
-    const realtimeRouteIds = new Set(mergedSurfaceRoutes.map(route => String(route?.route_id || '')));
+    const realtimeDestinationKeys = new Set(
+      mergedSurfaceRoutes.map(route =>
+        `${String(route.route_id || '')}|${normalizeDirectionText(route.destination || '')}`
+      )
+    );
 
     const surfaceFallbackRoutes = scheduledSurfaceRoutes.filter(route => {
-      const routeId = String(route?.route_id || '');
-      const activeKeys = activeDirectionKeysByRoute.get(routeId);
-
-      // No realtime for this line at all: allow the normal static directions.
-      if (!realtimeRouteIds.has(routeId)) return true;
-
-      // Realtime exists and at least one direction was resolved for this line:
-      // only directions without realtime may use static fallback.
-      if (activeKeys?.size) {
-        const directions = transportData?.directions?.[routeId] || {};
-        const directionEntry = Object.entries(directions).find(([, direction]) =>
-          normalizeDirectionText(direction?.destination || direction?.headsign || '')
-            === normalizeDirectionText(route?.destination || '')
-        );
-
-        if (!directionEntry) return false;
-        return !activeKeys.has(String(directionEntry[0]));
-      }
-
-      // Realtime exists, but direction resolution failed completely for this
-      // line. Do not risk displaying stale static rows beside live data.
-      return false;
+      const key = `${String(route.route_id || '')}|${normalizeDirectionText(route.destination || '')}`;
+      return !realtimeDestinationKeys.has(key);
     });
 
-    // Some GTFS exports contain duplicate static directions. Keep the earliest
-    // fallback row for a given line + destination, while preserving different
-    // destinations when realtime is unavailable for the line.
-    const destinationMatchKey = value => normalizeDirectionText(value)
-      .replace(/[-]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
+    // Some GTFS exports contain duplicate static directions with the same
+    // destination/pattern. Keep only the earliest fallback row for a given
+    // line + destination so the board never shows duplicate static entries.
     const fallbackByKey = new Map();
     for (const route of surfaceFallbackRoutes) {
-      const key = `${String(route.route_id || '')}|${destinationMatchKey(route.destination || '')}`;
+      const key = `${String(route.route_id || '')}|${normalizeDirectionText(route.destination || '')}`;
       const existing = fallbackByKey.get(key);
       if (!existing || Number(route.times?.[0]?.timestamp) < Number(existing.times?.[0]?.timestamp)) {
         fallbackByKey.set(key, route);
@@ -1014,6 +932,10 @@
     // Sofia Traffic currently does not provide usable Trip Updates for metro.
     // Keep surface transport realtime-only and add metro from the static GTFS
     // timetable when the selected stop is a metro station.
+    const realtimeRouteIds = new Set(
+      mergedSurfaceRoutes.map(route => String(route?.route_id || ''))
+    );
+
     const routes = [
       ...surfaceRoutes,
       ...metroRoutes.filter(route =>
@@ -1044,9 +966,7 @@
           <h2>${escapeHtml(stop.stop_name || stop.name || "Спирка")}</h2>
         </div>
         <div class="virtual-board-header-actions">
-          <button type="button" class="virtual-board-refresh is-loading" id="virtualBoardRefresh" disabled aria-label="Обнови таблото">
-            <span aria-hidden="true">↻</span>
-          </button>
+          <button type="button" class="virtual-board-refresh is-loading" id="virtualBoardRefresh" disabled>Обнови</button>
           <button type="button" class="virtual-board-close" id="virtualBoardClose" aria-label="Затвори таблото">×</button>
         </div>
       </div>
@@ -1059,7 +979,7 @@
         selectedStopMarker.setStyle({
           fillColor: "#111827",
           color: "#ffffff",
-          fillOpacity: 1
+          fillOpacity: 0.9
         });
         selectedStopMarker = null;
       }
@@ -1150,7 +1070,7 @@
       selectedStopMarker.setStyle({
         fillColor: "#111827",
         color: "#ffffff",
-        fillOpacity: 1
+        fillOpacity: 0.9
       });
     }
     const lat = Number(stop.stop_lat);
@@ -1320,7 +1240,7 @@
         weight: 2,
         color: "#ffffff",
         fillColor: "#111827",
-        fillOpacity: 1,
+        fillOpacity: 0.9,
         renderer,
         pane: "markerPane"
       });
