@@ -583,34 +583,9 @@
     }).map(([key, direction]) => ({ key, ...direction }));
   }
 
-  function getDirectionsForRouteByTerminalStop(routeId, terminalStopId) {
-    const wanted = String(terminalStopId ?? '').trim();
-    if (!wanted) return [];
-
-    const directionSet = transportData?.directions?.[String(routeId)] || {};
-    return Object.entries(directionSet).filter(([, direction]) => {
-      const pattern = Array.isArray(direction?.pattern) ? direction.pattern : [];
-      return pattern.length > 0 && stopIdsMatch(pattern[pattern.length - 1], wanted);
-    }).map(([key, direction]) => ({ key, ...direction }));
-  }
-
-  function resolveDirectionForRealtimeRoute(
-    routeId,
-    stopId,
-    staticTrip,
-    destination = '',
-    directionId = '',
-    terminalStopId = ''
-  ) {
+  function resolveDirectionForRealtimeRoute(routeId, stopId, staticTrip, destination = '', directionId = '') {
     const staticDirection = getStaticDirectionForTrip(staticTrip);
     if (staticDirection) return staticDirection;
-
-    // The realtime feed can contain trip IDs that are not present in the
-    // current static GTFS export. In that case the most reliable direction
-    // identity is the actual final stop ID carried by the trip's stop-time
-    // updates, not the human-readable destination text.
-    const terminalDirections = getDirectionsForRouteByTerminalStop(routeId, terminalStopId);
-    if (terminalDirections.length === 1) return terminalDirections[0];
 
     const directions = getDirectionsForRouteAtStop(routeId, stopId);
     if (!directions.length) return null;
@@ -631,21 +606,18 @@
       if (byKey) return byKey;
     }
 
+    // Sofia's realtime feed often leaves direction_id empty. If this stop
+    // belongs to only one static direction for the route, that direction is
+    // unambiguous and can safely be used. This is what lets terminal stops
+    // with separate GTFS stop IDs (such as 0611/0612) work correctly.
     return directions.length === 1 ? directions[0] : null;
   }
 
-  function shouldHideTerminalArrival(routeId, stopId, staticTrip, destination = '', directionId = '', terminalStopId = '') {
-    const direction = resolveDirectionForRealtimeRoute(routeId, stopId, staticTrip, destination, directionId, terminalStopId);
+  function shouldHideTerminalArrival(routeId, stopId, staticTrip, destination = '', directionId = '') {
+    const direction = resolveDirectionForRealtimeRoute(routeId, stopId, staticTrip, destination, directionId);
     if (direction?.pattern?.length && isTerminalDirectionForStop(routeId, stopId, direction)) return true;
 
-    // The same physical terminal can be represented by different GTFS stop IDs
-    // and even slightly different destination spellings (e.g. Ж.К. ДРУЖБА-2
-    // vs Ж.к. Дружба 2). A destination matching the selected stop name is
-    // therefore also treated as the terminal direction.
-    const selectedStop = getStopById(stopId);
-    const selectedName = normalizeStopName(selectedStop?.stop_name);
-    const destinationName = normalizeStopName(destination);
-    return !!selectedName && !!destinationName && selectedName === destinationName;
+    return false;
   }
 
   function getMetroScheduledArrivals(stop) {
@@ -782,17 +754,10 @@
       const routeId = trip.routeId || staticTrip?.route_id || "";
       const route = routeById.get(String(routeId));
       const meta = getLineMeta(routeId, route?.route_short_name || "");
-      const staticDirection = resolveDirectionForRealtimeRoute(
-        route.route_id || staticTrip?.route_id || '',
-        stop.stop_id,
-        staticTrip,
-        route.destination || '',
-        route.direction_id || route.directionId || '',
-        route.terminal_stop_id || ''
-      );
-      const destination = staticDirection?.destination
+      const staticDirection = getStaticDirectionForTrip(staticTrip);
+      const destination = staticTrip?.trip_headsign
+        || staticDirection?.destination
         || staticDirection?.headsign
-        || staticTrip?.trip_headsign
         || route?.route_long_name?.split("-")?.at(-1)?.trim()
         || "";
 
@@ -900,20 +865,12 @@
               stop.stop_id,
               staticTrip,
               route.destination || '',
-              route.direction_id || route.directionId || '',
-              route.terminal_stop_id || ''
+              route.direction_id || route.directionId || ''
             );
           })
           .map(route => {
             const staticTrip = findStaticTrip(route.trip_id);
-            const staticDirection = resolveDirectionForRealtimeRoute(
-              route.route_id || staticTrip?.route_id || '',
-              stop.stop_id,
-              staticTrip,
-              route.destination || '',
-              route.direction_id || route.directionId || '',
-              route.terminal_stop_id || ''
-            );
+            const staticDirection = getStaticDirectionForTrip(staticTrip);
             const routeMeta = getLineMeta(
               route.route_id || staticTrip?.route_id || '',
               route.route_ref || ''
@@ -953,18 +910,11 @@
     const mergedRealtime = new Map();
     for (const route of realtime.routes) {
       const staticTrip = findStaticTrip(route.trip_id);
-      const staticDirection = resolveDirectionForRealtimeRoute(
-        route.route_id || staticTrip?.route_id || '',
-        stop.stop_id,
-        staticTrip,
-        route.destination || '',
-        route.direction_id || route.directionId || '',
-        route.terminal_stop_id || ''
-      );
-      const destination = staticDirection?.destination
-        || staticDirection?.headsign
+      const staticDirection = getStaticDirectionForTrip(staticTrip);
+      const destination = staticTrip?.trip_headsign
         || route.destination
-        || staticTrip?.trip_headsign
+        || staticDirection?.destination
+        || staticDirection?.headsign
         || '';
       const directionIdentity = String(staticDirection?.key || normalizeDirectionText(destination) || '');
       const key = `${String(route.route_id || staticTrip?.route_id || '')}|${directionIdentity}|${String(route.route_ref || '')}`;
@@ -999,14 +949,7 @@
     const realtimeDirectionKeys = new Set(
       mergedSurfaceRoutes.map(route => {
         const staticTrip = findStaticTrip(route.trip_id);
-        const staticDirection = resolveDirectionForRealtimeRoute(
-          route.route_id || staticTrip?.route_id || '',
-          stop.stop_id,
-          staticTrip,
-          route.destination || '',
-          route.direction_id || route.directionId || '',
-          route.terminal_stop_id || ''
-        );
+        const staticDirection = getStaticDirectionForTrip(staticTrip);
         return `${String(route.route_id || staticTrip?.route_id || '')}|${String(staticDirection?.key || '')}`;
       })
     );
