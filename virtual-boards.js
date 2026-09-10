@@ -617,7 +617,14 @@
     const direction = resolveDirectionForRealtimeRoute(routeId, stopId, staticTrip, destination, directionId);
     if (direction?.pattern?.length && isTerminalDirectionForStop(routeId, stopId, direction)) return true;
 
-    return false;
+    // The same physical terminal can be represented by different GTFS stop IDs
+    // and even slightly different destination spellings (e.g. Ж.К. ДРУЖБА-2
+    // vs Ж.к. Дружба 2). A destination matching the selected stop name is
+    // therefore also treated as the terminal direction.
+    const selectedStop = getStopById(stopId);
+    const selectedName = normalizeStopName(selectedStop?.stop_name);
+    const destinationName = normalizeStopName(destination);
+    return !!selectedName && !!destinationName && selectedName === destinationName;
   }
 
   function getMetroScheduledArrivals(stop) {
@@ -755,9 +762,9 @@
       const route = routeById.get(String(routeId));
       const meta = getLineMeta(routeId, route?.route_short_name || "");
       const staticDirection = getStaticDirectionForTrip(staticTrip);
-      const destination = staticTrip?.trip_headsign
-        || staticDirection?.destination
+      const destination = staticDirection?.destination
         || staticDirection?.headsign
+        || staticTrip?.trip_headsign
         || route?.route_long_name?.split("-")?.at(-1)?.trim()
         || "";
 
@@ -911,18 +918,37 @@
     for (const route of realtime.routes) {
       const staticTrip = findStaticTrip(route.trip_id);
       const staticDirection = getStaticDirectionForTrip(staticTrip);
-      const destination = staticTrip?.trip_headsign
-        || route.destination
-        || staticDirection?.destination
-        || staticDirection?.headsign
-        || '';
-      const directionIdentity = String(staticDirection?.key || normalizeDirectionText(destination) || '');
-      const key = `${String(route.route_id || staticTrip?.route_id || '')}|${directionIdentity}|${String(route.route_ref || '')}`;
+
+      // Keep the destination that belongs to the concrete realtime/static trip
+      // visible on the board. It can be an operational/intermediate headsign
+      // (for example "Площад на авиацията") even when the logical direction
+      // of the trip continues to a different terminal. The logical direction is
+      // still used only for matching the route, not for overwriting that text.
+      const realtimeDestination = String(
+        route.destination
+          || staticTrip?.trip_headsign
+          || ''
+      ).trim();
+      const directionIdentity = String(
+        staticDirection?.key
+          || normalizeDirectionText(staticDirection?.destination || staticDirection?.headsign)
+          || normalizeDirectionText(realtimeDestination)
+          || ''
+      );
+
+      // Keep different operational destinations as separate rows. This prevents
+      // a realtime trip with an intermediate/fake headsign from being merged
+      // into the normal full-terminal trip of the same logical direction.
+      const destinationIdentity = normalizeDirectionText(realtimeDestination);
+      const key = `${String(route.route_id || staticTrip?.route_id || '')}|${directionIdentity}|${destinationIdentity}|${String(route.route_ref || '')}`;
 
       if (!mergedRealtime.has(key)) {
         mergedRealtime.set(key, {
           ...route,
-          destination,
+          destination: realtimeDestination
+            || staticDirection?.destination
+            || staticDirection?.headsign
+            || '',
           times: []
         });
       }
