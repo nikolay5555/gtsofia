@@ -1052,10 +1052,23 @@
       const key = `${String(route.route_id || '')}|${destinationKey}|${String(route.route_ref || '')}`;
       if (realtimeDirectionKeys.has(key)) return false;
 
-      // Do NOT suppress a static direction merely because the same line has
-      // some realtime trips. Realtime availability is direction-specific.
-      // If this exact passenger-facing direction has no realtime row, its
-      // timetable must remain eligible for the two-hour fallback window.
+      // A realtime trip suppresses the static fallback only for the SAME
+      // logical direction. This is important when one direction has realtime
+      // while the opposite direction does not (for example N4).
+      //
+      // Do not use "any realtime on this line" as the criterion: a line can
+      // legitimately have realtime in one direction and need timetable
+      // fallback in the other. Conversely, a shortened/exception service
+      // (for example trolley 3 ending at Пътностроителна техника) may keep the
+      // same static direction key as the normal destination, in which case
+      // the normal timetable row must not appear as a second active direction.
+      const routeId = String(route.route_id || '');
+      const directionKey = String(route.direction_key || '');
+      const activeKeys = activeDirectionKeys.get(routeId);
+      if (activeKeys?.size && directionKey) {
+        return !activeKeys.has(directionKey);
+      }
+
       return true;
     });
 
