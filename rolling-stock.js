@@ -481,6 +481,7 @@ grid.appendChild(title);
 
       card.innerHTML = `
         <img class="stock-image" src="${item.image}" alt="${item.model}" />
+        <div class="stock-author">${item.author || ""}</div>
 
         <div class="stock-body">
 

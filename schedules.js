@@ -500,6 +500,7 @@ function getStopTime(
   );
 }
 
+
 /*
  * Проверява дали даден курс е частичен.
  *
@@ -558,6 +559,7 @@ function isPartialCourse(course) {
   return false;
 }
 
+
 /*
  * Частичните курсове са с:
  *   background: #dc3545
@@ -578,6 +580,7 @@ function getCourseMinuteStyle(
     border-color:#dc3545;
   `;
 }
+
 
 function renderSummary(courses) {
   const summary =
@@ -691,6 +694,7 @@ function renderSummary(courses) {
 
   summary.hidden = false;
 }
+
 
 function renderTimetable(courses) {
   const section =
@@ -824,6 +828,8 @@ function renderTimetable(courses) {
                     );
 
                   /*
+                   * КЛЮЧОВАТА ПРОМЯНА:
+                   *
                    * Не използваме trip_id за намиране
                    * на курса, защото няколко курса могат
                    * да имат един и същ trip_id след
@@ -853,40 +859,20 @@ function renderTimetable(courses) {
       })
       .join("");
 
-  /*
-   * ВАЖНО:
-   *
-   * timetable-scroll съдържа САМО таблицата.
-   * Бележката е извън него, за да не изглежда
-   * като част от таблицата/рамката.
-   */
-container.innerHTML = `
-    <div class="timetable-scroll">
-      <table class="schedule-timetable">
-        <thead>
-          <tr>
-            ${header}
-          </tr>
-        </thead>
+  container.innerHTML = `
+    <table class="schedule-timetable">
+      <thead>
+        <tr>
+          ${header}
+        </tr>
+      </thead>
 
-        <tbody>
-          <tr>
-            ${cells}
-          </tr>
-        </tbody>
-      </table>
-    </div>`;
-
-  // Премахваме старата бележка, ако вече съществува извън контейнера
-  section.querySelector(".schedule-partial-note")?.remove();
-
-  // Добавяме я веднага СЛЕД контейнера (извън рамката му)
-  container.insertAdjacentHTML(
-    "afterend",
-    `<div class="schedule-partial-note">
-      Частичните курсове са отбелязани с червен фон.
-    </div>`
-  );
+      <tbody>
+        <tr>
+          ${cells}
+        </tr>
+      </tbody>
+    </table>`;
 
   container
     .querySelectorAll(
@@ -918,6 +904,7 @@ container.innerHTML = `
       );
     });
 }
+
 
 function showCourse(course) {
   selectedCourse =
@@ -1031,6 +1018,7 @@ function showCourse(course) {
   });
 }
 
+
 function renderSchedule() {
   const empty =
     document.getElementById(
@@ -1075,6 +1063,7 @@ function renderSchedule() {
   ).hidden = true;
 }
 
+
 async function initializeSchedules() {
   try {
     const data =
@@ -1102,6 +1091,7 @@ async function initializeSchedules() {
   }
 }
 
+
 document.addEventListener(
   "DOMContentLoaded",
   () => {
@@ -1124,7 +1114,9 @@ document.addEventListener(
             "#lineDropdown"
           )
         ) {
+
           closeLineDropdown();
+
         }
 
       }
@@ -1148,6 +1140,7 @@ document.addEventListener(
             null;
 
           renderSchedule();
+
         }
       );
 
@@ -1168,6 +1161,7 @@ document.addEventListener(
             null;
 
           renderSchedule();
+
         }
       );
 
@@ -1204,6 +1198,7 @@ document.addEventListener(
                 null;
 
               renderSchedule();
+
             }
           );
 
@@ -1224,6 +1219,7 @@ document.addEventListener(
 
           selectedCourse =
             null;
+
         }
       );
 
