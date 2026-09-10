@@ -266,10 +266,19 @@ function buildBoard(updates, stopCode, feedTimestamp) {
       const delay = eventDelay(stopUpdate);
       const key = trip.tripId || `${trip.routeId}|${trip.directionId}`;
       if (!grouped.has(key)) {
+        const terminalUpdate = (tripUpdate.stopTimeUpdates || [])
+          .filter(item => item?.stopId && ![1, 2].includes(item.scheduleRelationship))
+          .sort((a, b) => {
+            const sa = Number.isFinite(Number(a?.stopSequence)) ? Number(a.stopSequence) : -1;
+            const sb = Number.isFinite(Number(b?.stopSequence)) ? Number(b.stopSequence) : -1;
+            return sb - sa;
+          })[0] || null;
+
         grouped.set(key, {
           trip_id: trip.tripId,
           route_id: trip.routeId || '',
           direction_id: trip.directionId || '',
+          destination_stop_id: terminalUpdate?.stopId || '',
           times: []
         });
       }

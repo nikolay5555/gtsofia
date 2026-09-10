@@ -466,13 +466,54 @@
 
   function getStaticDirectionForTrip(staticTrip) {
     if (!staticTrip?.route_id) return null;
-    const directions = transportData?.directions?.[String(staticTrip.route_id)] || {};
-    const headsign = normalizeDirectionText(staticTrip.trip_headsign);
-    if (!headsign) return null;
+
+    const routeId = String(staticTrip.route_id);
+    const directions = transportData?.directions?.[routeId] || {};
+    const tripId = String(staticTrip.trip_id || '').trim();
+    if (!tripId) return null;
+
+    // Direction identity follows the same model as Dimitar5555's data: a
+    // trip belongs to a logical direction, and that direction is the unit
+    // used by the board. Display text is not the identifier.
     for (const [key, direction] of Object.entries(directions)) {
-      const directionHeadsign = normalizeDirectionText(direction?.headsign || direction?.destination);
-      if (directionHeadsign && directionHeadsign === headsign) return { key, ...direction };
+      const tripIds = Array.isArray(direction?.trip_ids)
+        ? direction.trip_ids.map(String)
+        : [];
+      if (tripIds.includes(tripId)) return { key, ...direction };
     }
+
+    // Backward-compatible fallback for an older transport.json that does not
+    // yet contain trip_ids on directions. Prefer the representative trip id,
+    // then a unique shape id, and only finally the display headsign.
+    for (const [key, direction] of Object.entries(directions)) {
+      if (String(direction?.trip_id || '').trim() === tripId) {
+        return { key, ...direction };
+      }
+    }
+
+    const shapeId = String(staticTrip.shape_id || '').trim();
+    if (shapeId) {
+      const shapeMatches = Object.entries(directions).filter(([, direction]) =>
+        String(direction?.shape_id || '').trim() === shapeId
+      );
+      if (shapeMatches.length === 1) {
+        const [key, direction] = shapeMatches[0];
+        return { key, ...direction };
+      }
+    }
+
+    const headsign = normalizeDirectionText(staticTrip.trip_headsign);
+    if (headsign) {
+      for (const [key, direction] of Object.entries(directions)) {
+        const directionHeadsign = normalizeDirectionText(
+          direction?.headsign || direction?.destination
+        );
+        if (directionHeadsign && directionHeadsign === headsign) {
+          return { key, ...direction };
+        }
+      }
+    }
+
     return null;
   }
 
@@ -542,55 +583,14 @@
     }).map(([key, direction]) => ({ key, ...direction }));
   }
 
-  function getActiveDirectionKeys(activeTripIds) {
-    const activeKeys = new Set();
+  function getDirectionTerminalStopId(direction) {
+    const pattern = Array.isArray(direction?.pattern) ? direction.pattern.map(String) : [];
+    return pattern.length ? String(pattern[pattern.length - 1]).trim() : '';
+  }
 
-    for (const rawTripId of (activeTripIds || [])) {
-      const tripId = String(rawTripId || '').trim();
-      if (!tripId) continue;
-
-      const staticTrip = findStaticTrip(tripId);
-      if (!staticTrip?.route_id) continue;
-
-      const routeId = String(staticTrip.route_id);
-      const directionSet = transportData?.directions?.[routeId] || {};
-      const entries = Object.entries(directionSet);
-      if (!entries.length) continue;
-
-      // Prefer the exact representative trip, then shape, direction_id and
-      // finally headsign. This avoids treating two branches with the same
-      // destination as the same active direction.
-      let match = entries.find(([, direction]) =>
-        String(direction?.trip_id || '').trim() === tripId
-      );
-
-      if (!match && staticTrip.shape_id) {
-        const shapeId = String(staticTrip.shape_id).trim();
-        match = entries.find(([, direction]) =>
-          String(direction?.shape_id || '').trim() === shapeId
-        );
-      }
-
-      if (!match && staticTrip.direction_id !== undefined && staticTrip.direction_id !== null) {
-        const wantedDirectionId = String(staticTrip.direction_id).trim();
-        if (wantedDirectionId) {
-          match = entries.find(([, direction]) =>
-            String(direction?.direction_id ?? direction?.key ?? '').trim() === wantedDirectionId
-          );
-        }
-      }
-
-      if (!match && staticTrip.trip_headsign) {
-        const wantedHeadsign = normalizeDirectionText(staticTrip.trip_headsign);
-        match = entries.find(([, direction]) =>
-          normalizeDirectionText(direction?.headsign || direction?.destination) === wantedHeadsign
-        );
-      }
-
-      if (match) activeKeys.add(`${routeId}|${match[0]}`);
-    }
-
-    return activeKeys;
+  function getDirectionIdentity(direction, fallback = '') {
+    const terminalStopId = getDirectionTerminalStopId(direction);
+    return terminalStopId || String(direction?.key || fallback || '').trim();
   }
 
   function resolveDirectionForRealtimeRoute(routeId, stopId, staticTrip, destination = '', directionId = '') {
@@ -743,6 +743,8 @@
         result.push({
           route_id: routeId,
           direction_key: directionKey,
+          direction,
+          terminal_stop_id: getDirectionTerminalStopId(direction),
           route_ref: meta.number || route.route_short_name || '—',
           destination: direction?.destination || direction?.headsign || '',
           times: [{ timestamp: nextTimestamp, delay: null, scheduled: true }],
@@ -771,7 +773,12 @@
       const routeId = trip.routeId || staticTrip?.route_id || "";
       const route = routeById.get(String(routeId));
       const meta = getLineMeta(routeId, route?.route_short_name || "");
-      const destination = staticTrip?.trip_headsign || route?.route_long_name?.split("-")?.at(-1)?.trim() || "";
+      const staticDirection = getStaticDirectionForTrip(staticTrip);
+      const destination = staticDirection?.destination
+        || staticDirection?.headsign
+        || staticTrip?.trip_headsign
+        || route?.route_long_name?.split("-")?.at(-1)?.trim()
+        || "";
 
       const relevant = (entity.stopTimeUpdates || []).filter(update => {
         if (!update?.stopId || update.scheduleRelationship === 1 || update.scheduleRelationship === 2) return false;
@@ -791,7 +798,8 @@
         const arrivalSeconds = Number(event.time);
         if (arrivalSeconds < nowSeconds - 30 || arrivalSeconds > nowSeconds + 3 * 3600) continue;
 
-        const key = `${String(routeId)}|${String(destination)}|${String(meta.number || "")}`;
+        const directionIdentity = getDirectionIdentity(staticDirection, normalizeDirectionText(destination));
+        const key = `${String(routeId)}|${directionIdentity}|${String(meta.number || "")}`;
         if (!grouped.has(key)) {
           grouped.set(key, {
             route_id: routeId,
@@ -865,6 +873,7 @@
 
     const data = await response.json();
     const generatedAt = data?.generated_at || Date.now();
+    const activeDirectionKeys = getActiveDirectionKeys(data?.active_trip_ids);
     const realtimeRoutes = Array.isArray(data?.routes)
       ? data.routes
           .filter(route => route && Array.isArray(route.times))
@@ -890,6 +899,7 @@
               ...route,
               route_id: route.route_id || staticTrip?.route_id || '',
               route_ref: route.route_ref || routeMeta.number || '—',
+              destination_stop_id: route.destination_stop_id || '',
               destination: route.destination
                 || staticTrip?.trip_headsign
                 || staticDirection?.destination
@@ -921,12 +931,16 @@
     for (const route of realtime.routes) {
       const staticTrip = findStaticTrip(route.trip_id);
       const staticDirection = getStaticDirectionForTrip(staticTrip);
-      const destination = route.destination
-        || staticTrip?.trip_headsign
-        || staticDirection?.destination
+      const destination = staticDirection?.destination
         || staticDirection?.headsign
+        || route.destination
+        || staticTrip?.trip_headsign
         || '';
-      const key = `${String(route.route_id || '')}|${destination}|${String(route.route_ref || '')}`;
+      const directionIdentity = getDirectionIdentity(
+        staticDirection,
+        route.destination_stop_id || normalizeDirectionText(destination)
+      );
+      const key = `${String(route.route_id || staticTrip?.route_id || '')}|${directionIdentity}|${String(route.route_ref || '')}`;
 
       if (!mergedRealtime.has(key)) {
         mergedRealtime.set(key, {
@@ -955,45 +969,30 @@
     // published realtime data for that line/direction. Once realtime appears,
     // it wins and replaces the static fallback.
     const scheduledSurfaceRoutes = isMetroStop(stop) ? [] : getSurfaceScheduledArrivals(stop);
-    const realtimeDestinationKeys = new Set(
-      mergedSurfaceRoutes.map(route =>
-        `${String(route.route_id || '')}|${normalizeDirectionText(route.destination || '')}`
-      )
+    const realtimeDirectionKeys = new Set(
+      mergedSurfaceRoutes.map(route => {
+        const staticTrip = findStaticTrip(route.trip_id);
+        const staticDirection = getStaticDirectionForTrip(staticTrip);
+        return `${String(route.route_id || staticTrip?.route_id || '')}|${getDirectionIdentity(staticDirection, route.destination_stop_id || '')}`;
+      })
     );
 
-    const activeTripIds = Array.isArray(data?.active_trip_ids) ? data.active_trip_ids : [];
-    const activeDirectionKeys = getActiveDirectionKeys(activeTripIds);
-    const activeRouteIds = new Set();
-
-    for (const rawTripId of activeTripIds) {
-      const trip = findStaticTrip(rawTripId);
-      if (trip?.route_id) activeRouteIds.add(String(trip.route_id));
-    }
-
-    const mappedActiveDirectionCounts = new Map();
-    for (const key of activeDirectionKeys) {
-      const routeId = key.split('|', 1)[0];
-      mappedActiveDirectionCounts.set(
-        routeId,
-        (mappedActiveDirectionCounts.get(routeId) || 0) + 1
-      );
-    }
-
     const surfaceFallbackRoutes = scheduledSurfaceRoutes.filter(route => {
+      const key = `${String(route.route_id || '')}|${getDirectionIdentity(route.direction, String(route.direction_key || ''))}`;
+      if (realtimeDirectionKeys.has(key)) return false;
+
+      // If GTFS-RT has active trips for this line and they map to known
+      // static directions, only those active directions are eligible for
+      // timetable fallback. This prevents a stale/alternate static direction
+      // from appearing alongside a realtime direction (e.g. trolley 3).
       const routeId = String(route.route_id || '');
-      const key = `${routeId}|${normalizeDirectionText(route.destination || '')}`;
-
-      // A realtime row for the exact direction suppresses its static fallback.
-      if (realtimeDestinationKeys.has(key)) return false;
-
-      // When realtime is active on a line, only directions that are actually
-      // represented by active realtime trips are eligible for fallback.
-      // If a route's active trips cannot be mapped to a static direction,
-      // keep the old fallback behavior rather than hiding everything.
-      if (activeRouteIds.has(routeId) && mappedActiveDirectionCounts.has(routeId)) {
-        return activeDirectionKeys.has(`${routeId}|${String(route.direction_key || '')}`);
+      const activeKeys = activeDirectionKeys.get(routeId);
+      if (activeKeys?.size) {
+        return activeKeys.has(String(route.direction_key || ''));
       }
 
+      // No active direction information for this line: keep the original
+      // timetable fallback behaviour.
       return true;
     });
 
@@ -1002,7 +1001,7 @@
     // line + destination so the board never shows duplicate static entries.
     const fallbackByKey = new Map();
     for (const route of surfaceFallbackRoutes) {
-      const key = `${String(route.route_id || '')}|${normalizeDirectionText(route.destination || '')}`;
+      const key = `${String(route.route_id || '')}|${String(route.terminal_stop_id || getDirectionIdentity(route.direction, route.direction_key || ''))}`;
       const existing = fallbackByKey.get(key);
       if (!existing || Number(route.times?.[0]?.timestamp) < Number(existing.times?.[0]?.timestamp)) {
         fallbackByKey.set(key, route);
@@ -1031,6 +1030,24 @@
       generatedAt,
       routes
     };
+  }
+
+  function getActiveDirectionKeys(activeTripIds) {
+    const activeByRoute = new Map();
+
+    for (const tripId of (Array.isArray(activeTripIds) ? activeTripIds : [])) {
+      const staticTrip = findStaticTrip(tripId);
+      if (!staticTrip?.route_id) continue;
+
+      const direction = getStaticDirectionForTrip(staticTrip);
+      if (!direction?.key) continue;
+
+      const routeId = String(staticTrip.route_id);
+      if (!activeByRoute.has(routeId)) activeByRoute.set(routeId, new Set());
+      activeByRoute.get(routeId).add(String(direction.key));
+    }
+
+    return activeByRoute;
   }
 
   async function fetchVirtualBoard(stop) {
@@ -1111,7 +1128,7 @@
             </div>
             <div class="vb-time-block">
               ${countdownHtml(arrivals[0], !arrivals[0]?.scheduled)}
-              ${arrivals.length > 1 ? `<div class="vb-next-times">${arrivals.slice(1).map(time => `<span>${escapeHtml(formatArrivalClock(time.timestamp))}</span>`).join("")}</div>` : ""}
+              ${arrivals.length > 1 ? `<div class="vb-next-times">${arrivals.slice(1, 4).map(time => `<span>${escapeHtml(formatArrivalClock(time.timestamp))}</span>`).join("")}</div>` : ""}
             </div>
           </article>
         `;
