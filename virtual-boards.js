@@ -1052,18 +1052,10 @@
       const key = `${String(route.route_id || '')}|${destinationKey}|${String(route.route_ref || '')}`;
       if (realtimeDirectionKeys.has(key)) return false;
 
-      // If GTFS-RT has active trips for this line and they map to known
-      // static directions, only those active directions are eligible for
-      // timetable fallback. This prevents a stale/alternate static direction
-      // from appearing alongside a realtime direction (e.g. trolley 3).
-      const routeId = String(route.route_id || '');
-      const activeKeys = activeDirectionKeys.get(routeId);
-      if (activeKeys?.size) {
-        return activeKeys.has(String(route.direction_key || ''));
-      }
-
-      // No active direction information for this line: keep the original
-      // timetable fallback behaviour.
+      // Do NOT suppress a static direction merely because the same line has
+      // some realtime trips. Realtime availability is direction-specific.
+      // If this exact passenger-facing direction has no realtime row, its
+      // timetable must remain eligible for the two-hour fallback window.
       return true;
     });
 
