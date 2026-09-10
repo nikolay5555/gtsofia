@@ -675,6 +675,63 @@
     return result;
   }
 
+  function getScheduleDestination(direction, schedule) {
+    const pattern = Array.isArray(direction?.pattern) ? direction.pattern.map(String) : [];
+    const times = Array.isArray(schedule?.times) ? schedule.times : [];
+    let lastIndex = -1;
+
+    for (let index = Math.min(pattern.length, times.length) - 1; index >= 0; index--) {
+      if (parseGtfsTime(times[index]) != null) {
+        lastIndex = index;
+        break;
+      }
+    }
+
+    if (lastIndex < 0) return '';
+    if (lastIndex === pattern.length - 1) {
+      return direction?.destination || direction?.headsign || '';
+    }
+
+    const stop = getStopById(pattern[lastIndex]);
+    return stop?.stop_name || direction?.stops?.[lastIndex]?.name || direction?.destination || direction?.headsign || '';
+  }
+
+  function findMatchingScheduledDestination(routeId, directionKey, stopId, arrivalTimestamp) {
+    const direction = transportData?.directions?.[String(routeId)]?.[String(directionKey)];
+    const scheduleSet = transportData?.schedules?.[String(routeId)] || {};
+    const weekend = isWeekendInSofia();
+    const daySchedules = scheduleSet?.[String(directionKey)]?.[weekend ? 'weekend' : 'weekday'];
+    const pattern = Array.isArray(direction?.pattern) ? direction.pattern.map(String) : [];
+    const stopIndex = pattern.findIndex(id => stopIdsMatch(id, stopId));
+
+    if (!direction || stopIndex < 0 || !Array.isArray(daySchedules) || !Number.isFinite(arrivalTimestamp)) {
+      return '';
+    }
+
+    let best = null;
+    for (const schedule of daySchedules) {
+      const rawTime = Array.isArray(schedule?.times) ? schedule.times[stopIndex] : null;
+      const seconds = parseGtfsTime(rawTime);
+      if (seconds == null) continue;
+
+      let timestamp = gtfsSecondsToTodayTimestamp(seconds);
+      while (timestamp - arrivalTimestamp > 12 * 60 * 60) timestamp -= 86400;
+      while (arrivalTimestamp - timestamp > 12 * 60 * 60) timestamp += 86400;
+
+      const distance = Math.abs(timestamp - arrivalTimestamp);
+      if (distance > 45 * 60) continue;
+
+      if (!best || distance < best.distance) {
+        best = {
+          distance,
+          destination: getScheduleDestination(direction, schedule)
+        };
+      }
+    }
+
+    return best?.destination || '';
+  }
+
   function getSurfaceScheduledArrivals(stop) {
     const nowTimestamp = Date.now() / 1000;
     const horizonTimestamp = nowTimestamp + 2 * 60 * 60;
@@ -685,8 +742,6 @@
     const result = [];
 
     for (const route of (transportData?.routes || [])) {
-      // Static fallback applies only to surface transport. Metro keeps its
-      // existing static timetable logic below.
       if (String(route?.route_type) === '1') continue;
 
       const routeId = String(route?.route_id || '').trim();
@@ -700,41 +755,42 @@
         const pattern = Array.isArray(direction?.pattern) ? direction.pattern.map(String) : [];
         const stopIndex = pattern.findIndex(id => stopIdsMatch(id, selectedStop));
         if (stopIndex < 0) continue;
-
-        // Keep the existing terminal-direction rule.
         if (isTerminalDirectionForStop(routeId, selectedStop, direction)) continue;
 
         const daySchedules = scheduleSet?.[directionKey]?.[weekend ? 'weekend' : 'weekday'];
         if (!Array.isArray(daySchedules)) continue;
 
-        let nextTimestamp = null;
+        const nextByDestination = new Map();
         for (const schedule of daySchedules) {
           const rawTime = Array.isArray(schedule?.times) ? schedule.times[stopIndex] : null;
           const seconds = parseGtfsTime(rawTime);
           if (seconds == null) continue;
 
           let timestamp = gtfsSecondsToTodayTimestamp(seconds);
-          if (timestamp < nowTimestamp) {
-            timestamp += 86400;
-          }
-
-          // The fallback is allowed only inside the two-hour window before
-          // the scheduled arrival.
+          if (timestamp < nowTimestamp) timestamp += 86400;
           if (timestamp < nowTimestamp || timestamp > horizonTimestamp) continue;
-          if (nextTimestamp == null || timestamp < nextTimestamp) nextTimestamp = timestamp;
+
+          const destination = getScheduleDestination(direction, schedule);
+          if (!destination) continue;
+
+          const key = normalizeDirectionText(destination);
+          const existing = nextByDestination.get(key);
+          if (!existing || timestamp < existing.timestamp) {
+            nextByDestination.set(key, { timestamp, destination });
+          }
         }
 
-        if (nextTimestamp == null) continue;
-
-        result.push({
-          route_id: routeId,
-          direction_key: String(directionKey),
-          route_ref: meta.number || route.route_short_name || '—',
-          destination: direction?.destination || direction?.headsign || '',
-          times: [{ timestamp: nextTimestamp, delay: null, scheduled: true }],
-          meta,
-          scheduled: true
-        });
+        for (const { timestamp, destination } of nextByDestination.values()) {
+          result.push({
+            route_id: routeId,
+            direction_key: String(directionKey),
+            route_ref: meta.number || route.route_short_name || '—',
+            destination,
+            times: [{ timestamp, delay: null, scheduled: true }],
+            meta,
+            scheduled: true
+          });
+        }
       }
     }
 
@@ -757,7 +813,8 @@
       const routeId = trip.routeId || staticTrip?.route_id || "";
       const route = routeById.get(String(routeId));
       const meta = getLineMeta(routeId, route?.route_short_name || "");
-      const destination = staticTrip?.trip_headsign || route?.route_long_name?.split("-")?.at(-1)?.trim() || "";
+      const staticDirection = getStaticDirectionForTrip(staticTrip);
+      const defaultDestination = staticTrip?.trip_headsign || route?.route_long_name?.split("-")?.at(-1)?.trim() || "";
 
       const relevant = (entity.stopTimeUpdates || []).filter(update => {
         if (!update?.stopId || update.scheduleRelationship === 1 || update.scheduleRelationship === 2) return false;
@@ -778,11 +835,16 @@
         if (arrivalSeconds < nowSeconds - 30 || arrivalSeconds > nowSeconds + 3 * 3600) continue;
 
         const staticDirection = getStaticDirectionForTrip(staticTrip);
-        const key = `${String(routeId)}|${String(staticDirection?.key || destination)}|${String(meta.number || "")}`;
+        const directionKey = staticDirection?.key || '';
+        const scheduledDestination = directionKey
+          ? findMatchingScheduledDestination(routeId, directionKey, update.stopId, arrivalSeconds)
+          : '';
+        const destination = scheduledDestination || defaultDestination;
+        const key = `${String(routeId)}|${String(directionKey || destination)}|${normalizeDirectionText(destination)}|${String(meta.number || "")}`;
         if (!grouped.has(key)) {
           grouped.set(key, {
             route_id: routeId,
-            direction_key: staticDirection?.key || '',
+            direction_key: directionKey,
             route_ref: meta.number || route?.route_short_name || "—",
             destination,
             times: [],
@@ -1053,7 +1115,7 @@
         selectedStopMarker.setStyle({
           fillColor: "#111827",
           color: "#ffffff",
-          fillOpacity: 1
+          fillOpacity: 0.9
         });
         selectedStopMarker = null;
       }
@@ -1144,7 +1206,7 @@
       selectedStopMarker.setStyle({
         fillColor: "#111827",
         color: "#ffffff",
-        fillOpacity: 1
+        fillOpacity: 0.9
       });
     }
     const lat = Number(stop.stop_lat);
@@ -1314,7 +1376,7 @@
         weight: 2,
         color: "#ffffff",
         fillColor: "#111827",
-        fillOpacity: 1,
+        fillOpacity: 0.9,
         renderer,
         pane: "markerPane"
       });
