@@ -291,10 +291,21 @@ function buildBoard(updates, stopCode, feedTimestamp) {
     .filter(row => row.times.length)
     .sort((a, b) => a.times[0].timestamp - b.times[0].timestamp);
 
+  // The stop-specific board rows above are not enough to determine which
+  // static directions are actually in service. Expose every trip_id present
+  // in the current GTFS-RT feed so the frontend can map those trips back to
+  // its static route directions.
+  const activeTripIds = [...new Set(
+    (updates || [])
+      .map(update => String(update?.trip?.tripId || '').trim())
+      .filter(Boolean)
+  )];
+
   return {
     status: routes.length ? 'ok' : 'empty',
     stop_code: String(stopCode),
     generated_at: feedTimestamp,
+    active_trip_ids: activeTripIds,
     routes
   };
 }
@@ -306,6 +317,12 @@ module.exports = async function handler(req, res) {
   }
 
   const stopCode = String(req.query?.stop_code || '').trim();
+  const requestedRouteIds = new Set(
+    String(req.query?.route_ids || '')
+      .split(',')
+      .map(value => value.trim())
+      .filter(Boolean)
+  );
   if (!stopCode) {
     return res.status(400).json({ error: 'Missing stop_code.' });
   }
@@ -335,6 +352,17 @@ module.exports = async function handler(req, res) {
 
     const feed = decodeGtfsRealtimeFeed(body);
     const board = buildBoard(feed.updates, stopCode, feed.feedTimestamp);
+    if (requestedRouteIds.size) {
+      const tripRouteById = new Map(
+        feed.updates.map(item => [
+          String(item?.trip?.tripId || '').trim(),
+          String(item?.trip?.routeId || '').trim()
+        ])
+      );
+      board.active_trip_ids = board.active_trip_ids.filter(tripId =>
+        requestedRouteIds.has(tripRouteById.get(String(tripId)) || '')
+      );
+    }
 
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store, max-age=0');
