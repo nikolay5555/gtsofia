@@ -696,7 +696,13 @@
     return stop?.stop_name || direction?.stops?.[lastIndex]?.name || direction?.destination || direction?.headsign || '';
   }
 
-  function findMatchingScheduledDestination(routeId, directionKey, stopId, arrivalTimestamp) {
+  function findMatchingScheduledDestination(
+    routeId,
+    directionKey,
+    stopId,
+    arrivalTimestamp,
+    delaySeconds = null
+  ) {
     const direction = transportData?.directions?.[String(routeId)]?.[String(directionKey)];
     const scheduleSet = transportData?.schedules?.[String(routeId)] || {};
     const weekend = isWeekendInSofia();
@@ -708,6 +714,15 @@
       return '';
     }
 
+    // Reconstruct the scheduled time from the realtime event + delay when
+    // available. That lets us distinguish two courses that reach the same
+    // stop close together, including full and partial courses.
+    const hasDelay = Number.isFinite(Number(delaySeconds));
+    const targetTimestamp = hasDelay
+      ? Number(arrivalTimestamp) - Number(delaySeconds)
+      : Number(arrivalTimestamp);
+    const maxDistance = hasDelay ? 6 * 60 : 20 * 60;
+
     let best = null;
     for (const schedule of daySchedules) {
       const rawTime = Array.isArray(schedule?.times) ? schedule.times[stopIndex] : null;
@@ -715,17 +730,17 @@
       if (seconds == null) continue;
 
       let timestamp = gtfsSecondsToTodayTimestamp(seconds);
-      while (timestamp - arrivalTimestamp > 12 * 60 * 60) timestamp -= 86400;
-      while (arrivalTimestamp - timestamp > 12 * 60 * 60) timestamp += 86400;
+      while (timestamp - targetTimestamp > 12 * 60 * 60) timestamp -= 86400;
+      while (targetTimestamp - timestamp > 12 * 60 * 60) timestamp += 86400;
 
-      const distance = Math.abs(timestamp - arrivalTimestamp);
-      if (distance > 45 * 60) continue;
+      const distance = Math.abs(timestamp - targetTimestamp);
+      if (distance > maxDistance) continue;
+
+      const destination = getScheduleDestination(direction, schedule);
+      if (!destination) continue;
 
       if (!best || distance < best.distance) {
-        best = {
-          distance,
-          destination: getScheduleDestination(direction, schedule)
-        };
+        best = { distance, destination };
       }
     }
 
@@ -837,7 +852,13 @@
         const staticDirection = getStaticDirectionForTrip(staticTrip);
         const directionKey = staticDirection?.key || '';
         const scheduledDestination = directionKey
-          ? findMatchingScheduledDestination(routeId, directionKey, update.stopId, arrivalSeconds)
+          ? findMatchingScheduledDestination(
+            routeId,
+            directionKey,
+            update.stopId,
+            arrivalSeconds,
+            event.delay
+          )
           : '';
         const destination = scheduledDestination || defaultDestination;
         const key = `${String(routeId)}|${String(directionKey || destination)}|${normalizeDirectionText(destination)}|${String(meta.number || "")}`;
@@ -954,11 +975,28 @@
               route_id: route.route_id || staticTrip?.route_id || '',
               direction_key: staticDirection?.key || '',
               route_ref: route.route_ref || routeMeta.number || '—',
-              destination: route.destination
-                || staticTrip?.trip_headsign
-                || staticDirection?.destination
-                || staticDirection?.headsign
-                || '',
+              destination: (() => {
+                const primaryTime = Array.isArray(route.times) ? route.times[0] : null;
+                const realtimeTimestamp = Number(primaryTime?.timestamp);
+                const realtimeDelay = Number.isFinite(Number(primaryTime?.delay))
+                  ? Number(primaryTime.delay)
+                  : null;
+                const scheduledDestination = staticDirection?.key && Number.isFinite(realtimeTimestamp)
+                  ? findMatchingScheduledDestination(
+                      route.route_id || staticTrip?.route_id || '',
+                      staticDirection.key,
+                      stop.stop_id,
+                      realtimeTimestamp,
+                      realtimeDelay
+                    )
+                  : '';
+                return scheduledDestination
+                  || route.destination
+                  || staticTrip?.trip_headsign
+                  || staticDirection?.destination
+                  || staticDirection?.headsign
+                  || '';
+              })(),
               times: route.times
                 .map(time => ({
                   timestamp: Number(time?.timestamp),
