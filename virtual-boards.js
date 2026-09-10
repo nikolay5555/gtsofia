@@ -696,6 +696,31 @@
     return stop?.stop_name || direction?.stops?.[lastIndex]?.name || direction?.destination || direction?.headsign || '';
   }
 
+  function getRealtimeTripDestination(route, staticDirection, selectedStopId) {
+    const endStopId = String(route?.trip_end_stop_id || '').trim();
+    if (!endStopId) return '';
+
+    const endStop = getStopById(endStopId);
+    if (!endStop?.stop_name) return '';
+
+    const pattern = Array.isArray(staticDirection?.pattern)
+      ? staticDirection.pattern.map(String)
+      : [];
+    if (!pattern.length) return endStop.stop_name;
+
+    const selectedIndex = pattern.findIndex(id => stopIdsMatch(id, selectedStopId));
+    const endIndex = pattern.findIndex(id => stopIdsMatch(id, endStopId));
+    if (selectedIndex < 0 || endIndex < 0) return '';
+    if (endIndex <= selectedIndex) return '';
+
+    // Only override the published terminal destination when the concrete
+    // realtime trip ends before the static direction's terminal. This keeps
+    // normal full courses on their published destination while preserving
+    // short-turn / partial courses that are not present in the timetable.
+    if (endIndex < pattern.length - 1) return endStop.stop_name;
+    return '';
+  }
+
   function findMatchingScheduledDestination(
     routeId,
     directionKey,
@@ -976,6 +1001,13 @@
               direction_key: staticDirection?.key || '',
               route_ref: route.route_ref || routeMeta.number || '—',
               destination: (() => {
+                const realtimeTripDestination = getRealtimeTripDestination(
+                  route,
+                  staticDirection,
+                  stop.stop_id
+                );
+                if (realtimeTripDestination) return realtimeTripDestination;
+
                 const primaryTime = Array.isArray(route.times) ? route.times[0] : null;
                 const realtimeTimestamp = Number(primaryTime?.timestamp);
                 const realtimeDelay = Number.isFinite(Number(primaryTime?.delay))
