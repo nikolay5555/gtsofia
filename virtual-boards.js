@@ -613,12 +613,14 @@
     const direction = resolveDirectionForRealtimeRoute(routeId, stopId, staticTrip, destination, directionId);
     if (direction?.pattern?.length && isTerminalDirectionForStop(routeId, stopId, direction)) return true;
 
-    // Do not treat a concrete realtime short-turn destination as the line terminal.
-    // A partial course can legitimately end at an intermediate stop (for example
-    // tram 3 -> пл. Възраждане), and that arrival must remain visible on the board.
-    // Terminal hiding is therefore based only on the resolved static direction
-    // and its actual terminal stop.
-    return false;
+    // The same physical terminal can be represented by different GTFS stop IDs
+    // and even slightly different destination spellings (e.g. Ж.К. ДРУЖБА-2
+    // vs Ж.к. Дружба 2). A destination matching the selected stop name is
+    // therefore also treated as the terminal direction.
+    const selectedStop = getStopById(stopId);
+    const selectedName = normalizeStopName(selectedStop?.stop_name);
+    const destinationName = normalizeStopName(destination);
+    return !!selectedName && !!destinationName && selectedName === destinationName;
   }
 
   function getMetroScheduledArrivals(stop) {
@@ -673,103 +675,6 @@
     return result;
   }
 
-  function getScheduleDestination(direction, schedule) {
-    const pattern = Array.isArray(direction?.pattern) ? direction.pattern.map(String) : [];
-    const times = Array.isArray(schedule?.times) ? schedule.times : [];
-    let lastIndex = -1;
-
-    for (let index = Math.min(pattern.length, times.length) - 1; index >= 0; index--) {
-      if (parseGtfsTime(times[index]) != null) {
-        lastIndex = index;
-        break;
-      }
-    }
-
-    if (lastIndex < 0) return '';
-    if (lastIndex === pattern.length - 1) {
-      return direction?.destination || direction?.headsign || '';
-    }
-
-    const stop = getStopById(pattern[lastIndex]);
-    return stop?.stop_name || direction?.stops?.[lastIndex]?.name || direction?.destination || direction?.headsign || '';
-  }
-
-  function getRealtimeTripDestination(route, staticDirection, selectedStopId) {
-    const endStopId = String(route?.trip_end_stop_id || '').trim();
-    if (!endStopId) return '';
-
-    const endStop = getStopById(endStopId);
-    if (!endStop?.stop_name) return '';
-
-    const pattern = Array.isArray(staticDirection?.pattern)
-      ? staticDirection.pattern.map(String)
-      : [];
-    if (!pattern.length) return endStop.stop_name;
-
-    const selectedIndex = pattern.findIndex(id => stopIdsMatch(id, selectedStopId));
-    const endIndex = pattern.findIndex(id => stopIdsMatch(id, endStopId));
-    if (selectedIndex < 0 || endIndex < 0) return '';
-    if (endIndex <= selectedIndex) return '';
-
-    // Only override the published terminal destination when the concrete
-    // realtime trip ends before the static direction's terminal. This keeps
-    // normal full courses on their published destination while preserving
-    // short-turn / partial courses that are not present in the timetable.
-    if (endIndex < pattern.length - 1) return endStop.stop_name;
-    return '';
-  }
-
-  function findMatchingScheduledDestination(
-    routeId,
-    directionKey,
-    stopId,
-    arrivalTimestamp,
-    delaySeconds = null
-  ) {
-    const direction = transportData?.directions?.[String(routeId)]?.[String(directionKey)];
-    const scheduleSet = transportData?.schedules?.[String(routeId)] || {};
-    const weekend = isWeekendInSofia();
-    const daySchedules = scheduleSet?.[String(directionKey)]?.[weekend ? 'weekend' : 'weekday'];
-    const pattern = Array.isArray(direction?.pattern) ? direction.pattern.map(String) : [];
-    const stopIndex = pattern.findIndex(id => stopIdsMatch(id, stopId));
-
-    if (!direction || stopIndex < 0 || !Array.isArray(daySchedules) || !Number.isFinite(arrivalTimestamp)) {
-      return '';
-    }
-
-    // Reconstruct the scheduled time from the realtime event + delay when
-    // available. That lets us distinguish two courses that reach the same
-    // stop close together, including full and partial courses.
-    const hasDelay = Number.isFinite(Number(delaySeconds));
-    const targetTimestamp = hasDelay
-      ? Number(arrivalTimestamp) - Number(delaySeconds)
-      : Number(arrivalTimestamp);
-    const maxDistance = hasDelay ? 6 * 60 : 20 * 60;
-
-    let best = null;
-    for (const schedule of daySchedules) {
-      const rawTime = Array.isArray(schedule?.times) ? schedule.times[stopIndex] : null;
-      const seconds = parseGtfsTime(rawTime);
-      if (seconds == null) continue;
-
-      let timestamp = gtfsSecondsToTodayTimestamp(seconds);
-      while (timestamp - targetTimestamp > 12 * 60 * 60) timestamp -= 86400;
-      while (targetTimestamp - timestamp > 12 * 60 * 60) timestamp += 86400;
-
-      const distance = Math.abs(timestamp - targetTimestamp);
-      if (distance > maxDistance) continue;
-
-      const destination = getScheduleDestination(direction, schedule);
-      if (!destination) continue;
-
-      if (!best || distance < best.distance) {
-        best = { distance, destination };
-      }
-    }
-
-    return best?.destination || '';
-  }
-
   function getSurfaceScheduledArrivals(stop) {
     const nowTimestamp = Date.now() / 1000;
     const horizonTimestamp = nowTimestamp + 2 * 60 * 60;
@@ -780,6 +685,8 @@
     const result = [];
 
     for (const route of (transportData?.routes || [])) {
+      // Static fallback applies only to surface transport. Metro keeps its
+      // existing static timetable logic below.
       if (String(route?.route_type) === '1') continue;
 
       const routeId = String(route?.route_id || '').trim();
@@ -793,42 +700,41 @@
         const pattern = Array.isArray(direction?.pattern) ? direction.pattern.map(String) : [];
         const stopIndex = pattern.findIndex(id => stopIdsMatch(id, selectedStop));
         if (stopIndex < 0) continue;
+
+        // Keep the existing terminal-direction rule.
         if (isTerminalDirectionForStop(routeId, selectedStop, direction)) continue;
 
         const daySchedules = scheduleSet?.[directionKey]?.[weekend ? 'weekend' : 'weekday'];
         if (!Array.isArray(daySchedules)) continue;
 
-        const nextByDestination = new Map();
+        let nextTimestamp = null;
         for (const schedule of daySchedules) {
           const rawTime = Array.isArray(schedule?.times) ? schedule.times[stopIndex] : null;
           const seconds = parseGtfsTime(rawTime);
           if (seconds == null) continue;
 
           let timestamp = gtfsSecondsToTodayTimestamp(seconds);
-          if (timestamp < nowTimestamp) timestamp += 86400;
-          if (timestamp < nowTimestamp || timestamp > horizonTimestamp) continue;
-
-          const destination = getScheduleDestination(direction, schedule);
-          if (!destination) continue;
-
-          const key = normalizeDirectionText(destination);
-          const existing = nextByDestination.get(key);
-          if (!existing || timestamp < existing.timestamp) {
-            nextByDestination.set(key, { timestamp, destination });
+          if (timestamp < nowTimestamp) {
+            timestamp += 86400;
           }
+
+          // The fallback is allowed only inside the two-hour window before
+          // the scheduled arrival.
+          if (timestamp < nowTimestamp || timestamp > horizonTimestamp) continue;
+          if (nextTimestamp == null || timestamp < nextTimestamp) nextTimestamp = timestamp;
         }
 
-        for (const { timestamp, destination } of nextByDestination.values()) {
-          result.push({
-            route_id: routeId,
-            direction_key: String(directionKey),
-            route_ref: meta.number || route.route_short_name || '—',
-            destination,
-            times: [{ timestamp, delay: null, scheduled: true }],
-            meta,
-            scheduled: true
-          });
-        }
+        if (nextTimestamp == null) continue;
+
+        result.push({
+          route_id: routeId,
+          direction_key: String(directionKey),
+          route_ref: meta.number || route.route_short_name || '—',
+          destination: direction?.destination || direction?.headsign || '',
+          times: [{ timestamp: nextTimestamp, delay: null, scheduled: true }],
+          meta,
+          scheduled: true
+        });
       }
     }
 
@@ -851,8 +757,7 @@
       const routeId = trip.routeId || staticTrip?.route_id || "";
       const route = routeById.get(String(routeId));
       const meta = getLineMeta(routeId, route?.route_short_name || "");
-      const staticDirection = getStaticDirectionForTrip(staticTrip);
-      const defaultDestination = staticTrip?.trip_headsign || route?.route_long_name?.split("-")?.at(-1)?.trim() || "";
+      const destination = staticTrip?.trip_headsign || route?.route_long_name?.split("-")?.at(-1)?.trim() || "";
 
       const relevant = (entity.stopTimeUpdates || []).filter(update => {
         if (!update?.stopId || update.scheduleRelationship === 1 || update.scheduleRelationship === 2) return false;
@@ -873,22 +778,11 @@
         if (arrivalSeconds < nowSeconds - 30 || arrivalSeconds > nowSeconds + 3 * 3600) continue;
 
         const staticDirection = getStaticDirectionForTrip(staticTrip);
-        const directionKey = staticDirection?.key || '';
-        const scheduledDestination = directionKey
-          ? findMatchingScheduledDestination(
-            routeId,
-            directionKey,
-            update.stopId,
-            arrivalSeconds,
-            event.delay
-          )
-          : '';
-        const destination = scheduledDestination || defaultDestination;
-        const key = `${String(routeId)}|${String(directionKey || destination)}|${normalizeDirectionText(destination)}|${String(meta.number || "")}`;
+        const key = `${String(routeId)}|${String(staticDirection?.key || destination)}|${String(meta.number || "")}`;
         if (!grouped.has(key)) {
           grouped.set(key, {
             route_id: routeId,
-            direction_key: directionKey,
+            direction_key: staticDirection?.key || '',
             route_ref: meta.number || route?.route_short_name || "—",
             destination,
             times: [],
@@ -998,35 +892,11 @@
               route_id: route.route_id || staticTrip?.route_id || '',
               direction_key: staticDirection?.key || '',
               route_ref: route.route_ref || routeMeta.number || '—',
-              destination: (() => {
-                const realtimeTripDestination = getRealtimeTripDestination(
-                  route,
-                  staticDirection,
-                  stop.stop_id
-                );
-                if (realtimeTripDestination) return realtimeTripDestination;
-
-                const primaryTime = Array.isArray(route.times) ? route.times[0] : null;
-                const realtimeTimestamp = Number(primaryTime?.timestamp);
-                const realtimeDelay = Number.isFinite(Number(primaryTime?.delay))
-                  ? Number(primaryTime.delay)
-                  : null;
-                const scheduledDestination = staticDirection?.key && Number.isFinite(realtimeTimestamp)
-                  ? findMatchingScheduledDestination(
-                      route.route_id || staticTrip?.route_id || '',
-                      staticDirection.key,
-                      stop.stop_id,
-                      realtimeTimestamp,
-                      realtimeDelay
-                    )
-                  : '';
-                return scheduledDestination
-                  || route.destination
-                  || staticTrip?.trip_headsign
-                  || staticDirection?.destination
-                  || staticDirection?.headsign
-                  || '';
-              })(),
+              destination: route.destination
+                || staticTrip?.trip_headsign
+                || staticDirection?.destination
+                || staticDirection?.headsign
+                || '',
               times: route.times
                 .map(time => ({
                   timestamp: Number(time?.timestamp),
@@ -1183,7 +1053,7 @@
         selectedStopMarker.setStyle({
           fillColor: "#111827",
           color: "#ffffff",
-          fillOpacity: 0.9
+          fillOpacity: 1
         });
         selectedStopMarker = null;
       }
@@ -1274,7 +1144,7 @@
       selectedStopMarker.setStyle({
         fillColor: "#111827",
         color: "#ffffff",
-        fillOpacity: 0.9
+        fillOpacity: 1
       });
     }
     const lat = Number(stop.stop_lat);
@@ -1444,7 +1314,7 @@
         weight: 2,
         color: "#ffffff",
         fillColor: "#111827",
-        fillOpacity: 0.9,
+        fillOpacity: 1,
         renderer,
         pane: "markerPane"
       });
