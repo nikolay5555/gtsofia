@@ -576,10 +576,15 @@
     const direction = resolveDirectionForRealtimeRoute(routeId, stopId, staticTrip, destination, directionId);
     if (direction?.pattern?.length && isTerminalDirectionForStop(routeId, stopId, direction)) return true;
 
-    // The same physical terminal can be represented by different GTFS stop IDs
-    // and even slightly different destination spellings (e.g. Ж.К. ДРУЖБА-2
-    // vs Ж.к. Дружба 2). A destination matching the selected stop name is
-    // therefore also treated as the terminal direction.
+    // Do not treat a realtime destination that merely matches the selected
+    // stop name as proof of a terminal arrival. CGM can temporarily publish
+    // an operational/shortened destination for a vehicle that is actually
+    // continuing on its normal static direction (e.g. tram 10 shown as
+    // "пл. Македония" while the course continues to Западен парк).
+    // If a static direction was resolved above, its pattern is the reliable
+    // source for deciding whether this stop is genuinely terminal.
+    if (direction) return false;
+
     const selectedStop = getStopById(stopId);
     const selectedName = normalizeStopName(selectedStop?.stop_name);
     const destinationName = normalizeStopName(destination);
