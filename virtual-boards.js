@@ -1062,7 +1062,7 @@
         selectedStopMarker.setStyle({
           fillColor: "#111827",
           color: "#ffffff",
-          fillOpacity: 0.9
+          fillOpacity: 1
         });
         selectedStopMarker = null;
       }
@@ -1153,7 +1153,7 @@
       selectedStopMarker.setStyle({
         fillColor: "#111827",
         color: "#ffffff",
-        fillOpacity: 0.9
+        fillOpacity: 1
       });
     }
     const lat = Number(stop.stop_lat);
@@ -1323,7 +1323,7 @@
         weight: 2,
         color: "#ffffff",
         fillColor: "#111827",
-        fillOpacity: 0.9,
+        fillOpacity: 1,
         renderer,
         pane: "markerPane"
       });
