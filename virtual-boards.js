@@ -583,6 +583,17 @@
     }).map(([key, direction]) => ({ key, ...direction }));
   }
 
+  function getDirectionTerminalId(direction) {
+    const pattern = Array.isArray(direction?.pattern) ? direction.pattern : [];
+    return pattern.length ? String(pattern[pattern.length - 1]).trim() : '';
+  }
+
+  function getDirectionIdentity(direction, fallback = '') {
+    const terminalId = getDirectionTerminalId(direction);
+    if (terminalId) return terminalId;
+    return String(direction?.key || fallback || '').trim();
+  }
+
   function resolveDirectionForRealtimeRoute(routeId, stopId, staticTrip, destination = '', directionId = '') {
     const staticDirection = getStaticDirectionForTrip(staticTrip);
     if (staticDirection) return staticDirection;
@@ -957,12 +968,14 @@
       mergedSurfaceRoutes.map(route => {
         const staticTrip = findStaticTrip(route.trip_id);
         const staticDirection = getStaticDirectionForTrip(staticTrip);
-        return `${String(route.route_id || staticTrip?.route_id || '')}|${String(staticDirection?.key || '')}`;
+        return `${String(route.route_id || staticTrip?.route_id || '')}|${getDirectionIdentity(staticDirection)}`;
       })
     );
 
     const surfaceFallbackRoutes = scheduledSurfaceRoutes.filter(route => {
-      const key = `${String(route.route_id || '')}|${String(route.direction_key || '')}`;
+      const direction = (transportData?.directions?.[String(route.route_id || '')] || {})[String(route.direction_key || '')];
+      const directionIdentity = getDirectionIdentity(direction, route.direction_key || '');
+      const key = `${String(route.route_id || '')}|${directionIdentity}`;
       if (realtimeDirectionKeys.has(key)) return false;
 
       // If GTFS-RT has active trips for this line and they map to known
@@ -972,7 +985,8 @@
       const routeId = String(route.route_id || '');
       const activeKeys = activeDirectionKeys.get(routeId);
       if (activeKeys?.size) {
-        return activeKeys.has(String(route.direction_key || ''));
+        const direction = (transportData?.directions?.[routeId] || {})[String(route.direction_key || '')];
+        return activeKeys.has(getDirectionIdentity(direction, route.direction_key || ''));
       }
 
       // No active direction information for this line: keep the original
@@ -985,7 +999,9 @@
     // line + destination so the board never shows duplicate static entries.
     const fallbackByKey = new Map();
     for (const route of surfaceFallbackRoutes) {
-      const key = `${String(route.route_id || '')}|${String(route.direction_key || '')}`;
+      const direction = (transportData?.directions?.[String(route.route_id || '')] || {})[String(route.direction_key || '')];
+      const directionIdentity = getDirectionIdentity(direction, route.direction_key || '');
+      const key = `${String(route.route_id || '')}|${directionIdentity}`;
       const existing = fallbackByKey.get(key);
       if (!existing || Number(route.times?.[0]?.timestamp) < Number(existing.times?.[0]?.timestamp)) {
         fallbackByKey.set(key, route);
@@ -1028,7 +1044,7 @@
 
       const routeId = String(staticTrip.route_id);
       if (!activeByRoute.has(routeId)) activeByRoute.set(routeId, new Set());
-      activeByRoute.get(routeId).add(String(direction.key));
+      activeByRoute.get(routeId).add(getDirectionIdentity(direction, direction.key));
     }
 
     return activeByRoute;
