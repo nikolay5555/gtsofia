@@ -949,6 +949,7 @@
               ...route,
               route_id: route.route_id || staticTrip?.route_id || '',
               route_ref: route.route_ref || routeMeta.number || '—',
+              direction_key: staticDirection?.key || '',
               destination_stop_id: route.destination_stop_id || '',
               destination: route.destination
                 || staticTrip?.trip_headsign
@@ -1033,31 +1034,77 @@
     // published realtime data for that line/direction. Once realtime appears,
     // it wins and replaces the static fallback.
     const scheduledSurfaceRoutes = isMetroStop(stop) ? [] : getSurfaceScheduledArrivals(stop);
-    // A realtime row and a static fallback row must be considered the same
-    // passenger-facing direction when they have the same line and displayed
-    // destination. This is especially important for partial courses: realtime
-    // identifies them by their actual terminal stop, while the static schedule
-    // still originates from the parent/full direction.
-    // Realtime and timetable fallback must be matched by the SAME logical
-    // static direction, not only by the displayed destination. A partial
-    // realtime course may display its actual short terminal (for example
-    // trolley 3: "Пътностроителна техника"), while its static trip still
-    // belongs to the full logical direction ("Ж.К. ЛЕВСКИ Г").
-    //
-    // At the same time, this must remain stop-specific: realtime in the
-    // opposite direction (for example N4 -> Дружба 2) must not suppress the
-    // timetable fallback for N4 -> Гоце Делчев.
-    const realtimeLogicalDirectionKeys = new Set();
-    for (const route of realtime.routes) {
-      const staticTrip = findStaticTrip(route.trip_id);
-      const staticDirection = getStaticDirectionForTrip(staticTrip);
-      const routeId = String(route.route_id || staticTrip?.route_id || '');
-      const directionKey = String(staticDirection?.key || '');
-      const routeRef = String(route.route_ref || '');
-      if (routeId && directionKey) {
-        realtimeLogicalDirectionKeys.add(`${routeId}|${directionKey}|${routeRef}`);
+    function directionPatternsShareLongPrefix(shortDirection, longDirection, selectedStopId) {
+      const shortPattern = Array.isArray(shortDirection?.pattern)
+        ? shortDirection.pattern.map(String)
+        : [];
+      const longPattern = Array.isArray(longDirection?.pattern)
+        ? longDirection.pattern.map(String)
+        : [];
+      if (!shortPattern.length || shortPattern.length >= longPattern.length) return false;
+
+      let commonPrefix = 0;
+      while (
+        commonPrefix < shortPattern.length
+        && commonPrefix < longPattern.length
+        && stopIdsMatch(shortPattern[commonPrefix], longPattern[commonPrefix])
+      ) {
+        commonPrefix++;
       }
+
+      // A short-turn does not have to be a literal prefix. It can take a
+      // slightly different branch immediately before its terminal (as with
+      // trolley 3: the two variants share the first 19 stops, then diverge).
+      const shortRatio = commonPrefix / shortPattern.length;
+      const longRatio = commonPrefix / longPattern.length;
+      if (commonPrefix < 5 || shortRatio < 0.8 || longRatio < 0.7) return false;
+
+      const shortStopIndex = shortPattern.findIndex(id => stopIdsMatch(id, selectedStopId));
+      const longStopIndex = longPattern.findIndex(id => stopIdsMatch(id, selectedStopId));
+      if (shortStopIndex < 0 || longStopIndex < 0) return false;
+
+      // The shared section must actually extend beyond the selected stop;
+      // otherwise this is merely two unrelated directions that happen to
+      // start at the same origin.
+      return commonPrefix > Math.max(shortStopIndex, longStopIndex);
     }
+
+    function realtimeOverridesScheduledDirection(realtimeRoute, scheduledRoute, selectedStopId) {
+      const routeId = String(scheduledRoute?.route_id || '');
+      if (!routeId || routeId !== String(realtimeRoute?.route_id || '')) return false;
+
+      const realtimeDirectionKey = String(realtimeRoute?.direction_key || '').trim();
+      const scheduledDirectionKey = String(scheduledRoute?.direction_key || '').trim();
+      if (realtimeDirectionKey && scheduledDirectionKey && realtimeDirectionKey === scheduledDirectionKey) {
+        return true;
+      }
+
+      // Operational short-turn case: realtime may belong to a shorter static
+      // direction (e.g. trolley 3 -> Пътностроителна техника), while the
+      // scheduled fallback is the longer parent direction (-> Ж.К. ЛЕВСКИ Г).
+      // When the short pattern is a true prefix of the longer pattern and the
+      // realtime vehicle actually terminates at the short direction's terminal,
+      // the longer fallback is not an additional passenger-facing service.
+      if (!realtimeDirectionKey || !scheduledDirectionKey) return false;
+      const directionSet = transportData?.directions?.[routeId] || {};
+      const shortDirection = directionSet[realtimeDirectionKey];
+      const longDirection = directionSet[scheduledDirectionKey];
+      if (!shortDirection || !longDirection) return false;
+      if (!directionPatternsShareLongPrefix(shortDirection, longDirection, selectedStopId)) return false;
+
+      const realtimeTerminalId = String(realtimeRoute?.destination_stop_id || '').trim();
+      if (!realtimeTerminalId) return false;
+
+      return isTerminalDirectionForStop(routeId, realtimeTerminalId, shortDirection);
+    }
+
+    // A realtime row suppresses its own logical direction. It may also
+    // suppress a longer scheduled direction when the realtime course belongs
+    // to a shorter direction whose stop pattern is a true prefix of that
+    // longer route (an operational short-turn such as trolley 3).
+    const realtimeLogicalRoutes = mergedSurfaceRoutes.filter(route =>
+      String(route.direction_key || '').trim()
+    );
 
     const realtimeDirectionKeys = new Set(
       mergedSurfaceRoutes.map(route => {
@@ -1068,17 +1115,17 @@
     );
 
     const surfaceFallbackRoutes = scheduledSurfaceRoutes.filter(route => {
-      const routeId = String(route.route_id || '');
-      const routeRef = String(route.route_ref || '');
-      const directionKey = String(route.direction_key || '');
-      const logicalKey = `${routeId}|${directionKey}|${routeRef}`;
-      if (realtimeLogicalDirectionKeys.has(logicalKey)) return false;
+      if (realtimeLogicalRoutes.some(realtimeRoute =>
+        realtimeOverridesScheduledDirection(realtimeRoute, route, stop.stop_id)
+      )) {
+        return false;
+      }
 
-      // Keep the passenger-facing merge as an additional guard. This covers
-      // duplicate GTFS directions that have different direction keys but the
-      // same displayed destination (for example 94 / stop 1699 vs 1700).
+      // Passenger-facing merge for equivalent named terminals (e.g. 94 /
+      // stop 1699 vs 1700).
+      const routeId = String(route.route_id || '');
       const destinationKey = normalizeDirectionText(route.destination || '');
-      const displayedKey = `${routeId}|${destinationKey}|${routeRef}`;
+      const displayedKey = `${routeId}|${destinationKey}|${String(route.route_ref || '')}`;
       return !realtimeDirectionKeys.has(displayedKey);
     });
 
