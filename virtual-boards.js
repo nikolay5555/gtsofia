@@ -939,9 +939,22 @@
           })
           .map(route => {
             const staticTrip = findStaticTrip(route.trip_id);
-            const staticDirection = getStaticDirectionForTrip(staticTrip);
+            const routeId = route.route_id || staticTrip?.route_id || '';
+            // Realtime trip_ids are not guaranteed to be present in today's
+            // static GTFS export. In that case, resolve the logical direction
+            // from the selected stop + realtime destination instead of leaving
+            // the direction key empty. This is essential for short-turns such
+            // as trolley 3 -> Пътностроителна техника.
+            const staticDirection = getStaticDirectionForTrip(staticTrip)
+              || resolveDirectionForRealtimeRoute(
+                routeId,
+                stop.stop_id,
+                staticTrip,
+                route.destination || '',
+                route.direction_id || route.directionId || ''
+              );
             const routeMeta = getLineMeta(
-              route.route_id || staticTrip?.route_id || '',
+              routeId,
               route.route_ref || ''
             );
 
@@ -981,7 +994,15 @@
     const mergedRealtime = new Map();
     for (const route of realtime.routes) {
       const staticTrip = findStaticTrip(route.trip_id);
-      const staticDirection = getStaticDirectionForTrip(staticTrip);
+      const realtimeRouteId = String(route.route_id || staticTrip?.route_id || '').trim();
+      const staticDirection = getStaticDirectionForTrip(staticTrip)
+        || resolveDirectionForRealtimeRoute(
+          realtimeRouteId,
+          stop.stop_id,
+          staticTrip,
+          route.destination || '',
+          route.direction_id || route.directionId || ''
+        );
       const staticTerminalId = getDirectionTerminalStopId(staticDirection);
       const realtimeTerminalId = String(route.destination_stop_id || '').trim();
       const isPartialRealtime = !!realtimeTerminalId
@@ -1093,9 +1114,19 @@
       if (!directionPatternsShareLongPrefix(shortDirection, longDirection, selectedStopId)) return false;
 
       const realtimeTerminalId = String(realtimeRoute?.destination_stop_id || '').trim();
-      if (!realtimeTerminalId) return false;
+      const realtimeDestinationKey = normalizeDirectionText(realtimeRoute?.destination || '');
+      const shortDestinationKey = normalizeDirectionText(
+        shortDirection?.destination || shortDirection?.headsign || ''
+      );
 
-      return isTerminalDirectionForStop(routeId, realtimeTerminalId, shortDirection);
+      // Prefer the explicit realtime terminal when available. When the feed
+      // does not expose a terminal that matches the static pattern, the
+      // displayed realtime destination is still enough to identify the short
+      // direction (e.g. "Пътностроителна техника").
+      return (
+        (!!realtimeTerminalId && isTerminalDirectionForStop(routeId, realtimeTerminalId, shortDirection))
+        || (!!shortDestinationKey && realtimeDestinationKey === shortDestinationKey)
+      );
     }
 
     // A realtime row suppresses its own logical direction. It may also
