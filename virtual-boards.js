@@ -924,7 +924,6 @@
 
     const data = await response.json();
     const generatedAt = data?.generated_at || Date.now();
-    const activeDirectionKeys = getActiveDirectionKeys(data?.active_trip_ids);
     const realtimeRoutes = Array.isArray(data?.routes)
       ? data.routes
           .filter(route => route && Array.isArray(route.times))
@@ -1047,6 +1046,27 @@
       })
     );
 
+    // IMPORTANT: a realtime trip elsewhere on the line must not suppress
+    // timetable fallback at this stop. Determine active logical directions
+    // only from realtime trips that actually produce a row for THIS board.
+    // This preserves fallback for an opposite direction (N4), while still
+    // suppressing the normal static destination when a trip in that direction
+    // is currently running a shortened/exceptional route (e.g. trolley 3).
+    const activeDirectionKeys = new Map();
+    for (const route of realtime.routes) {
+      const staticTrip = findStaticTrip(route.trip_id);
+      const staticDirection = getStaticDirectionForTrip(staticTrip);
+      if (!staticDirection?.key) continue;
+
+      const routeId = String(route.route_id || staticTrip?.route_id || '');
+      if (!routeId) continue;
+
+      if (!activeDirectionKeys.has(routeId)) {
+        activeDirectionKeys.set(routeId, new Set());
+      }
+      activeDirectionKeys.get(routeId).add(String(staticDirection.key));
+    }
+
     const surfaceFallbackRoutes = scheduledSurfaceRoutes.filter(route => {
       const destinationKey = normalizeDirectionText(route.destination || '');
       const key = `${String(route.route_id || '')}|${destinationKey}|${String(route.route_ref || '')}`;
@@ -1109,24 +1129,6 @@
       generatedAt,
       routes
     };
-  }
-
-  function getActiveDirectionKeys(activeTripIds) {
-    const activeByRoute = new Map();
-
-    for (const tripId of (Array.isArray(activeTripIds) ? activeTripIds : [])) {
-      const staticTrip = findStaticTrip(tripId);
-      if (!staticTrip?.route_id) continue;
-
-      const direction = getStaticDirectionForTrip(staticTrip);
-      if (!direction?.key) continue;
-
-      const routeId = String(staticTrip.route_id);
-      if (!activeByRoute.has(routeId)) activeByRoute.set(routeId, new Set());
-      activeByRoute.get(routeId).add(String(direction.key));
-    }
-
-    return activeByRoute;
   }
 
   async function fetchVirtualBoard(stop) {
