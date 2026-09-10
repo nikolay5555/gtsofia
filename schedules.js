@@ -860,7 +860,7 @@ function renderTimetable(courses) {
    * Бележката е извън него, за да не изглежда
    * като част от таблицата/рамката.
    */
-  container.innerHTML = `
+container.innerHTML = `
     <div class="timetable-scroll">
       <table class="schedule-timetable">
         <thead>
@@ -875,11 +875,18 @@ function renderTimetable(courses) {
           </tr>
         </tbody>
       </table>
-    </div>
-
-    <div class="schedule-partial-note">
-      Частичните курсове са отбелязани с червен фон.
     </div>`;
+
+  // Премахваме старата бележка, ако вече съществува извън контейнера
+  section.querySelector(".schedule-partial-note")?.remove();
+
+  // Добавяме я веднага СЛЕД контейнера (извън рамката му)
+  container.insertAdjacentHTML(
+    "afterend",
+    `<div class="schedule-partial-note">
+      Частичните курсове са отбелязани с червен фон.
+    </div>`
+  );
 
   container
     .querySelectorAll(
