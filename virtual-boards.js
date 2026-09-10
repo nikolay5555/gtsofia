@@ -691,6 +691,7 @@
 
         result.push({
           route_id: routeId,
+          direction_key: directionKey,
           route_ref: meta.number || route.route_short_name || '—',
           destination: direction?.destination || direction?.headsign || '',
           times: [{ timestamp: nextTimestamp, delay: null, scheduled: true }],
@@ -813,6 +814,7 @@
 
     const data = await response.json();
     const generatedAt = data?.generated_at || Date.now();
+    const activeDirectionKeys = getActiveDirectionKeys(data?.active_trip_ids);
     const realtimeRoutes = Array.isArray(data?.routes)
       ? data.routes
           .filter(route => route && Array.isArray(route.times))
@@ -911,7 +913,21 @@
 
     const surfaceFallbackRoutes = scheduledSurfaceRoutes.filter(route => {
       const key = `${String(route.route_id || '')}|${normalizeDirectionText(route.destination || '')}`;
-      return !realtimeDestinationKeys.has(key);
+      if (realtimeDestinationKeys.has(key)) return false;
+
+      // If GTFS-RT has active trips for this line and they map to known
+      // static directions, only those active directions are eligible for
+      // timetable fallback. This prevents a stale/alternate static direction
+      // from appearing alongside a realtime direction (e.g. trolley 3).
+      const routeId = String(route.route_id || '');
+      const activeKeys = activeDirectionKeys.get(routeId);
+      if (activeKeys?.size) {
+        return activeKeys.has(String(route.direction_key || ''));
+      }
+
+      // No active direction information for this line: keep the original
+      // timetable fallback behaviour.
+      return true;
     });
 
     // Some GTFS exports contain duplicate static directions with the same
@@ -950,6 +966,24 @@
     };
   }
 
+  function getActiveDirectionKeys(activeTripIds) {
+    const activeByRoute = new Map();
+
+    for (const tripId of (Array.isArray(activeTripIds) ? activeTripIds : [])) {
+      const staticTrip = findStaticTrip(tripId);
+      if (!staticTrip?.route_id) continue;
+
+      const direction = getStaticDirectionForTrip(staticTrip);
+      if (!direction?.key) continue;
+
+      const routeId = String(staticTrip.route_id);
+      if (!activeByRoute.has(routeId)) activeByRoute.set(routeId, new Set());
+      activeByRoute.get(routeId).add(String(direction.key));
+    }
+
+    return activeByRoute;
+  }
+
   async function fetchVirtualBoard(stop) {
     return fetchVirtualBoardViaServer(stop);
   }
@@ -966,7 +1000,7 @@
           <h2>${escapeHtml(stop.stop_name || stop.name || "Спирка")}</h2>
         </div>
         <div class="virtual-board-header-actions">
-          <button type="button" class="virtual-board-refresh is-loading" id="virtualBoardRefresh" disabled>Обнови</button>
+          <button type="button" class="virtual-board-refresh is-loading" id="virtualBoardRefresh" disabled aria-label="Обнови таблото"><span aria-hidden="true">↻</span></button>
           <button type="button" class="virtual-board-close" id="virtualBoardClose" aria-label="Затвори таблото">×</button>
         </div>
       </div>
@@ -1028,7 +1062,7 @@
             </div>
             <div class="vb-time-block">
               ${countdownHtml(arrivals[0], !arrivals[0]?.scheduled)}
-              ${!arrivals[0]?.scheduled && arrivals.length > 1 ? `<div class="vb-next-times">${arrivals.slice(1).map(time => `<span>${escapeHtml(formatArrivalClock(time.timestamp))}</span>`).join("")}</div>` : ""}
+              ${arrivals.length > 1 ? `<div class="vb-next-times">${arrivals.slice(1, 4).map(time => `<span>${escapeHtml(formatArrivalClock(time.timestamp))}</span>`).join("")}</div>` : ""}
             </div>
           </article>
         `;
