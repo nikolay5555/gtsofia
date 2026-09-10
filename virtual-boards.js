@@ -958,28 +958,38 @@
       activeDirectionKeysByRoute.get(routeId).add(String(direction.key));
     }
 
-    // For surface transport, realtime keeps priority within an active
-    // direction. Static fallback remains available for the same active
-    // directions when realtime has no usable upcoming arrival there.
-    // Directions that have no realtime representation at this stop are
-    // suppressed while another direction of the same line is active, which
-    // prevents stale GTFS branches from appearing as if they were running.
+    // Realtime has priority per direction, not per line:
+    // - a direction with a realtime arrival does NOT get a static duplicate;
+    // - a different direction of the same line may still use static fallback;
+    // - if realtime exists for a line but no direction can be mapped safely,
+    //   keep the conservative line-level suppression to avoid duplicates.
     const scheduledSurfaceRoutes = isMetroStop(stop) ? [] : getSurfaceScheduledArrivals(stop);
+
+    const realtimeRouteIds = new Set(mergedSurfaceRoutes.map(route => String(route?.route_id || '')));
 
     const surfaceFallbackRoutes = scheduledSurfaceRoutes.filter(route => {
       const routeId = String(route?.route_id || '');
       const activeKeys = activeDirectionKeysByRoute.get(routeId);
-      if (!activeKeys?.size) return !mergedSurfaceRoutes.some(realtimeRoute =>
-        String(realtimeRoute?.route_id || '') === routeId
-      );
 
-      const directions = transportData?.directions?.[routeId] || {};
-      const directionEntry = Object.entries(directions).find(([, direction]) =>
-        normalizeDirectionText(direction?.destination || direction?.headsign || '')
-          === normalizeDirectionText(route?.destination || '')
-      );
+      // No realtime for this line at all: allow the normal static directions.
+      if (!realtimeRouteIds.has(routeId)) return true;
 
-      return !!directionEntry && activeKeys.has(String(directionEntry[0]));
+      // Realtime exists and at least one direction was resolved for this line:
+      // only directions without realtime may use static fallback.
+      if (activeKeys?.size) {
+        const directions = transportData?.directions?.[routeId] || {};
+        const directionEntry = Object.entries(directions).find(([, direction]) =>
+          normalizeDirectionText(direction?.destination || direction?.headsign || '')
+            === normalizeDirectionText(route?.destination || '')
+        );
+
+        if (!directionEntry) return false;
+        return !activeKeys.has(String(directionEntry[0]));
+      }
+
+      // Realtime exists, but direction resolution failed completely for this
+      // line. Do not risk displaying stale static rows beside live data.
+      return false;
     });
 
     // Some GTFS exports contain duplicate static directions. Keep the earliest
