@@ -468,11 +468,31 @@
     if (!staticTrip?.route_id) return null;
     const directions = transportData?.directions?.[String(staticTrip.route_id)] || {};
     const headsign = normalizeDirectionText(staticTrip.trip_headsign);
-    if (!headsign) return null;
-    for (const [key, direction] of Object.entries(directions)) {
-      const directionHeadsign = normalizeDirectionText(direction?.headsign || direction?.destination);
-      if (directionHeadsign && directionHeadsign === headsign) return { key, ...direction };
+    if (headsign) {
+      for (const [key, direction] of Object.entries(directions)) {
+        const directionHeadsign = normalizeDirectionText(direction?.headsign || direction?.destination);
+        if (directionHeadsign && directionHeadsign === headsign) return { key, ...direction };
+      }
     }
+
+    // CGM can occasionally publish a temporary/intermediate trip headsign
+    // even though the underlying trip still follows the normal full route.
+    // When the headsign does not match a known static direction, use the
+    // unique shape_id match as the stronger indication of the actual route
+    // direction. This lets us recognise cases such as a false "пл. Македония"
+    // destination on tram 10 while keeping genuine partial directions intact
+    // when they have their own static shape.
+    const shapeId = String(staticTrip?.shape_id || '').trim();
+    if (shapeId) {
+      const matches = Object.entries(directions).filter(([, direction]) =>
+        String(direction?.shape_id || '').trim() === shapeId
+      );
+      if (matches.length === 1) {
+        const [key, direction] = matches[0];
+        return { key, ...direction };
+      }
+    }
+
     return null;
   }
 
@@ -576,15 +596,10 @@
     const direction = resolveDirectionForRealtimeRoute(routeId, stopId, staticTrip, destination, directionId);
     if (direction?.pattern?.length && isTerminalDirectionForStop(routeId, stopId, direction)) return true;
 
-    // Do not treat a realtime destination that merely matches the selected
-    // stop name as proof of a terminal arrival. CGM can temporarily publish
-    // an operational/shortened destination for a vehicle that is actually
-    // continuing on its normal static direction (e.g. tram 10 shown as
-    // "пл. Македония" while the course continues to Западен парк).
-    // If a static direction was resolved above, its pattern is the reliable
-    // source for deciding whether this stop is genuinely terminal.
-    if (direction) return false;
-
+    // The same physical terminal can be represented by different GTFS stop IDs
+    // and even slightly different destination spellings (e.g. Ж.К. ДРУЖБА-2
+    // vs Ж.к. Дружба 2). A destination matching the selected stop name is
+    // therefore also treated as the terminal direction.
     const selectedStop = getStopById(stopId);
     const selectedName = normalizeStopName(selectedStop?.stop_name);
     const destinationName = normalizeStopName(destination);
@@ -841,15 +856,17 @@
               route.route_ref || ''
             );
 
+            const realtimeDestination = String(route.destination || '').trim();
+            const correctedDestination = staticDirection?.destination
+              || staticDirection?.headsign
+              || staticTrip?.trip_headsign
+              || realtimeDestination;
+
             return {
               ...route,
               route_id: route.route_id || staticTrip?.route_id || '',
               route_ref: route.route_ref || routeMeta.number || '—',
-              destination: route.destination
-                || staticTrip?.trip_headsign
-                || staticDirection?.destination
-                || staticDirection?.headsign
-                || '',
+              destination: correctedDestination,
               times: route.times
                 .map(time => ({
                   timestamp: Number(time?.timestamp),
