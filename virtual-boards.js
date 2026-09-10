@@ -542,6 +542,57 @@
     }).map(([key, direction]) => ({ key, ...direction }));
   }
 
+  function getActiveDirectionKeys(activeTripIds) {
+    const activeKeys = new Set();
+
+    for (const rawTripId of (activeTripIds || [])) {
+      const tripId = String(rawTripId || '').trim();
+      if (!tripId) continue;
+
+      const staticTrip = findStaticTrip(tripId);
+      if (!staticTrip?.route_id) continue;
+
+      const routeId = String(staticTrip.route_id);
+      const directionSet = transportData?.directions?.[routeId] || {};
+      const entries = Object.entries(directionSet);
+      if (!entries.length) continue;
+
+      // Prefer the exact representative trip, then shape, direction_id and
+      // finally headsign. This avoids treating two branches with the same
+      // destination as the same active direction.
+      let match = entries.find(([, direction]) =>
+        String(direction?.trip_id || '').trim() === tripId
+      );
+
+      if (!match && staticTrip.shape_id) {
+        const shapeId = String(staticTrip.shape_id).trim();
+        match = entries.find(([, direction]) =>
+          String(direction?.shape_id || '').trim() === shapeId
+        );
+      }
+
+      if (!match && staticTrip.direction_id !== undefined && staticTrip.direction_id !== null) {
+        const wantedDirectionId = String(staticTrip.direction_id).trim();
+        if (wantedDirectionId) {
+          match = entries.find(([, direction]) =>
+            String(direction?.direction_id ?? direction?.key ?? '').trim() === wantedDirectionId
+          );
+        }
+      }
+
+      if (!match && staticTrip.trip_headsign) {
+        const wantedHeadsign = normalizeDirectionText(staticTrip.trip_headsign);
+        match = entries.find(([, direction]) =>
+          normalizeDirectionText(direction?.headsign || direction?.destination) === wantedHeadsign
+        );
+      }
+
+      if (match) activeKeys.add(`${routeId}|${match[0]}`);
+    }
+
+    return activeKeys;
+  }
+
   function resolveDirectionForRealtimeRoute(routeId, stopId, staticTrip, destination = '', directionId = '') {
     const staticDirection = getStaticDirectionForTrip(staticTrip);
     if (staticDirection) return staticDirection;
@@ -691,6 +742,7 @@
 
         result.push({
           route_id: routeId,
+          direction_key: directionKey,
           route_ref: meta.number || route.route_short_name || '—',
           destination: direction?.destination || direction?.headsign || '',
           times: [{ timestamp: nextTimestamp, delay: null, scheduled: true }],
@@ -909,9 +961,40 @@
       )
     );
 
+    const activeTripIds = Array.isArray(data?.active_trip_ids) ? data.active_trip_ids : [];
+    const activeDirectionKeys = getActiveDirectionKeys(activeTripIds);
+    const activeRouteIds = new Set();
+
+    for (const rawTripId of activeTripIds) {
+      const trip = findStaticTrip(rawTripId);
+      if (trip?.route_id) activeRouteIds.add(String(trip.route_id));
+    }
+
+    const mappedActiveDirectionCounts = new Map();
+    for (const key of activeDirectionKeys) {
+      const routeId = key.split('|', 1)[0];
+      mappedActiveDirectionCounts.set(
+        routeId,
+        (mappedActiveDirectionCounts.get(routeId) || 0) + 1
+      );
+    }
+
     const surfaceFallbackRoutes = scheduledSurfaceRoutes.filter(route => {
-      const key = `${String(route.route_id || '')}|${normalizeDirectionText(route.destination || '')}`;
-      return !realtimeDestinationKeys.has(key);
+      const routeId = String(route.route_id || '');
+      const key = `${routeId}|${normalizeDirectionText(route.destination || '')}`;
+
+      // A realtime row for the exact direction suppresses its static fallback.
+      if (realtimeDestinationKeys.has(key)) return false;
+
+      // When realtime is active on a line, only directions that are actually
+      // represented by active realtime trips are eligible for fallback.
+      // If a route's active trips cannot be mapped to a static direction,
+      // keep the old fallback behavior rather than hiding everything.
+      if (activeRouteIds.has(routeId) && mappedActiveDirectionCounts.has(routeId)) {
+        return activeDirectionKeys.has(`${routeId}|${String(route.direction_key || '')}`);
+      }
+
+      return true;
     });
 
     // Some GTFS exports contain duplicate static directions with the same
@@ -966,7 +1049,7 @@
           <h2>${escapeHtml(stop.stop_name || stop.name || "Спирка")}</h2>
         </div>
         <div class="virtual-board-header-actions">
-          <button type="button" class="virtual-board-refresh is-loading" id="virtualBoardRefresh" disabled>Обнови</button>
+          <button type="button" class="virtual-board-refresh is-loading" id="virtualBoardRefresh" disabled aria-label="Обнови таблото"><span aria-hidden="true">↻</span></button>
           <button type="button" class="virtual-board-close" id="virtualBoardClose" aria-label="Затвори таблото">×</button>
         </div>
       </div>
@@ -1028,7 +1111,7 @@
             </div>
             <div class="vb-time-block">
               ${countdownHtml(arrivals[0], !arrivals[0]?.scheduled)}
-              ${!arrivals[0]?.scheduled && arrivals.length > 1 ? `<div class="vb-next-times">${arrivals.slice(1).map(time => `<span>${escapeHtml(formatArrivalClock(time.timestamp))}</span>`).join("")}</div>` : ""}
+              ${arrivals.length > 1 ? `<div class="vb-next-times">${arrivals.slice(1).map(time => `<span>${escapeHtml(formatArrivalClock(time.timestamp))}</span>`).join("")}</div>` : ""}
             </div>
           </article>
         `;
