@@ -379,11 +379,13 @@
     const minutes = getArrivalMinutes(timestamp);
     if (!Number.isFinite(minutes)) return "";
 
-    const rounded = Math.max(0, Math.ceil(minutes));
     const clock = formatArrivalClock(timestamp);
     const live = showLive ? '<span class="vb-arrival-live" aria-hidden="true"></span>' : '';
+    const countdown = minutes < 1
+      ? 'Сега'
+      : `${Math.ceil(minutes)} мин.`;
 
-    return `<div class="vb-arrival-main">${live}<span class="vb-arrival-clock">${escapeHtml(clock)}</span><span class="vb-arrival-separator" aria-hidden="true">·</span><span class="vb-arrival-minutes">${rounded} мин.</span></div>`;
+    return `<div class="vb-arrival-main">${live}<span class="vb-arrival-clock">${escapeHtml(clock)}</span><span class="vb-arrival-separator" aria-hidden="true">·</span><span class="vb-arrival-minutes">${countdown}</span></div>`;
   }
 
   function normalizeStopKey(value) {
