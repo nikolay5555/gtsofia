@@ -667,6 +667,12 @@ SCHEDULES PAGE
   white-space: nowrap;
 }
 
+.schedule-note {
+  margin-top: 10px;
+  font-size: 13px;
+  color: #6b7280;
+}
+
 .schedule-timetable td {
   min-height: 70px;
   padding: 12px 8px;
@@ -698,12 +704,6 @@ SCHEDULES PAGE
 .schedule-minute:hover {
   background: #fef3c7;
   color: #92400e;
-}
-
-.schedule-partial-note {
-  margin-top: 10px;
-  font-size: 13px;
-  color: #6b7280;
 }
 
 .schedule-no-data {
@@ -1415,22 +1415,6 @@ RESPONSIVE
   .promo-actions {
     flex-direction: column;
     max-width: none;
-  }
-
-  .schedule-timetable th,
-  .schedule-timetable td {
-    padding-left: 0;
-    padding-right: 0;
-  }
-
-  .schedule-minute-list {
-    width: 100%;
-    align-items: stretch;
-  }
-
-  .schedule-minute {
-    width: 100%;
-    text-align: center;
   }
 
   .schedule-summary-main {
