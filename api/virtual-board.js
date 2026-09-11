@@ -83,6 +83,8 @@ function decodeTripDescriptor(bytes) {
 
     if (field.fieldNumber === 1 && field.wireType === 2) {
       trip.tripId = decodeString(field.value);
+    } else if (field.fieldNumber === 2 && field.wireType === 2) {
+      trip.startTime = decodeString(field.value);
     } else if (field.fieldNumber === 4 && field.wireType === 0) {
       trip.scheduleRelationship = Number(field.value);
     } else if (field.fieldNumber === 5 && field.wireType === 2) {
@@ -266,20 +268,56 @@ function buildBoard(updates, stopCode, feedTimestamp) {
       const delay = eventDelay(stopUpdate);
       const key = trip.tripId || `${trip.routeId}|${trip.directionId}`;
       if (!grouped.has(key)) {
-        const terminalUpdate = (tripUpdate.stopTimeUpdates || [])
-          .filter(item => item?.stopId && ![1, 2].includes(item.scheduleRelationship))
+        const validUpdates = (tripUpdate.stopTimeUpdates || [])
+          .filter(item => item?.stopId && ![1, 2].includes(item.scheduleRelationship));
+
+        const terminalUpdate = validUpdates
+          .slice()
           .sort((a, b) => {
             const sa = Number.isFinite(Number(a?.stopSequence)) ? Number(a.stopSequence) : -1;
             const sb = Number.isFinite(Number(b?.stopSequence)) ? Number(b.stopSequence) : -1;
             return sb - sa;
           })[0] || null;
 
+        // Extra vehicle check:
+        // A trip is considered started only after its first reported stop has
+        // a departure time in the past. If Sofia Traffic has already dropped
+        // that first stop from the TripUpdate, start_time is used as a
+        // conservative fallback so a vehicle is not treated as "not started".
+        const firstUpdate = validUpdates
+          .slice()
+          .sort((a, b) => {
+            const sa = Number.isFinite(Number(a?.stopSequence)) ? Number(a.stopSequence) : Number.MAX_SAFE_INTEGER;
+            const sb = Number.isFinite(Number(b?.stopSequence)) ? Number(b.stopSequence) : Number.MAX_SAFE_INTEGER;
+            return sa - sb;
+          })[0] || null;
+
+        const firstDeparture = Number.isFinite(Number(firstUpdate?.departure?.time))
+          ? Number(firstUpdate.departure.time)
+          : Number.isFinite(Number(firstUpdate?.arrival?.time))
+            ? Number(firstUpdate.arrival.time)
+            : null;
+
+        const startedFromFirstStop = firstDeparture != null
+          ? firstDeparture <= now
+          : Boolean(trip.startTime);
+
         grouped.set(key, {
           trip_id: trip.tripId,
           route_id: trip.routeId || '',
           direction_id: trip.directionId || '',
           destination_stop_id: terminalUpdate?.stopId || '',
-          times: []
+          started_from_first_stop: startedFromFirstStop,
+          tracking_stops: validUpdates
+            .slice()
+            .sort((a, b) => Number(a?.stopSequence ?? 0) - Number(b?.stopSequence ?? 0))
+            .map(item => ({
+              stop_id: item.stopId,
+              stop_sequence: Number.isFinite(Number(item?.stopSequence)) ? Number(item.stopSequence) : null,
+              arrival_timestamp: Number.isFinite(Number(item?.arrival?.time)) ? Number(item.arrival.time) : null,
+              departure_timestamp: Number.isFinite(Number(item?.departure?.time)) ? Number(item.departure.time) : null,
+              delay: eventDelay(item)
+            }))
         });
       }
 
