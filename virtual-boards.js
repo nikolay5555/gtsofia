@@ -17,38 +17,6 @@
   let tripStopsById = new Map();
 
   const boardPanel = () => document.getElementById("virtualBoardBody");
-  // Vehicle departure latch: nothing is captured until the vehicle has
-  // actually reached/departed its first stop.
-  const vehicleDepartureState = new Map();
-
-  function vehicleTripKey(row) {
-    return `${String(row?.trip_id || "").trim()}|${String(row?.route_id || "").trim()}|${String(row?.direction_id || "").trim()}`;
-  }
-
-  function captureVehicleAfterFirstStop(row) {
-    if (!row?.trip_id) return false;
-    const key = vehicleTripKey(row);
-    if (vehicleDepartureState.get(key)?.departed) return true;
-
-    const firstStop = Array.isArray(row?.tracking_stops)
-      ? row.tracking_stops
-          .filter(item => item?.stop_id)
-          .sort((a, b) => Number(a?.stop_sequence ?? 0) - Number(b?.stop_sequence ?? 0))[0]
-      : null;
-
-    const firstDeparture = Number(firstStop?.departure_timestamp ?? firstStop?.arrival_timestamp);
-    if (Number.isFinite(firstDeparture) && firstDeparture <= Date.now() / 1000) {
-      vehicleDepartureState.set(key, {
-        departed: true,
-        departure_timestamp: firstDeparture,
-        destination_stop_id: row.destination_stop_id || ""
-      });
-      return true;
-    }
-    return false;
-  }
-
-
 
   function escapeHtml(value) {
     return String(value ?? "")
@@ -996,7 +964,6 @@
               route_ref: route.route_ref || routeMeta.number || '—',
               direction_key: staticDirection?.key || '',
               destination_stop_id: route.destination_stop_id || '',
-              tracking_stops: Array.isArray(route.tracking_stops) ? route.tracking_stops : [],
               destination: route.destination
                 || staticTrip?.trip_headsign
                 || staticDirection?.destination
@@ -1421,9 +1388,7 @@
           const clock = formatArrivalClock(time.timestamp);
           return `<span class="vb-next-time" tabindex="0" data-tooltip="${escapeHtml(tooltip)}" aria-label="${escapeHtml(tooltip)}">${escapeHtml(clock)}</span>`;
         }).join("");
-        captureVehicleAfterFirstStop(row);
-
-      return `
+        return `
           <article class="vb-row">
             <div class="schedule-summary-route-row vb-route-row">
               ${lineIdentityHtml(meta)}
