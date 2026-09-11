@@ -3,47 +3,6 @@ const FEED_TIMEOUT_MS = 15000;
 const MAX_RESULTS_PER_ROUTE = 4;
 const LOOK_AHEAD_SECONDS = 3 * 60 * 60;
 
-// Static GTFS data is used only to identify the planned terminal of a
-// realtime trip. GTFS-RT may temporarily contain updates only up to an
-// intermediate stop; that must not turn a full trip into a fake short-turn.
-const TRANSPORT_DATA = require('../data/transport.json');
-
-function getStaticDestinationStopId(tripId, routeId) {
-  const trip = (TRANSPORT_DATA.trips || []).find(item =>
-    String(item?.trip_id || '').trim() === String(tripId || '').trim()
-  );
-  if (!trip) return '';
-
-  const routeDirections = TRANSPORT_DATA.directions?.[String(routeId || '').trim()];
-  if (!routeDirections || typeof routeDirections !== 'object') return '';
-
-  const candidates = Object.values(routeDirections).filter(direction => {
-    if (!direction?.pattern?.length) return false;
-
-    // Prefer an exact direction trip match when one is present.
-    if (String(direction.trip_id || '').trim() === String(tripId || '').trim()) {
-      return true;
-    }
-
-    // Most trip_ids are represented by the same shape/headsign in the
-    // generated static data, even when that exact trip_id is not stored on
-    // the direction object.
-    const shapeMatches = !trip.shape_id || !direction.shape_id ||
-      String(direction.shape_id) === String(trip.shape_id);
-    const headsignMatches = !trip.trip_headsign || !direction.headsign ||
-      String(direction.headsign).trim() === String(trip.trip_headsign).trim();
-    return shapeMatches && headsignMatches;
-  });
-
-  if (candidates.length === 1) {
-    const pattern = candidates[0].pattern;
-    return String(pattern[pattern.length - 1] || '').trim();
-  }
-
-  // If shape/headsign produced multiple directions, do not guess.
-  return '';
-}
-
 function readVarint(bytes, state) {
   let value = 0n;
   let shift = 0n;
@@ -315,22 +274,11 @@ function buildBoard(updates, stopCode, feedTimestamp) {
             return sb - sa;
           })[0] || null;
 
-        // Do not infer the destination from the last realtime StopTimeUpdate.
-        // Before a vehicle starts moving, GTFS-RT can expose only a prefix of
-        // the trip. In that situation an intermediate stop (for example
-        // Garibaldi) would incorrectly look like the terminal. Use the static
-        // trip/direction as the authoritative terminal and keep the old
-        // realtime inference only as a fallback for unknown trips.
-        const staticDestinationStopId = getStaticDestinationStopId(
-          trip.tripId,
-          trip.routeId
-        );
-
         grouped.set(key, {
           trip_id: trip.tripId,
           route_id: trip.routeId || '',
           direction_id: trip.directionId || '',
-          destination_stop_id: staticDestinationStopId || terminalUpdate?.stopId || '',
+          destination_stop_id: terminalUpdate?.stopId || '',
           times: []
         });
       }
