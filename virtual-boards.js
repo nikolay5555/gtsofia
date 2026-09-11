@@ -474,26 +474,43 @@
     const tripId = String(staticTrip.trip_id || '').trim();
     if (!tripId) return null;
 
-    // Direction identity follows the actual GTFS trip membership. This is
-    // deliberately checked before shape/headsign fallbacks: the same shape
-    // can be reused by more than one logical service variant, while trip_id
-    // is the exact identity carried by GTFS-RT.
-    for (const [key, direction] of Object.entries(directions)) {
-      const tripIds = Array.isArray(direction?.trip_ids)
-        ? direction.trip_ids.map(value => String(value || '').trim())
-        : [];
-      if (tripIds.includes(tripId)) return { key, ...direction };
+    // 1) Prefer exact trip membership, but only when the trip maps to ONE
+    // logical direction. Some GTFS exports contain the same trip in duplicate
+    // directions that differ only by spelling/case of the destination.
+    const tripMatches = Object.entries(directions).filter(([, direction]) =>
+      Array.isArray(direction?.trip_ids)
+      && direction.trip_ids.map(value => String(value || '').trim()).includes(tripId)
+    );
+    if (tripMatches.length === 1) {
+      const [key, direction] = tripMatches[0];
+      return { key, ...direction };
     }
 
-    // Backward-compatible fallback for an older transport.json that does not
-    // yet contain trip_ids on directions. Prefer the representative trip id,
-    // then a unique shape id, and only finally the display headsign.
-    for (const [key, direction] of Object.entries(directions)) {
-      if (String(direction?.trip_id || '').trim() === tripId) {
+    // 2) The representative trip_id on a generated direction remains a safe
+    // fallback for older/current transport data.
+    const representativeMatches = Object.entries(directions).filter(([, direction]) =>
+      String(direction?.trip_id || '').trim() === tripId
+    );
+    if (representativeMatches.length === 1) {
+      const [key, direction] = representativeMatches[0];
+      return { key, ...direction };
+    }
+
+    // 3) Prefer an exact GTFS direction_id when it is present on the static
+    // trip. This disambiguates routes whose shape/headsign is reused by both
+    // directions.
+    const directionId = String(staticTrip.direction_id ?? '').trim();
+    if (directionId) {
+      const directionIdMatches = Object.entries(directions).filter(([, direction]) =>
+        String(direction?.direction_id ?? '').trim() === directionId
+      );
+      if (directionIdMatches.length === 1) {
+        const [key, direction] = directionIdMatches[0];
         return { key, ...direction };
       }
     }
 
+    // 4) Unique shape match.
     const shapeId = String(staticTrip.shape_id || '').trim();
     if (shapeId) {
       const shapeMatches = Object.entries(directions).filter(([, direction]) =>
@@ -505,17 +522,20 @@
       }
     }
 
+    // 5) Headsign is the last fallback. If several logical directions have
+    // the same displayed text, deliberately choose the first one rather than
+    // returning null: losing the realtime association is worse than keeping
+    // the legacy deterministic behaviour. Exact direction_id above is used
+    // whenever the feed/data provides it.
     const headsign = normalizeDirectionText(staticTrip.trip_headsign);
     if (headsign) {
-      const headsignMatches = Object.entries(directions).filter(([, direction]) => {
+      for (const [key, direction] of Object.entries(directions)) {
         const directionHeadsign = normalizeDirectionText(
           direction?.headsign || direction?.destination
         );
-        return directionHeadsign && directionHeadsign === headsign;
-      });
-      if (headsignMatches.length === 1) {
-        const [key, direction] = headsignMatches[0];
-        return { key, ...direction };
+        if (directionHeadsign && directionHeadsign === headsign) {
+          return { key, ...direction };
+        }
       }
     }
 
