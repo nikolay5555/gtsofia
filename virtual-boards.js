@@ -1103,9 +1103,8 @@
       // Operational short-turn case: realtime may belong to a shorter static
       // direction (e.g. trolley 3 -> Пътностроителна техника), while the
       // scheduled fallback is the longer parent direction (-> Ж.К. ЛЕВСКИ Г).
-      // When the short pattern is a true prefix of the longer pattern and the
-      // realtime vehicle actually terminates at the short direction's terminal,
-      // the longer fallback is not an additional passenger-facing service.
+      // For a realtime route that is actually visible at this stop, retain the
+      // stricter, stop-aware check.
       if (!realtimeDirectionKey || !scheduledDirectionKey) return false;
       const directionSet = transportData?.directions?.[routeId] || {};
       const shortDirection = directionSet[realtimeDirectionKey];
@@ -1119,14 +1118,67 @@
         shortDirection?.destination || shortDirection?.headsign || ''
       );
 
-      // Prefer the explicit realtime terminal when available. When the feed
-      // does not expose a terminal that matches the static pattern, the
-      // displayed realtime destination is still enough to identify the short
-      // direction (e.g. "Пътностроителна техника").
       return (
         (!!realtimeTerminalId && isTerminalDirectionForStop(routeId, realtimeTerminalId, shortDirection))
         || (!!shortDestinationKey && realtimeDestinationKey === shortDestinationKey)
       );
+    }
+
+    function activeShortDirectionOverridesScheduledDirection(scheduledRoute, activeDirections) {
+      const routeId = String(scheduledRoute?.route_id || '').trim();
+      const scheduledDirectionKey = String(scheduledRoute?.direction_key || '').trim();
+      if (!routeId || !scheduledDirectionKey) return false;
+
+      const directionSet = transportData?.directions?.[routeId] || {};
+      const longDirection = directionSet[scheduledDirectionKey];
+      if (!longDirection) return false;
+
+      for (const activeDirection of activeDirections) {
+        if (String(activeDirection?.route_id || '').trim() !== routeId) continue;
+        const shortDirectionKey = String(activeDirection?.key || '').trim();
+        if (!shortDirectionKey || shortDirectionKey === scheduledDirectionKey) continue;
+
+        const shortDirection = directionSet[shortDirectionKey];
+        if (!shortDirection) continue;
+
+        // This test intentionally does NOT require the selected stop to be
+        // present in the short direction. A short-turn must suppress the
+        // longer scheduled parent even at stops that exist only after the
+        // point where the two patterns diverge (e.g. trolley 3 at stop 2125).
+        const shortPattern = Array.isArray(shortDirection?.pattern)
+          ? shortDirection.pattern.map(String)
+          : [];
+        const longPattern = Array.isArray(longDirection?.pattern)
+          ? longDirection.pattern.map(String)
+          : [];
+        if (!shortPattern.length || shortPattern.length >= longPattern.length) continue;
+
+        let commonPrefix = 0;
+        while (
+          commonPrefix < shortPattern.length &&
+          commonPrefix < longPattern.length &&
+          stopIdsMatch(shortPattern[commonPrefix], longPattern[commonPrefix])
+        ) {
+          commonPrefix++;
+        }
+
+        const shortRatio = commonPrefix / shortPattern.length;
+        const longRatio = commonPrefix / longPattern.length;
+        if (commonPrefix < 5 || shortRatio < 0.8 || longRatio < 0.7) continue;
+
+        // The active direction must actually be the short-turn variant. Its
+        // terminal must lie at/near the divergence point rather than being
+        // another independent direction with a coincident prefix.
+        const shortTerminalId = getDirectionTerminalStopId(shortDirection);
+        if (!shortTerminalId || commonPrefix === shortPattern.length) continue;
+
+        const terminalIndex = shortPattern.findIndex(id => stopIdsMatch(id, shortTerminalId));
+        if (terminalIndex < 0 || terminalIndex > commonPrefix + 1) continue;
+
+        return true;
+      }
+
+      return false;
     }
 
     // A realtime row suppresses its own logical direction. It may also
@@ -1145,10 +1197,36 @@
       })
     );
 
+    // active_trip_ids comes from the complete GTFS-RT feed, not just the
+    // selected stop. This is needed for short-turns: at a stop that exists
+    // only on the longer parent route, no short-turn trip can be visible
+    // locally, but the active short-turn service still means the longer
+    // scheduled fallback must not be shown.
+    const activeDirections = [];
+    const seenActiveDirectionKeys = new Set();
+    for (const tripId of (Array.isArray(data?.active_trip_ids) ? data.active_trip_ids : [])) {
+      const activeTrip = findStaticTrip(tripId);
+      if (!activeTrip) continue;
+      const activeDirection = getStaticDirectionForTrip(activeTrip);
+      if (!activeDirection?.key) continue;
+      const activeKey = `${String(activeTrip.route_id || '')}|${String(activeDirection.key)}`;
+      if (seenActiveDirectionKeys.has(activeKey)) continue;
+      seenActiveDirectionKeys.add(activeKey);
+      activeDirections.push({
+        route_id: String(activeTrip.route_id || ''),
+        key: String(activeDirection.key),
+        trip_id: String(activeTrip.trip_id || '')
+      });
+    }
+
     const surfaceFallbackRoutes = scheduledSurfaceRoutes.filter(route => {
       if (realtimeLogicalRoutes.some(realtimeRoute =>
         realtimeOverridesScheduledDirection(realtimeRoute, route, stop.stop_id)
       )) {
+        return false;
+      }
+
+      if (activeShortDirectionOverridesScheduledDirection(route, activeDirections)) {
         return false;
       }
 
