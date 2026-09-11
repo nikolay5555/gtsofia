@@ -1153,6 +1153,11 @@
           : [];
         if (!shortPattern.length || shortPattern.length >= longPattern.length) continue;
 
+        // There are two forms of an operational short-turn:
+        //   1) the short route is a prefix of the full route (e.g. 3 ->
+        //      Пътностроителна техника vs Левски Г in one direction);
+        //   2) the short route starts later and is effectively a suffix of
+        //      the full route (the reverse direction of trolley 3).
         let commonPrefix = 0;
         while (
           commonPrefix < shortPattern.length &&
@@ -1162,19 +1167,47 @@
           commonPrefix++;
         }
 
-        const shortRatio = commonPrefix / shortPattern.length;
-        const longRatio = commonPrefix / longPattern.length;
-        if (commonPrefix < 5 || shortRatio < 0.8 || longRatio < 0.7) continue;
+        let commonSuffix = 0;
+        while (
+          commonSuffix < shortPattern.length &&
+          commonSuffix < longPattern.length &&
+          stopIdsMatch(
+            shortPattern[shortPattern.length - 1 - commonSuffix],
+            longPattern[longPattern.length - 1 - commonSuffix]
+          )
+        ) {
+          commonSuffix++;
+        }
 
-        // The active direction must actually be the short-turn variant. Its
-        // terminal must lie at/near the divergence point rather than being
-        // another independent direction with a coincident prefix.
-        const shortTerminalId = getDirectionTerminalStopId(shortDirection);
-        if (!shortTerminalId || commonPrefix === shortPattern.length) continue;
+        const prefixShortRatio = commonPrefix / shortPattern.length;
+        const prefixLongRatio = commonPrefix / longPattern.length;
+        const suffixShortRatio = commonSuffix / shortPattern.length;
+        const suffixLongRatio = commonSuffix / longPattern.length;
 
-        const terminalIndex = shortPattern.findIndex(id => stopIdsMatch(id, shortTerminalId));
-        if (terminalIndex < 0 || terminalIndex > commonPrefix + 1) continue;
+        const prefixMatch =
+          commonPrefix >= 5 &&
+          prefixShortRatio >= 0.8 &&
+          prefixLongRatio >= 0.7 &&
+          commonPrefix < shortPattern.length;
 
+        const suffixMatch =
+          commonSuffix >= 5 &&
+          suffixShortRatio >= 0.8 &&
+          suffixLongRatio >= 0.7 &&
+          commonSuffix < shortPattern.length;
+
+        if (!prefixMatch && !suffixMatch) continue;
+
+        // The defining property of an operational short-turn is the route
+        // pattern itself, not the passenger-facing destination text. The
+        // short variant intentionally ends at a different terminal, so the
+        // destination names are normally different (e.g. an active short
+        // turn ending at Пътностроителна техника vs the regular terminal
+        // Левски Г). We therefore suppress the longer static direction when
+        // an active realtime direction is a genuine strict prefix/suffix of
+        // it. Unrelated directions with only a common origin/section are
+        // protected by the strong overlap ratios and by requiring that the
+        // short pattern is actually shorter than the long one.
         return true;
       }
 
