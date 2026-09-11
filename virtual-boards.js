@@ -474,12 +474,13 @@
     const tripId = String(staticTrip.trip_id || '').trim();
     if (!tripId) return null;
 
-    // Direction identity follows the same model as Dimitar5555's data: a
-    // trip belongs to a logical direction, and that direction is the unit
-    // used by the board. Display text is not the identifier.
+    // Direction identity follows the actual GTFS trip membership. This is
+    // deliberately checked before shape/headsign fallbacks: the same shape
+    // can be reused by more than one logical service variant, while trip_id
+    // is the exact identity carried by GTFS-RT.
     for (const [key, direction] of Object.entries(directions)) {
       const tripIds = Array.isArray(direction?.trip_ids)
-        ? direction.trip_ids.map(String)
+        ? direction.trip_ids.map(value => String(value || '').trim())
         : [];
       if (tripIds.includes(tripId)) return { key, ...direction };
     }
@@ -506,13 +507,15 @@
 
     const headsign = normalizeDirectionText(staticTrip.trip_headsign);
     if (headsign) {
-      for (const [key, direction] of Object.entries(directions)) {
+      const headsignMatches = Object.entries(directions).filter(([, direction]) => {
         const directionHeadsign = normalizeDirectionText(
           direction?.headsign || direction?.destination
         );
-        if (directionHeadsign && directionHeadsign === headsign) {
-          return { key, ...direction };
-        }
+        return directionHeadsign && directionHeadsign === headsign;
+      });
+      if (headsignMatches.length === 1) {
+        const [key, direction] = headsignMatches[0];
+        return { key, ...direction };
       }
     }
 
