@@ -1050,10 +1050,10 @@
       }))
       .filter(route => route.times.length);
 
-    // For surface transport, keep the static timetable as a fallback even
-    // when realtime is already present for the same direction. Realtime can
-    // temporarily omit one of the upcoming trips; in that case the static
-    // course must remain visible until a realtime row covers it.
+    // For surface transport, use the static timetable as a fallback during
+    // the two hours before the next scheduled course when CGM has not yet
+    // published realtime data for that line/direction. Once realtime appears,
+    // it wins and replaces the static fallback.
     const scheduledSurfaceRoutes = isMetroStop(stop) ? [] : getSurfaceScheduledArrivals(stop);
     function directionPatternsShareLongPrefix(shortDirection, longDirection, selectedStopId) {
       const shortPattern = Array.isArray(shortDirection?.pattern)
@@ -1252,91 +1252,24 @@
       });
     }
 
-    function scheduledTimeCoveredByRealtime(scheduledTime, realtimeRoutesForDirection) {
-      const scheduledTimestamp = Number(scheduledTime?.timestamp);
-      if (!Number.isFinite(scheduledTimestamp)) return true;
-
-      return realtimeRoutesForDirection.some(realtimeRoute =>
-        (realtimeRoute?.times || []).some(realtimeTime => {
-          const realtimeTimestamp = Number(realtimeTime?.timestamp);
-          if (!Number.isFinite(realtimeTimestamp)) return false;
-
-          // Exact/near-exact match: the realtime course has replaced the
-          // timetable entry.
-          if (Math.abs(realtimeTimestamp - scheduledTimestamp) <= 90) return true;
-
-          // Delayed realtime: if the feed exposes delay, compare the
-          // realtime arrival with the corresponding scheduled time. This
-          // prevents a delayed realtime trip from being shown twice.
-          const delay = Number(realtimeTime?.delay);
-          if (!Number.isFinite(delay)) return false;
-          return Math.abs((realtimeTimestamp - delay) - scheduledTimestamp) <= 90;
-        })
-      );
-    }
-
-    // Realtime should replace only the timetable rows it actually covers,
-    // not the whole logical direction. This is important when GTFS-RT is
-    // missing one upcoming trip (for example 13:17) but already publishes a
-    // later one (13:29): the missing trip remains available from the static
-    // timetable instead of disappearing from the board.
-    const unmatchedScheduledRoutes = [];
-    const unmatchedSurfaceRoutes = [];
-
-    for (const scheduledRoute of scheduledSurfaceRoutes) {
-      // Preserve the existing generalized short-turn rule: an active shorter
-      // direction still suppresses its longer static parent completely.
-      if (activeShortDirectionOverridesScheduledDirection(scheduledRoute, activeDirections)) {
-        continue;
+    const surfaceFallbackRoutes = scheduledSurfaceRoutes.filter(route => {
+      if (realtimeLogicalRoutes.some(realtimeRoute =>
+        realtimeOverridesScheduledDirection(realtimeRoute, route, stop.stop_id)
+      )) {
+        return false;
       }
 
-      const matchingRealtimeRoutes = mergedSurfaceRoutes.filter(realtimeRoute =>
-        realtimeOverridesScheduledDirection(realtimeRoute, scheduledRoute, stop.stop_id)
-      );
-
-      if (!matchingRealtimeRoutes.length) {
-        unmatchedScheduledRoutes.push(scheduledRoute);
-        continue;
+      if (activeShortDirectionOverridesScheduledDirection(route, activeDirections)) {
+        return false;
       }
 
-      const unmatchedTimes = (scheduledRoute.times || []).filter(scheduledTime =>
-        !scheduledTimeCoveredByRealtime(scheduledTime, matchingRealtimeRoutes)
-      );
-
-      if (!unmatchedTimes.length) continue;
-
-      // Put the still-uncovered scheduled times into the existing realtime
-      // direction row so the passenger sees one combined line/destination
-      // instead of separate realtime and static duplicates.
-      const targetRealtimeRoute = matchingRealtimeRoutes[0];
-      targetRealtimeRoute.times.push(...unmatchedTimes);
-    }
-
-    for (const route of unmatchedScheduledRoutes) {
       // Passenger-facing merge for equivalent named terminals (e.g. 94 /
-      // stop 1699 vs 1700). Keep the old behavior when there is no matching
-      // realtime direction at this stop.
+      // stop 1699 vs 1700).
       const routeId = String(route.route_id || '');
       const destinationKey = normalizeDirectionText(route.destination || '');
       const displayedKey = `${routeId}|${destinationKey}|${String(route.route_ref || '')}`;
-      if (!realtimeDirectionKeys.has(displayedKey)) {
-        unmatchedSurfaceRoutes.push(route);
-      }
-    }
-
-    // Normalize rows again because static fallback times may have been merged
-    // into an existing realtime direction.
-    for (const route of mergedSurfaceRoutes) {
-      route.times = (route.times || [])
-        .filter(time => Number.isFinite(Number(time?.timestamp)))
-        .sort((a, b) => Number(a.timestamp) - Number(b.timestamp))
-        .filter((time, index, list) =>
-          index === 0 || Number(time.timestamp) !== Number(list[index - 1].timestamp)
-        )
-        .slice(0, 4);
-    }
-
-    const surfaceFallbackRoutes = unmatchedSurfaceRoutes;
+      return !realtimeDirectionKeys.has(displayedKey);
+    });
 
     // Some GTFS exports contain duplicate static directions with the same
     // destination/pattern. Keep only the earliest fallback row for a given
