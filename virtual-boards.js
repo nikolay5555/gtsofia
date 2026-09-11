@@ -780,9 +780,10 @@
             rowsByTerminal.set(terminalStopId, []);
           }
           const terminalTimes = rowsByTerminal.get(terminalStopId);
-          if (!terminalTimes.some(existing => Math.abs(existing - timestamp) < 30)) {
-            terminalTimes.push(timestamp);
-            terminalTimes.sort((a, b) => a - b);
+          const tripId = String(schedule?.trip_id ?? '').trim();
+          if (!terminalTimes.some(existing => Math.abs(existing.timestamp - timestamp) < 30)) {
+            terminalTimes.push({ timestamp, trip_id: tripId });
+            terminalTimes.sort((a, b) => a.timestamp - b.timestamp);
             if (terminalTimes.length > 4) terminalTimes.pop();
           }
         }
@@ -801,7 +802,7 @@
             terminal_stop_id: terminalStopId,
             route_ref: meta.number || route.route_short_name || '—',
             destination,
-            times: timestamps.map(timestamp => ({ timestamp, delay: null, scheduled: true })),
+            times: timestamps.map(item => ({ timestamp: item.timestamp, trip_id: item.trip_id, delay: null, scheduled: true })),
             meta,
             scheduled: true
           });
@@ -1051,10 +1052,15 @@
         mergedRealtime.set(key, {
           ...route,
           destination,
+          trip_ids: route.trip_id ? [String(route.trip_id)] : [],
           times: []
         });
       }
-      mergedRealtime.get(key).times.push(...(route.times || []));
+      const mergedRow = mergedRealtime.get(key);
+      if (route.trip_id && !mergedRow.trip_ids.includes(String(route.trip_id))) {
+        mergedRow.trip_ids.push(String(route.trip_id));
+      }
+      mergedRow.times.push(...(route.times || []));
     }
 
     const mergedSurfaceRoutes = [...mergedRealtime.values()]
@@ -1178,10 +1184,18 @@
     }
 
     function mergeScheduledIntoRealtimeRoute(realtimeRoute, scheduledRoute) {
+      const realtimeTripIds = new Set((realtimeRoute.trip_ids || [])
+        .map(value => String(value || '').trim())
+        .filter(Boolean));
+      const realtimeTimes = realtimeRoute.times || [];
       const mergedTimes = [
-        ...(realtimeRoute.times || []).map(time => ({ ...time, scheduled: false })),
+        ...realtimeTimes.map(time => ({ ...time, scheduled: false })),
         ...(scheduledRoute.times || [])
-          .filter(time => !realtimeCoversScheduledTime(realtimeRoute.times || [], Number(time.timestamp)))
+          .filter(time => {
+            const scheduledTripId = String(time?.trip_id || '').trim();
+            if (scheduledTripId && realtimeTripIds.has(scheduledTripId)) return false;
+            return !realtimeCoversScheduledTime(realtimeTimes, Number(time.timestamp));
+          })
           .map(time => ({ ...time, scheduled: true }))
       ];
       mergedTimes.sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
