@@ -87,191 +87,6 @@
     return hour * 3600 + minute * 60 + second;
   }
 
-  // Minimal GTFS-Realtime protobuf decoder for TripUpdates.
-  function readVarint(bytes, state) {
-    let value = 0n;
-    let shift = 0n;
-
-    while (state.index < bytes.length) {
-      const byte = bytes[state.index++];
-      value |= BigInt(byte & 0x7f) << shift;
-      if ((byte & 0x80) === 0) return value;
-      shift += 7n;
-      if (shift > 70n) throw new Error("Невалиден GTFS-RT varint.");
-    }
-
-    throw new Error("Непълен GTFS-RT varint.");
-  }
-
-  function readField(bytes, state) {
-    const tag = Number(readVarint(bytes, state));
-    const fieldNumber = tag >>> 3;
-    const wireType = tag & 7;
-
-    if (!fieldNumber) throw new Error("Невалидно GTFS-RT поле.");
-
-    if (wireType === 0) {
-      return { fieldNumber, wireType, value: readVarint(bytes, state) };
-    }
-
-    if (wireType === 1) {
-      const end = state.index + 8;
-      if (end > bytes.length) throw new Error("Непълно GTFS-RT съобщение.");
-      const value = bytes.subarray(state.index, end);
-      state.index = end;
-      return { fieldNumber, wireType, value };
-    }
-
-    if (wireType === 2) {
-      const length = Number(readVarint(bytes, state));
-      const end = state.index + length;
-      if (end > bytes.length) throw new Error("Непълно GTFS-RT protobuf съобщение.");
-      const value = bytes.subarray(state.index, end);
-      state.index = end;
-      return { fieldNumber, wireType, value };
-    }
-
-    if (wireType === 5) {
-      const end = state.index + 4;
-      if (end > bytes.length) throw new Error("Непълно GTFS-RT съобщение.");
-      const value = bytes.subarray(state.index, end);
-      state.index = end;
-      return { fieldNumber, wireType, value };
-    }
-
-    throw new Error(`Неподдържан GTFS-RT wire type: ${wireType}`);
-  }
-
-  function decodeString(bytes) {
-    return new TextDecoder().decode(bytes);
-  }
-
-  function toSignedInt32(value) {
-    const n = Number(value & 0xffffffffn) >>> 0;
-    return n > 0x7fffffff ? n - 0x100000000 : n;
-  }
-
-  function decodeTripDescriptor(bytes) {
-    const state = { index: 0 };
-    const trip = {
-      tripId: "",
-      routeId: "",
-      directionId: "",
-      scheduleRelationship: null
-    };
-
-    while (state.index < bytes.length) {
-      const field = readField(bytes, state);
-      if (field.fieldNumber === 2 && field.wireType === 2) trip.startTime = decodeString(field.value);
-      else if (field.fieldNumber === 3 && field.wireType === 2) trip.startDate = decodeString(field.value);
-      else if (field.fieldNumber === 1 && field.wireType === 2) trip.tripId = decodeString(field.value);
-      else if (field.fieldNumber === 4 && field.wireType === 0) trip.scheduleRelationship = Number(field.value);
-      else if (field.fieldNumber === 5 && field.wireType === 2) trip.routeId = decodeString(field.value);
-      else if (field.fieldNumber === 6 && field.wireType === 0) trip.directionId = String(Number(field.value));
-    }
-
-    return trip;
-  }
-
-  function decodeStopTimeEvent(bytes) {
-    const state = { index: 0 };
-    const result = { delay: null, time: null };
-
-    while (state.index < bytes.length) {
-      const field = readField(bytes, state);
-      if (field.fieldNumber === 1 && field.wireType === 0) {
-        result.delay = toSignedInt32(field.value);
-      } else if (field.fieldNumber === 2 && field.wireType === 0) {
-        result.time = Number(field.value);
-      }
-    }
-
-    return result;
-  }
-
-  function decodeStopTimeUpdate(bytes) {
-    const state = { index: 0 };
-    const result = {
-      stopSequence: null,
-      stopId: "",
-      arrival: null,
-      departure: null,
-      scheduleRelationship: null
-    };
-
-    while (state.index < bytes.length) {
-      const field = readField(bytes, state);
-      if (field.fieldNumber === 1 && field.wireType === 0) {
-        result.stopSequence = Number(field.value);
-      } else if (field.fieldNumber === 2 && field.wireType === 2) {
-        result.arrival = decodeStopTimeEvent(field.value);
-      } else if (field.fieldNumber === 3 && field.wireType === 2) {
-        result.departure = decodeStopTimeEvent(field.value);
-      } else if (field.fieldNumber === 4 && field.wireType === 2) {
-        result.stopId = decodeString(field.value);
-      } else if (field.fieldNumber === 5 && field.wireType === 0) {
-        result.scheduleRelationship = Number(field.value);
-      }
-    }
-
-    return result;
-  }
-
-  function decodeTripUpdate(bytes) {
-    const state = { index: 0 };
-    const result = { trip: null, stopTimeUpdates: [] };
-
-    while (state.index < bytes.length) {
-      const field = readField(bytes, state);
-      if (field.fieldNumber === 1 && field.wireType === 2) {
-        result.trip = decodeTripDescriptor(field.value);
-      } else if (field.fieldNumber === 2 && field.wireType === 2) {
-        result.stopTimeUpdates.push(decodeStopTimeUpdate(field.value));
-      }
-    }
-
-    return result;
-  }
-
-  function decodeFeedEntity(bytes) {
-    const state = { index: 0 };
-    let tripUpdate = null;
-
-    while (state.index < bytes.length) {
-      const field = readField(bytes, state);
-      if (field.fieldNumber === 3 && field.wireType === 2) {
-        tripUpdate = decodeTripUpdate(field.value);
-      }
-    }
-
-    return tripUpdate;
-  }
-
-  function decodeGtfsRealtimeFeed(buffer) {
-    const bytes = new Uint8Array(buffer);
-    const state = { index: 0 };
-    const updates = [];
-    let feedTimestamp = null;
-
-    while (state.index < bytes.length) {
-      const field = readField(bytes, state);
-      if (field.fieldNumber === 1 && field.wireType === 2) {
-        const headerState = { index: 0 };
-        while (headerState.index < field.value.length) {
-          const headerField = readField(field.value, headerState);
-          if (headerField.fieldNumber === 3 && headerField.wireType === 0) {
-            feedTimestamp = Number(headerField.value) * 1000;
-          }
-        }
-      } else if (field.fieldNumber === 2 && field.wireType === 2) {
-        const entity = decodeFeedEntity(field.value);
-        if (entity?.trip?.tripId) updates.push(entity);
-      }
-    }
-
-    return { updates, feedTimestamp: feedTimestamp || Date.now() };
-  }
-
   function normalizeProxyStopCode(stop) {
     const rawCode = String(stop?.stop_code ?? stop?.stop_id ?? "").trim();
     if (!rawCode) return { candidates: [], isMetro: false };
@@ -683,7 +498,7 @@
           route_id: routeId,
           route_ref: meta.number || route.route_short_name || '—',
           destination: direction?.destination || direction?.headsign || '',
-          times: unique.map(timestamp => ({ timestamp, delay: null, scheduled: true })),
+          times: unique.map(timestamp => ({ timestamp, delay: null, scheduled: true, source: 'static' })),
           meta
         });
       }
@@ -784,110 +599,14 @@
             destination,
             times: [{ timestamp, delay: null, scheduled: true }],
             meta,
-            scheduled: true
+            scheduled: true,
+            source: 'static'
           });
         }
       }
     }
 
     return result.sort((a, b) => a.times[0].timestamp - b.times[0].timestamp);
-  }
-
-  function buildRealtimeRoutes(updates, stop, generatedAt) {
-    const selectedStopIds = [stop.stop_id, stop.stop_code, String(stop.stop_id || "").replace(/^M/i, "")]
-      .filter(Boolean)
-      .map(String);
-
-    const nowSeconds = Math.floor(Date.now() / 1000);
-    const grouped = new Map();
-
-    for (const entity of updates) {
-      const trip = entity?.trip;
-      if (!trip || trip.scheduleRelationship === 3 || trip.scheduleRelationship === 2) continue;
-
-      const staticTrip = findStaticTrip(trip.tripId);
-      const routeId = trip.routeId || staticTrip?.route_id || "";
-      const route = routeById.get(String(routeId));
-      const meta = getLineMeta(routeId, route?.route_short_name || "");
-      const staticDirection = getStaticDirectionForTrip(staticTrip);
-      const destination = staticDirection?.destination
-        || staticDirection?.headsign
-        || staticTrip?.trip_headsign
-        || route?.route_long_name?.split("-")?.at(-1)?.trim()
-        || "";
-
-      const relevant = (entity.stopTimeUpdates || []).filter(update => {
-        if (!update?.stopId || update.scheduleRelationship === 1 || update.scheduleRelationship === 2) return false;
-        return selectedStopIds.some(id => stopIdsMatch(id, update.stopId));
-      });
-
-      for (const update of relevant) {
-        if (shouldHideTerminalArrival(routeId, update.stopId, staticTrip, destination)) continue;
-
-        const event = update.arrival?.time != null
-          ? update.arrival
-          : update.departure?.time != null
-            ? update.departure
-            : null;
-        if (!event || !Number.isFinite(event.time)) continue;
-
-        const arrivalSeconds = Number(event.time);
-        if (arrivalSeconds < nowSeconds - 30 || arrivalSeconds > nowSeconds + 3 * 3600) continue;
-
-        // Realtime TripUpdates can represent a partial course whose actual
-        // final stop is an intermediate stop of the static parent direction.
-        // Use the realtime trip's actual terminal as the board identity when
-        // it is available; otherwise fall back to the static direction.
-        const realtimeTerminalId = String(
-          (entity.stopTimeUpdates || [])
-            .filter(item => item?.stopId && ![1, 2].includes(item.scheduleRelationship))
-            .sort((a, b) => Number(b?.stopSequence ?? -1) - Number(a?.stopSequence ?? -1))
-            .find(item => item?.stopId)?.stopId || ''
-        ).trim();
-        const staticTerminalId = getDirectionTerminalStopId(staticDirection);
-        const directionIdentity = realtimeTerminalId
-          ? (stopIdsMatch(realtimeTerminalId, staticTerminalId)
-              ? getDirectionIdentity(staticDirection, realtimeTerminalId)
-              : realtimeTerminalId)
-          : getDirectionIdentity(staticDirection, normalizeDirectionText(destination));
-        const key = `${String(routeId)}|${directionIdentity}|${String(meta.number || "")}`;
-        if (!grouped.has(key)) {
-          grouped.set(key, {
-            route_id: routeId,
-            route_ref: meta.number || route?.route_short_name || "—",
-            destination,
-            times: [],
-            meta
-          });
-        }
-        grouped.get(key).times.push({
-          timestamp: arrivalSeconds,
-          t: Math.max(0, (arrivalSeconds - nowSeconds) / 60)
-        });
-      }
-    }
-
-    const routes = [];
-    for (const row of grouped.values()) {
-      const seen = new Set();
-      row.times = row.times
-        .sort((a, b) => a.timestamp - b.timestamp)
-        .filter(item => {
-          if (seen.has(item.timestamp)) return false;
-          seen.add(item.timestamp);
-          return true;
-        })
-        .slice(0, 4)
-        .map(item => ({ t: item.t, timestamp: item.timestamp }));
-      if (row.times.length) routes.push(row);
-    }
-
-    routes.sort((a, b) => a.times[0].timestamp - b.times[0].timestamp);
-    return {
-      status: routes.length ? "ok" : "ok",
-      routes,
-      generatedAt
-    };
   }
 
   async function fetchWithTimeout(url, options = {}, timeoutMs = 45000) {
@@ -929,8 +648,20 @@
           .filter(route => route && Array.isArray(route.times))
           .filter(route => {
             const staticTrip = findStaticTrip(route.trip_id);
+            const routeId = route.route_id || staticTrip?.route_id || '';
+
+            // NEW/REPLACEMENT trips may not exist in static GTFS. In that case
+            // destination_stop_id is the strongest terminal signal we have.
+            if (route.destination_stop_id && shouldHideTerminalArrival(
+              routeId,
+              route.destination_stop_id,
+              staticTrip,
+              route.destination || '',
+              route.direction_id || route.directionId || ''
+            )) return false;
+
             return !shouldHideTerminalArrival(
-              route.route_id || staticTrip?.route_id || '',
+              routeId,
               stop.stop_id,
               staticTrip,
               route.destination || '',
@@ -960,6 +691,10 @@
 
             return {
               ...route,
+              source: 'realtime',
+              realtime: true,
+              schedule_relationship: Number(route?.schedule_relationship),
+              schedule_relationship_name: String(route?.schedule_relationship_name || 'SCHEDULED'),
               route_id: route.route_id || staticTrip?.route_id || '',
               route_ref: route.route_ref || routeMeta.number || '—',
               direction_key: staticDirection?.key || '',
@@ -972,7 +707,12 @@
               times: route.times
                 .map(time => ({
                   timestamp: Number(time?.timestamp),
-                  delay: Number.isFinite(Number(time?.delay)) ? Number(time.delay) : null
+                  delay: Number.isFinite(Number(time?.delay)) ? Number(time.delay) : null,
+                  scheduled: false,
+                  source: 'realtime',
+                  stop_schedule_relationship: Number(time?.stop_schedule_relationship),
+                  stop_schedule_relationship_name: String(time?.stop_schedule_relationship_name || 'SCHEDULED'),
+                  scheduled_time: Number.isFinite(Number(time?.scheduled_time)) ? Number(time.scheduled_time) : null
                 }))
                 .filter(time => Number.isFinite(time.timestamp))
             };
@@ -1031,6 +771,8 @@
       if (!mergedRealtime.has(key)) {
         mergedRealtime.set(key, {
           ...route,
+          source: 'realtime',
+          realtime: true,
           destination,
           times: []
         });
@@ -1230,25 +972,36 @@
       })
     );
 
-    // active_trip_ids comes from the complete GTFS-RT feed, not just the
-    // selected stop. This is needed for short-turns: at a stop that exists
-    // only on the longer parent route, no short-turn trip can be visible
-    // locally, but the active short-turn service still means the longer
-    // scheduled fallback must not be shown.
+    // Only operational realtime trips may suppress static fallback. Explicit
+    // CANCELED/DELETED trips are not active service.
     const activeDirections = [];
     const seenActiveDirectionKeys = new Set();
-    for (const tripId of (Array.isArray(data?.active_trip_ids) ? data.active_trip_ids : [])) {
-      const activeTrip = findStaticTrip(tripId);
-      if (!activeTrip) continue;
-      const activeDirection = getStaticDirectionForTrip(activeTrip);
+    const activeTripRecords = Array.isArray(data?.active_trips)
+      ? data.active_trips
+      : (Array.isArray(data?.active_trip_ids)
+        ? data.active_trip_ids.map(tripId => ({ trip_id: tripId, schedule_relationship_name: 'SCHEDULED' }))
+        : []);
+
+    for (const activeTrip of activeTripRecords) {
+      const activeTripId = String(activeTrip?.trip_id || '').trim();
+      if (!activeTripId) continue;
+
+      const relationship = String(activeTrip?.schedule_relationship_name || 'SCHEDULED').toUpperCase();
+      if (relationship === 'CANCELED' || relationship === 'DELETED') continue;
+
+      const staticTrip = findStaticTrip(activeTripId);
+      if (!staticTrip) continue;
+      const activeDirection = getStaticDirectionForTrip(staticTrip);
       if (!activeDirection?.key) continue;
-      const activeKey = `${String(activeTrip.route_id || '')}|${String(activeDirection.key)}`;
+
+      const activeKey = `${String(staticTrip.route_id || '')}|${String(activeDirection.key)}`;
       if (seenActiveDirectionKeys.has(activeKey)) continue;
       seenActiveDirectionKeys.add(activeKey);
       activeDirections.push({
-        route_id: String(activeTrip.route_id || ''),
+        route_id: String(staticTrip.route_id || ''),
         key: String(activeDirection.key),
-        trip_id: String(activeTrip.trip_id || '')
+        trip_id: activeTripId,
+        schedule_relationship: relationship
       });
     }
 

@@ -3,6 +3,36 @@ const FEED_TIMEOUT_MS = 15000;
 const MAX_RESULTS_PER_ROUTE = 4;
 const LOOK_AHEAD_SECONDS = 3 * 60 * 60;
 
+// GTFS-Realtime TripDescriptor.schedule_relationship.
+// Keep these values here instead of scattering magic numbers through the
+// parser/business logic because TripDescriptor and StopTimeUpdate use
+// different enums. See https://gtfs.org/documentation/realtime/reference/.
+const TRIP_RELATIONSHIP = Object.freeze({
+  SCHEDULED: 0,
+  ADDED: 1,          // deprecated; keep for backwards-compatible producers
+  UNSCHEDULED: 2,
+  CANCELED: 3,
+  REPLACEMENT: 5,
+  DUPLICATED: 6,
+  DELETED: 7,
+  NEW: 8
+});
+
+const STOP_RELATIONSHIP = Object.freeze({
+  SCHEDULED: 0,
+  SKIPPED: 1,
+  NO_DATA: 2,
+  UNSCHEDULED: 3
+});
+
+const TRIP_RELATIONSHIP_NAME = Object.freeze(
+  Object.fromEntries(Object.entries(TRIP_RELATIONSHIP).map(([name, value]) => [value, name]))
+);
+
+const STOP_RELATIONSHIP_NAME = Object.freeze(
+  Object.fromEntries(Object.entries(STOP_RELATIONSHIP).map(([name, value]) => [value, name]))
+);
+
 function readVarint(bytes, state) {
   let value = 0n;
   let shift = 0n;
@@ -75,7 +105,9 @@ function decodeTripDescriptor(bytes) {
     tripId: '',
     routeId: '',
     directionId: '',
-    scheduleRelationship: 0
+    startTime: '',
+    startDate: '',
+    scheduleRelationship: TRIP_RELATIONSHIP.SCHEDULED
   };
 
   while (state.index < bytes.length) {
@@ -83,6 +115,10 @@ function decodeTripDescriptor(bytes) {
 
     if (field.fieldNumber === 1 && field.wireType === 2) {
       trip.tripId = decodeString(field.value);
+    } else if (field.fieldNumber === 2 && field.wireType === 2) {
+      trip.startTime = decodeString(field.value);
+    } else if (field.fieldNumber === 3 && field.wireType === 2) {
+      trip.startDate = decodeString(field.value);
     } else if (field.fieldNumber === 4 && field.wireType === 0) {
       trip.scheduleRelationship = Number(field.value);
     } else if (field.fieldNumber === 5 && field.wireType === 2) {
@@ -110,6 +146,12 @@ function decodeStopTimeEvent(bytes) {
         throw new Error('GTFS-RT timestamp exceeds JavaScript safe integer range.');
       }
       event.time = Number(raw);
+    } else if (field.fieldNumber === 3 && field.wireType === 0) {
+      const raw = field.value;
+      if (raw > BigInt(Number.MAX_SAFE_INTEGER)) {
+        throw new Error('GTFS-RT scheduled timestamp exceeds JavaScript safe integer range.');
+      }
+      event.scheduledTime = Number(raw);
     }
   }
 
@@ -123,7 +165,7 @@ function decodeStopTimeUpdate(bytes) {
     stopId: '',
     arrival: null,
     departure: null,
-    scheduleRelationship: 0
+    scheduleRelationship: STOP_RELATIONSHIP.SCHEDULED
   };
 
   while (state.index < bytes.length) {
@@ -145,9 +187,27 @@ function decodeStopTimeUpdate(bytes) {
   return update;
 }
 
+function decodeTripProperties(bytes) {
+  const state = { index: 0 };
+  const result = { tripId: '', startDate: '', startTime: '' };
+
+  while (state.index < bytes.length) {
+    const field = readField(bytes, state);
+    if (field.fieldNumber === 1 && field.wireType === 2) {
+      result.tripId = decodeString(field.value);
+    } else if (field.fieldNumber === 2 && field.wireType === 2) {
+      result.startDate = decodeString(field.value);
+    } else if (field.fieldNumber === 3 && field.wireType === 2) {
+      result.startTime = decodeString(field.value);
+    }
+  }
+
+  return result;
+}
+
 function decodeTripUpdate(bytes) {
   const state = { index: 0 };
-  const result = { trip: null, stopTimeUpdates: [], timestamp: null };
+  const result = { trip: null, stopTimeUpdates: [], timestamp: null, tripProperties: null };
 
   while (state.index < bytes.length) {
     const field = readField(bytes, state);
@@ -159,6 +219,8 @@ function decodeTripUpdate(bytes) {
     } else if (field.fieldNumber === 4 && field.wireType === 0) {
       const raw = field.value;
       if (raw <= BigInt(Number.MAX_SAFE_INTEGER)) result.timestamp = Number(raw);
+    } else if (field.fieldNumber === 6 && field.wireType === 2) {
+      result.tripProperties = decodeTripProperties(field.value);
     }
   }
 
@@ -205,7 +267,7 @@ function decodeGtfsRealtimeFeed(buffer) {
       }
     } else if (field.fieldNumber === 2 && field.wireType === 2) {
       const entity = decodeFeedEntity(field.value);
-      if (entity.tripUpdate?.trip?.tripId) updates.push(entity.tripUpdate);
+      if (entity.tripUpdate?.trip) updates.push(entity.tripUpdate);
     }
   }
 
@@ -249,14 +311,35 @@ function buildBoard(updates, stopCode, feedTimestamp) {
 
   for (const tripUpdate of updates) {
     const trip = tripUpdate?.trip;
-    if (!trip?.tripId) continue;
+    if (!trip) continue;
 
-    // SCHEDULED=0, SKIPPED=1, CANCELED=2, MODIFIED=3, DELETED=6.
-    if ([1, 2, 6].includes(trip.scheduleRelationship)) continue;
+    const tripRelationship = Number.isFinite(Number(trip.scheduleRelationship))
+      ? Number(trip.scheduleRelationship)
+      : TRIP_RELATIONSHIP.SCHEDULED;
+
+    // CANCELED/DELETED are terminal states for the whole trip. Everything
+    // else can carry useful arrival information. In particular, UNSCHEDULED,
+    // REPLACEMENT, DUPLICATED and NEW must not be thrown away merely because
+    // they are not a plain scheduled trip.
+    if (tripRelationship === TRIP_RELATIONSHIP.CANCELED
+      || tripRelationship === TRIP_RELATIONSHIP.DELETED) {
+      continue;
+    }
 
     for (const stopUpdate of tripUpdate.stopTimeUpdates || []) {
       if (!stopUpdate?.stopId || !stopIdsMatch(stopUpdate.stopId, target)) continue;
-      if ([1, 2].includes(stopUpdate.scheduleRelationship)) continue;
+
+      const stopRelationship = Number.isFinite(Number(stopUpdate.scheduleRelationship))
+        ? Number(stopUpdate.scheduleRelationship)
+        : STOP_RELATIONSHIP.SCHEDULED;
+
+      // SKIPPED means the vehicle will not stop here. NO_DATA explicitly says
+      // that no realtime timing is available here, so there is no arrival time
+      // to put on the realtime board. UNSCHEDULED is valid and must be kept.
+      if (stopRelationship === STOP_RELATIONSHIP.SKIPPED
+        || stopRelationship === STOP_RELATIONSHIP.NO_DATA) {
+        continue;
+      }
 
       const timestamp = eventTimestamp(stopUpdate);
       if (!Number.isFinite(timestamp)) continue;
@@ -264,10 +347,24 @@ function buildBoard(updates, stopCode, feedTimestamp) {
       if (timestamp > now + LOOK_AHEAD_SECONDS) continue;
 
       const delay = eventDelay(stopUpdate);
-      const key = trip.tripId || `${trip.routeId}|${trip.directionId}`;
+      const key = [
+        trip.tripId || '',
+        trip.startDate || tripUpdate.tripProperties?.startDate || '',
+        trip.startTime || tripUpdate.tripProperties?.startTime || '',
+        trip.routeId || '',
+        trip.directionId || ''
+      ].join('|');
+
       if (!grouped.has(key)) {
         const terminalUpdate = (tripUpdate.stopTimeUpdates || [])
-          .filter(item => item?.stopId && ![1, 2].includes(item.scheduleRelationship))
+          .filter(item => {
+            if (!item?.stopId) return false;
+            const relationship = Number.isFinite(Number(item.scheduleRelationship))
+              ? Number(item.scheduleRelationship)
+              : STOP_RELATIONSHIP.SCHEDULED;
+            return relationship !== STOP_RELATIONSHIP.SKIPPED
+              && relationship !== STOP_RELATIONSHIP.NO_DATA;
+          })
           .sort((a, b) => {
             const sa = Number.isFinite(Number(a?.stopSequence)) ? Number(a.stopSequence) : -1;
             const sb = Number.isFinite(Number(b?.stopSequence)) ? Number(b.stopSequence) : -1;
@@ -275,9 +372,13 @@ function buildBoard(updates, stopCode, feedTimestamp) {
           })[0] || null;
 
         grouped.set(key, {
-          trip_id: trip.tripId,
+          trip_id: trip.tripId || '',
+          trip_start_date: trip.startDate || tripUpdate.tripProperties?.startDate || '',
+          trip_start_time: trip.startTime || tripUpdate.tripProperties?.startTime || '',
           route_id: trip.routeId || '',
           direction_id: trip.directionId || '',
+          schedule_relationship: tripRelationship,
+          schedule_relationship_name: TRIP_RELATIONSHIP_NAME[tripRelationship] || `UNKNOWN_${tripRelationship}`,
           destination_stop_id: terminalUpdate?.stopId || '',
           times: []
         });
@@ -285,7 +386,15 @@ function buildBoard(updates, stopCode, feedTimestamp) {
 
       grouped.get(key).times.push({
         timestamp,
-        delay: Number.isFinite(delay) ? delay : null
+        delay: Number.isFinite(delay) ? delay : null,
+        stop_schedule_relationship: stopRelationship,
+        stop_schedule_relationship_name: STOP_RELATIONSHIP_NAME[stopRelationship]
+          || `UNKNOWN_${stopRelationship}`,
+        scheduled_time: Number.isFinite(Number(stopUpdate?.arrival?.scheduledTime))
+          ? Number(stopUpdate.arrival.scheduledTime)
+          : Number.isFinite(Number(stopUpdate?.departure?.scheduledTime))
+            ? Number(stopUpdate.departure.scheduledTime)
+            : null
       });
     }
   }
@@ -300,21 +409,50 @@ function buildBoard(updates, stopCode, feedTimestamp) {
     .filter(row => row.times.length)
     .sort((a, b) => a.times[0].timestamp - b.times[0].timestamp);
 
-  // The stop-specific board rows above are not enough to determine which
-  // static directions are actually in service. Expose every trip_id present
-  // in the current GTFS-RT feed so the frontend can map those trips back to
-  // its static route directions.
-  const activeTripIds = [...new Set(
-    (updates || [])
-      .map(update => String(update?.trip?.tripId || '').trim())
-      .filter(Boolean)
-  )];
+  // Only non-canceled/non-deleted realtime trips are considered operationally
+  // active by the frontend. Keeping these statuses out is important because a
+  // canceled trip must never suppress the static fallback for its direction.
+  const activeTrips = [];
+  const seenActive = new Set();
+  for (const update of updates || []) {
+    const trip = update?.trip;
+    if (!trip) continue;
+
+    const relationship = Number.isFinite(Number(trip.scheduleRelationship))
+      ? Number(trip.scheduleRelationship)
+      : TRIP_RELATIONSHIP.SCHEDULED;
+    if (relationship === TRIP_RELATIONSHIP.CANCELED
+      || relationship === TRIP_RELATIONSHIP.DELETED) continue;
+
+    const tripKey = [
+      String(trip.tripId || ''),
+      String(trip.startDate || update.tripProperties?.startDate || ''),
+      String(trip.startTime || update.tripProperties?.startTime || ''),
+      String(trip.routeId || ''),
+      String(trip.directionId || '')
+    ].join('|');
+    if (seenActive.has(tripKey)) continue;
+    seenActive.add(tripKey);
+
+    activeTrips.push({
+      trip_id: String(trip.tripId || ''),
+      start_date: String(trip.startDate || update.tripProperties?.startDate || ''),
+      start_time: String(trip.startTime || update.tripProperties?.startTime || ''),
+      route_id: String(trip.routeId || ''),
+      direction_id: String(trip.directionId || ''),
+      schedule_relationship: relationship,
+      schedule_relationship_name: TRIP_RELATIONSHIP_NAME[relationship] || `UNKNOWN_${relationship}`
+    });
+  }
 
   return {
     status: routes.length ? 'ok' : 'empty',
     stop_code: String(stopCode),
     generated_at: feedTimestamp,
-    active_trip_ids: activeTripIds,
+    active_trips: activeTrips,
+    // Keep this field for compatibility with the current frontend while the
+    // richer active_trips representation is adopted.
+    active_trip_ids: activeTrips.map(item => item.trip_id).filter(Boolean),
     routes
   };
 }
@@ -368,9 +506,10 @@ module.exports = async function handler(req, res) {
           String(item?.trip?.routeId || '').trim()
         ])
       );
-      board.active_trip_ids = board.active_trip_ids.filter(tripId =>
-        requestedRouteIds.has(tripRouteById.get(String(tripId)) || '')
+      board.active_trips = (board.active_trips || []).filter(item =>
+        requestedRouteIds.has(String(item?.route_id || '').trim())
       );
+      board.active_trip_ids = board.active_trips.map(item => String(item.trip_id || '').trim()).filter(Boolean);
     }
 
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
