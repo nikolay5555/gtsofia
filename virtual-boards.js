@@ -474,43 +474,25 @@
     const tripId = String(staticTrip.trip_id || '').trim();
     if (!tripId) return null;
 
-    // 1) Prefer exact trip membership, but only when the trip maps to ONE
-    // logical direction. Some GTFS exports contain the same trip in duplicate
-    // directions that differ only by spelling/case of the destination.
-    const tripMatches = Object.entries(directions).filter(([, direction]) =>
-      Array.isArray(direction?.trip_ids)
-      && direction.trip_ids.map(value => String(value || '').trim()).includes(tripId)
-    );
-    if (tripMatches.length === 1) {
-      const [key, direction] = tripMatches[0];
-      return { key, ...direction };
+    // Direction identity follows the same model as Dimitar5555's data: a
+    // trip belongs to a logical direction, and that direction is the unit
+    // used by the board. Display text is not the identifier.
+    for (const [key, direction] of Object.entries(directions)) {
+      const tripIds = Array.isArray(direction?.trip_ids)
+        ? direction.trip_ids.map(String)
+        : [];
+      if (tripIds.includes(tripId)) return { key, ...direction };
     }
 
-    // 2) The representative trip_id on a generated direction remains a safe
-    // fallback for older/current transport data.
-    const representativeMatches = Object.entries(directions).filter(([, direction]) =>
-      String(direction?.trip_id || '').trim() === tripId
-    );
-    if (representativeMatches.length === 1) {
-      const [key, direction] = representativeMatches[0];
-      return { key, ...direction };
-    }
-
-    // 3) Prefer an exact GTFS direction_id when it is present on the static
-    // trip. This disambiguates routes whose shape/headsign is reused by both
-    // directions.
-    const directionId = String(staticTrip.direction_id ?? '').trim();
-    if (directionId) {
-      const directionIdMatches = Object.entries(directions).filter(([, direction]) =>
-        String(direction?.direction_id ?? '').trim() === directionId
-      );
-      if (directionIdMatches.length === 1) {
-        const [key, direction] = directionIdMatches[0];
+    // Backward-compatible fallback for an older transport.json that does not
+    // yet contain trip_ids on directions. Prefer the representative trip id,
+    // then a unique shape id, and only finally the display headsign.
+    for (const [key, direction] of Object.entries(directions)) {
+      if (String(direction?.trip_id || '').trim() === tripId) {
         return { key, ...direction };
       }
     }
 
-    // 4) Unique shape match.
     const shapeId = String(staticTrip.shape_id || '').trim();
     if (shapeId) {
       const shapeMatches = Object.entries(directions).filter(([, direction]) =>
@@ -522,11 +504,6 @@
       }
     }
 
-    // 5) Headsign is the last fallback. If several logical directions have
-    // the same displayed text, deliberately choose the first one rather than
-    // returning null: losing the realtime association is worse than keeping
-    // the legacy deterministic behaviour. Exact direction_id above is used
-    // whenever the feed/data provides it.
     const headsign = normalizeDirectionText(staticTrip.trip_headsign);
     if (headsign) {
       for (const [key, direction] of Object.entries(directions)) {
@@ -714,24 +691,6 @@
     return result;
   }
 
-  // Temporary route changes that are not yet represented in the static GTFS.
-  // Trolley 3 is shortened to Пътностроителна техника from 11 to 15 Sep 2026;
-  // stop 1754 is not served during that temporary organization.
-  function isTemporaryRouteStopClosed(route, selectedStop) {
-    const routeNumber = String(route?.route_short_name || '').trim();
-    const stopId = String(selectedStop || '').trim();
-    if (routeNumber !== '3' || stopId !== '1754') return false;
-
-    const now = new Date();
-    const sofiaDate = new Intl.DateTimeFormat('en-CA', {
-      timeZone: SOFIA_TIME_ZONE,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit'
-    }).format(now);
-    return sofiaDate >= '2026-09-11' && sofiaDate <= '2026-09-15';
-  }
-
   function getSurfaceScheduledArrivals(stop) {
     const nowTimestamp = Date.now() / 1000;
     const horizonTimestamp = nowTimestamp + 2 * 60 * 60;
@@ -748,7 +707,6 @@
 
       const routeId = String(route?.route_id || '').trim();
       if (!routeId) continue;
-      if (isTemporaryRouteStopClosed(route, selectedStop)) continue;
 
       const directionSet = transportData?.directions?.[routeId] || {};
       const scheduleSet = transportData?.schedules?.[routeId] || {};
@@ -799,19 +757,18 @@
           if (timestamp < nowTimestamp) timestamp += 86400;
           if (timestamp < nowTimestamp || timestamp > horizonTimestamp) continue;
 
-          if (!rowsByTerminal.has(terminalStopId)) {
-            rowsByTerminal.set(terminalStopId, []);
-          }
-          const terminalTimes = rowsByTerminal.get(terminalStopId);
-          const tripId = String(schedule?.trip_id ?? '').trim();
-          if (!terminalTimes.some(existing => Math.abs(existing.timestamp - timestamp) < 30)) {
-            terminalTimes.push({ timestamp, trip_id: tripId });
-            terminalTimes.sort((a, b) => a.timestamp - b.timestamp);
-            if (terminalTimes.length > 4) terminalTimes.pop();
+          const existing = rowsByTerminal.get(terminalStopId);
+          if (!existing) {
+            rowsByTerminal.set(terminalStopId, {
+              timestamp,
+              terminalStopId
+            });
+          } else if (timestamp < existing.timestamp) {
+            existing.timestamp = timestamp;
           }
         }
 
-        for (const [terminalStopId, timestamps] of rowsByTerminal.entries()) {
+        for (const { timestamp, terminalStopId } of rowsByTerminal.values()) {
           const isPartialCourse = !stopIdsMatch(terminalStopId, getDirectionTerminalStopId(direction));
           const terminalStop = getStopById(terminalStopId);
           const destination = isPartialCourse
@@ -825,7 +782,7 @@
             terminal_stop_id: terminalStopId,
             route_ref: meta.number || route.route_short_name || '—',
             destination,
-            times: timestamps.map(item => ({ timestamp: item.timestamp, trip_id: item.trip_id, delay: null, scheduled: true })),
+            times: [{ timestamp, delay: null, scheduled: true }],
             meta,
             scheduled: true
           });
@@ -921,7 +878,7 @@
           return true;
         })
         .slice(0, 4)
-        .map(item => ({ t: item.t, timestamp: item.timestamp, delay: item.delay ?? null }));
+        .map(item => ({ t: item.t, timestamp: item.timestamp }));
       if (row.times.length) routes.push(row);
     }
 
@@ -1075,15 +1032,10 @@
         mergedRealtime.set(key, {
           ...route,
           destination,
-          trip_ids: route.trip_id ? [String(route.trip_id)] : [],
           times: []
         });
       }
-      const mergedRow = mergedRealtime.get(key);
-      if (route.trip_id && !mergedRow.trip_ids.includes(String(route.trip_id))) {
-        mergedRow.trip_ids.push(String(route.trip_id));
-      }
-      mergedRow.times.push(...(route.times || []));
+      mergedRealtime.get(key).times.push(...(route.times || []));
     }
 
     const mergedSurfaceRoutes = [...mergedRealtime.values()]
@@ -1193,101 +1145,37 @@
       })
     );
 
-    function realtimeCoversScheduledTime(realtimeTimes, scheduledTimestamp) {
-      return realtimeTimes.some(time => {
-        const realtimeTimestamp = Number(time?.timestamp);
-        if (!Number.isFinite(realtimeTimestamp)) return false;
-        const delay = Number(time?.delay);
-        if (Number.isFinite(delay)) {
-          const impliedScheduled = realtimeTimestamp - delay;
-          return Math.abs(impliedScheduled - scheduledTimestamp) <= 90;
-        }
-        return Math.abs(realtimeTimestamp - scheduledTimestamp) <= 120;
-      });
-    }
-
-    function mergeScheduledIntoRealtimeRoute(realtimeRoute, scheduledRoute) {
-      const realtimeTripIds = new Set((realtimeRoute.trip_ids || [])
-        .map(value => String(value || '').trim())
-        .filter(Boolean));
-      const realtimeTimes = realtimeRoute.times || [];
-      const mergedTimes = [
-        ...realtimeTimes.map(time => ({ ...time, scheduled: false })),
-        ...(scheduledRoute.times || [])
-          .filter(time => {
-            const scheduledTripId = String(time?.trip_id || '').trim();
-            if (scheduledTripId && realtimeTripIds.has(scheduledTripId)) return false;
-            return !realtimeCoversScheduledTime(realtimeTimes, Number(time.timestamp));
-          })
-          .map(time => ({ ...time, scheduled: true }))
-      ];
-      mergedTimes.sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
-      const unique = [];
-      for (const time of mergedTimes) {
-        if (!unique.some(existing => Math.abs(Number(existing.timestamp) - Number(time.timestamp)) < 30)) {
-          unique.push(time);
-        }
-        if (unique.length >= 4) break;
-      }
-      return { ...realtimeRoute, times: unique };
-    }
-
-    const mergedSurfaceWithFallback = [...mergedSurfaceRoutes];
-    const scheduledOnlyRoutes = [];
-
-    for (const scheduledRoute of scheduledSurfaceRoutes) {
-      const overridingRealtime = realtimeLogicalRoutes.find(realtimeRoute =>
-        realtimeOverridesScheduledDirection(realtimeRoute, scheduledRoute, stop.stop_id)
-      );
-
-      if (overridingRealtime) {
-        const merged = mergeScheduledIntoRealtimeRoute(overridingRealtime, scheduledRoute);
-        const idx = mergedSurfaceWithFallback.indexOf(overridingRealtime);
-        if (idx >= 0) mergedSurfaceWithFallback[idx] = merged;
-        continue;
+    const surfaceFallbackRoutes = scheduledSurfaceRoutes.filter(route => {
+      if (realtimeLogicalRoutes.some(realtimeRoute =>
+        realtimeOverridesScheduledDirection(realtimeRoute, route, stop.stop_id)
+      )) {
+        return false;
       }
 
       // Passenger-facing merge for equivalent named terminals (e.g. 94 /
       // stop 1699 vs 1700).
-      const routeId = String(scheduledRoute.route_id || '');
-      const destinationKey = normalizeDirectionText(scheduledRoute.destination || '');
-      const displayedKey = `${routeId}|${destinationKey}|${String(scheduledRoute.route_ref || '')}`;
-      const sameDisplayedRealtime = mergedSurfaceWithFallback.find(route => {
-        const key = `${String(route.route_id || '')}|${normalizeDirectionText(route.destination || '')}|${String(route.route_ref || '')}`;
-        return key === displayedKey;
-      });
-
-      if (sameDisplayedRealtime) {
-        const merged = mergeScheduledIntoRealtimeRoute(sameDisplayedRealtime, scheduledRoute);
-        const idx = mergedSurfaceWithFallback.indexOf(sameDisplayedRealtime);
-        if (idx >= 0) mergedSurfaceWithFallback[idx] = merged;
-      } else {
-        scheduledOnlyRoutes.push(scheduledRoute);
-      }
-    }
+      const routeId = String(route.route_id || '');
+      const destinationKey = normalizeDirectionText(route.destination || '');
+      const displayedKey = `${routeId}|${destinationKey}|${String(route.route_ref || '')}`;
+      return !realtimeDirectionKeys.has(displayedKey);
+    });
 
     // Some GTFS exports contain duplicate static directions with the same
     // destination/pattern. Keep only the earliest fallback row for a given
     // line + destination so the board never shows duplicate static entries.
     const fallbackByKey = new Map();
-    for (const route of scheduledOnlyRoutes) {
+    for (const route of surfaceFallbackRoutes) {
       // Deduplicate by the direction the passenger actually sees. Different
       // GTFS terminal stop IDs can represent the same named destination.
       const destinationKey = normalizeDirectionText(route.destination || '');
       const key = `${String(route.route_id || '')}|${destinationKey}|${String(route.route_ref || '')}`;
       const existing = fallbackByKey.get(key);
-      if (!existing) {
+      if (!existing || Number(route.times?.[0]?.timestamp) < Number(existing.times?.[0]?.timestamp)) {
         fallbackByKey.set(key, route);
-      } else {
-        const combined = [...(existing.times || []), ...(route.times || [])]
-          .sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
-        existing.times = combined.filter((time, index, list) =>
-          index === 0 || Math.abs(Number(time.timestamp) - Number(list[index - 1].timestamp)) >= 30
-        ).slice(0, 4);
       }
     }
 
-    const surfaceRoutes = [...mergedSurfaceWithFallback, ...fallbackByKey.values()]
+    const surfaceRoutes = [...mergedSurfaceRoutes, ...fallbackByKey.values()]
       .sort((a, b) => Number(a.times?.[0]?.timestamp) - Number(b.times?.[0]?.timestamp));
 
     // Sofia Traffic currently does not provide usable Trip Updates for metro.
