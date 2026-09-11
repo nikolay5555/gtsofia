@@ -1273,9 +1273,42 @@ VIRTUAL BOARDS
 }
 
 .vb-next-times span {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
   padding: 3px 6px;
   border-radius: 7px;
   background: #f3f4f6;
+  cursor: help;
+  outline: none;
+}
+
+.vb-next-times span::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translate(-50%, 4px);
+  padding: 5px 8px;
+  border-radius: 7px;
+  background: #111827;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity .12s ease, transform .12s ease, visibility .12s ease;
+  z-index: 20;
+}
+
+.vb-next-times span:hover::after,
+.vb-next-times span:focus-visible::after {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-50%, 0);
 }
 
 .virtual-board-no-service,

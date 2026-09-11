@@ -1380,6 +1380,14 @@
       list.innerHTML = rows.map((row, index) => {
         const meta = getLineMeta(row.route_id || row.routeId, row.route_ref);
         const arrivals = row.arrivals;
+        const nextTimes = arrivals.slice(1, 4).map(time => {
+          const minutes = getArrivalMinutes(time.timestamp);
+          const tooltip = Number.isFinite(minutes)
+            ? (minutes < 1 ? "Сега" : `${Math.ceil(minutes)} мин.`)
+            : "";
+          const clock = formatArrivalClock(time.timestamp);
+          return `<span class="vb-next-time" tabindex="0" data-tooltip="${escapeHtml(tooltip)}" aria-label="${escapeHtml(tooltip)}">${escapeHtml(clock)}</span>`;
+        }).join("");
         return `
           <article class="vb-row">
             <div class="schedule-summary-route-row vb-route-row">
@@ -1388,7 +1396,7 @@
             </div>
             <div class="vb-time-block">
               ${countdownHtml(arrivals[0], !arrivals[0]?.scheduled)}
-              ${arrivals.length > 1 ? `<div class="vb-next-times">${arrivals.slice(1, 4).map(time => `<span>${escapeHtml(formatArrivalClock(time.timestamp))}</span>`).join("")}</div>` : ""}
+              ${arrivals.length > 1 ? `<div class="vb-next-times">${nextTimes}</div>` : ""}
             </div>
           </article>
         `;
