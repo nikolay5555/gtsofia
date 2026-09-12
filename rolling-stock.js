@@ -117,26 +117,6 @@ const rollingStock = [
   {
     type: "bus",
     manufacturer: "Mercedes",
-    model: "O345",
-    year: 2000,
-    quantity: 1,
-    image: "https://s1.busphoto.eu/photo/01/62/77/162772.jpg",
-    lines: ["56"]
-  },
-
-  {
-    type: "bus",
-    manufacturer: "Mercedes",
-    model: "O345G",
-    year: 1998,
-    quantity: 2,
-    image: "https://s1.busphoto.eu/photo/01/94/26/194267.jpg",
-    lines: ["88", "213", "305", "404", "413"]
-  },
-
-  {
-    type: "bus",
-    manufacturer: "Mercedes",
     model: "O345 Conecto",
     year: 2002,
     quantity: 2,
