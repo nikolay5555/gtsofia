@@ -91,6 +91,7 @@ function getLineType(route) {
 
     const forcedBusLines =
         new Set([
+            '3TM',
             '73',
             '60',
             '288',
@@ -180,6 +181,7 @@ function getLineColor(
 
     const forcedBusLines =
         new Set([
+            '3TM',
             '73',
             '60',
             '288',
