@@ -467,7 +467,7 @@ grid.appendChild(title);
 
           <h3>${item.manufacturer} ${item.model}</h3>
 
-          <p><strong>Година:</strong> ${item.year}</p>
+          <p><strong>Година на производство:</strong> ${item.year}</p>
           <p><strong>Количество:</strong> ${item.quantity}</p>
 
           <div class="stock-lines">
