@@ -177,16 +177,6 @@
     return Math.max(0, (seconds - Date.now() / 1000) / 60);
   }
 
-  function formatArrivalCountdown(timestamp) {
-    const seconds = Number(timestamp);
-    if (!Number.isFinite(seconds)) return "";
-
-    const remainingSeconds = Math.max(0, seconds - Date.now() / 1000);
-    if (remainingSeconds < 60) return "Сега";
-
-    return `${Math.floor(remainingSeconds / 60)} мин.`;
-  }
-
   function formatArrivalClock(timestamp) {
     const seconds = Number(timestamp);
     if (!Number.isFinite(seconds)) return "—";
@@ -206,8 +196,9 @@
 
     const clock = formatArrivalClock(timestamp);
     const live = showLive ? '<span class="vb-arrival-live" aria-hidden="true"></span>' : '';
-    const countdown = formatArrivalCountdown(timestamp);
-    if (!countdown) return "";
+    const countdown = minutes < 1
+      ? 'Сега'
+      : `${Math.floor(minutes)} мин.`;
 
     return `<div class="vb-arrival-main">${live}<span class="vb-arrival-clock">${escapeHtml(clock)}</span><span class="vb-arrival-separator" aria-hidden="true">·</span><span class="vb-arrival-minutes">${countdown}</span></div>`;
   }
@@ -1145,7 +1136,7 @@
         const nextTimes = arrivals.slice(1, 4).map(time => {
           const minutes = getArrivalMinutes(time.timestamp);
           const tooltip = Number.isFinite(minutes)
-            ? formatArrivalCountdown(time.timestamp)
+            ? (minutes < 1 ? "Сега" : `${Math.floor(minutes)} мин.`)
             : "";
           const clock = formatArrivalClock(time.timestamp);
           return `<span class="vb-next-time" tabindex="0" data-tooltip="${escapeHtml(tooltip)}" aria-label="${escapeHtml(tooltip)}">${escapeHtml(clock)}</span>`;
