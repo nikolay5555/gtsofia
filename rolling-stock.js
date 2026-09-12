@@ -9,7 +9,7 @@ const rollingStock = [
     manufacturer: "BMC",
     model: "Belde 220-SLF",
     year: 2005,
-    quantity: 37,
+    quantity: 10,
     image: "https://s1.busphoto.eu/photo/02/39/61/239613.jpg",
     lines: ["26", "28", "187", "188", "190", "285"]
   },
@@ -19,7 +19,7 @@ const rollingStock = [
     manufacturer: "BMC",
     model: "Procity CNG 2017",
     year: 2017,
-    quantity: 60,
+    quantity: 59,
     image: "https://s1.busphoto.eu/photo/05/33/38/533381.jpg",
     lines: ["18", "20", "21", "22", "24", "27", "29", "30", "31", "81", "86", "112", "115", "117", "118", "119"]
   },
@@ -29,7 +29,7 @@ const rollingStock = [
     manufacturer: "BMC",
     model: "Procity CNG 2018",
     year: 2018,
-    quantity: 71,
+    quantity: 69,
     image: "https://s1.busphoto.eu/photo/04/18/15/418156.jpg",
     lines: ["18", "20", "21", "22", "24", "27", "29", "30", "31", "72", "64", "67", "77", "81", "86", "111", "112", "115", "117", "118", "119", "404", "604"]
   },
@@ -69,7 +69,7 @@ const rollingStock = [
     manufacturer: "Yutong",
     model: "E12LF",
     year: 2018,
-    quantity: 21,
+    quantity: 20,
     image: "https://s1.busphoto.eu/photo/06/21/80/621808.jpg",
     lines: ["9", "23", "82", "309", "404", "604"]
   },
@@ -79,7 +79,7 @@ const rollingStock = [
     manufacturer: "Yutong",
     model: "ZK6126HGA",
     year: 2016,
-    quantity: 110,
+    quantity: 109,
     image: "https://s1.busphoto.eu/photo/01/67/30/167309.jpg",
     lines: ["26", "42", "56", "64", "67", "68", "69", "70", "72", "75", "77", "98", "111", "150", "181", "183", "184", "185", "187", "188", "190", "191", "192", "314", "404", "604"]
   },
@@ -99,7 +99,7 @@ const rollingStock = [
     manufacturer: "Mercedes",
     model: "Conecto LF",
     year: 2008,
-    quantity: 35,
+    quantity: 34,
     image: "https://s1.busphoto.eu/photo/03/53/47/353477.jpg",
     lines: ["42", "56", "58", "59", "77", "108", "150", "260"]
   },
@@ -129,7 +129,7 @@ const rollingStock = [
     manufacturer: "Mercedes",
     model: "O345 Conecto G",
     year: 2003,
-    quantity: 37,
+    quantity: 27,
     image: "https://s1.busphoto.eu/photo/07/31/97/731974.jpg",
     lines: ["11", "54", "76", "77", "78", "79", "83", "88", "108", "213", "285", "305", "404", "413"]
   },
@@ -138,7 +138,7 @@ const rollingStock = [
     type: "bus",
     manufacturer: "Mercedes",
     model: "Intouro ME",
-    year: 2018,
+    year: 2015,
     quantity: 21,
     image: "https://s1.busphoto.eu/photo/04/67/02/467029.jpg",
     lines: ["44", "47", "49", "59", "61", "63", "66"]
@@ -169,7 +169,7 @@ const rollingStock = [
     manufacturer: "MAN",
     model: "Lion's City G CNG 2014",
     year: 2014,
-    quantity: 125,
+    quantity: 124,
     image: "https://s1.busphoto.eu/photo/01/67/69/167691.jpg",
     lines: ["11", "76", "78", "83", "85", "88", "94", "102", "108", "Х10", "111", "120", "204", "213", "280", "294", "304", "305", "310", "404", "413"]
   },
@@ -190,7 +190,7 @@ const rollingStock = [
     model: "Lion's City LE",
     year: 2018,
     quantity: 1,
-    image: "https://s1.busphoto.eu/photo/02/88/89/288890.jpg",
+    image: "https://trinmo.org/trinmo/gallery/vehicles/nikola-nikolov/2025/2c2aec37-71e7-48c8-9251-f3defc23bf25.jpg",
     lines: ["20", "21", "22"]
   },
 
@@ -199,7 +199,7 @@ const rollingStock = [
     manufacturer: "MAN",
     model: "SG262",
     year: 1999,
-    quantity: 7,
+    quantity: 4,
     image: "https://s1.busphoto.eu/photo/06/59/88/659880.jpg",
     lines: ["26", "78", "79", "285"]
   },
@@ -208,7 +208,7 @@ const rollingStock = [
     type: "bus",
     manufacturer: "Neoplan",
     model: "N4426/3 Centroliner",
-    year: 2023,
+    year: 2003,
     quantity: 1,
     image: "https://s1.busphoto.eu/photo/05/23/35/523356.jpg",
     lines: ["X43", "120"]
@@ -249,7 +249,7 @@ const rollingStock = [
     manufacturer: "Ikarus",
     model: "280.92T",
     year: 1985,
-    quantity: 7,
+    quantity: 4,
     image: "https://transphoto.org/photo/21/97/08/2197082.jpg",
     lines: ["6"]
   },
@@ -268,8 +268,8 @@ const rollingStock = [
     type: "tram",
     manufacturer: "ЗТС",
     model: "T8M-700M",
-    year: 1999,
-    quantity: 5,
+    year: 1990,
+    quantity: 4,
     image: "https://transphoto.org/photo/15/42/96/1542966.jpg",
     lines: ["11"]
   },
@@ -298,7 +298,7 @@ const rollingStock = [
     type: "tram",
     manufacturer: "Pesa",
     model: "Swing-122NaSF",
-    year: 2014,
+    year: 2013,
     quantity: 67,
     image: "https://transphoto.org/photo/13/14/07/1314079.jpg",
     lines: ["4", "5", "6", "7", "18", "27"]
@@ -318,8 +318,8 @@ const rollingStock = [
     type: "tram",
     manufacturer: "Schindler",
     model: "Waggon AG Be 4-6",
-    year: 2017,
-    quantity: 27,
+    year: 1990,
+    quantity: 25,
     image: "https://transphoto.org/photo/10/91/92/1091922.jpg",
     lines: ["8", "12"]
   },
@@ -328,7 +328,7 @@ const rollingStock = [
     type: "tram",
     manufacturer: "ČKD Tatra",
     model: "T6B5",
-    year: 1989,
+    year: 1988,
     quantity: 37,
     image: "https://transphoto.org/photo/10/52/76/1052768.jpg",
     lines: ["20", "21"]
@@ -338,8 +338,8 @@ const rollingStock = [
     type: "tram",
     manufacturer: "ČKD Tatra",
     model: "T6A5",
-    year: 2016,
-    quantity: 55,
+    year: 1995,
+    quantity: 52,
     image: "https://transphoto.org/photo/11/51/94/1151940.jpg",
     lines: ["21", "22"]
   },
@@ -348,8 +348,8 @@ const rollingStock = [
     type: "tram",
     manufacturer: "Duewag",
     model: "GT8",
-    year: 1995,
-    quantity: 5,
+    year: 1960,
+    quantity: 6,
     image: "https://transphoto.org/photo/22/08/76/2208767.jpg",
     lines: ["23"]
   },
@@ -358,8 +358,8 @@ const rollingStock = [
     type: "metro",
     manufacturer: "МВМ",
     model: "81-717.4/81-714.4",
-    year: 1998,
-    quantity: 12,
+    year: 1989,
+    quantity: 8,
     image: "https://transphoto.org/photo/22/84/16/2284160.jpg",
     lines: ["1", "2", "4"]
   },
@@ -398,8 +398,8 @@ const rollingStock = [
     type: "metro",
     manufacturer: "Siemens",
     model: "Inspiro SF",
-    year: 2020,
-    quantity: 30,
+    year: 2017,
+    quantity: 90,
     image: "https://transphoto.org/photo/18/49/45/1849450.jpg",
     lines: ["3"]
   },
@@ -409,7 +409,7 @@ const rollingStock = [
     manufacturer: "Škoda",
     model: "Varsovia",
     year: 2025,
-    quantity: 32,
+    quantity: 7,
     image: "https://transphoto.org/photo/21/88/37/2188373.jpg",
     lines: ["1", "2", "4"]
   },
