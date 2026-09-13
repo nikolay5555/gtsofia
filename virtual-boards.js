@@ -6,6 +6,7 @@
   let map = null;
   let selectedStopId = null;
   let refreshTimer = null;
+  let boardRenderToken = 0;
   let clockTimer = null;
   let stopMarkers = null;
   let stopMarkersById = new Map();
@@ -1068,6 +1069,7 @@
   }
 
   async function renderStopBoard(stop, boardData = null) {
+    const renderToken = ++boardRenderToken;
     selectedStopId = String(stop.stop_id);
     const panel = boardPanel();
     if (!panel) return;
@@ -1087,6 +1089,7 @@
     `;
 
     document.getElementById("virtualBoardClose")?.addEventListener("click", () => {
+      ++boardRenderToken;
       selectedStopId = null;
       if (selectedStopMarker) {
         selectedStopMarker.setStyle({
@@ -1101,10 +1104,11 @@
 
     try {
       const data = boardData || await fetchVirtualBoard(stop);
+      if (renderToken !== boardRenderToken || selectedStopId !== String(stop.stop_id)) return;
       const list = panel.querySelector(".virtual-board-list");
 
       if (data.status !== "ok" || !data.routes.length) {
-        list.innerHTML = `<div class="virtual-board-no-data">Няма предстоящи заминавания.</div>`;
+        list.innerHTML = `<div class="virtual-board-no-data">Няма налични пристигания за тази спирка.</div>`;
         return;
       }
 
@@ -1126,7 +1130,7 @@
         .sort((a, b) => a.arrivals[0].timestamp - b.arrivals[0].timestamp);
 
       if (!rows.length) {
-        list.innerHTML = `<div class="virtual-board-no-data">Няма предстоящи заминавания.</div>`;
+        list.innerHTML = `<div class="virtual-board-no-data">Няма налични пристигания за тази спирка.</div>`;
         return;
       }
 
@@ -1155,9 +1159,11 @@
         `;
       }).join("");
     } catch (error) {
+      if (renderToken !== boardRenderToken || selectedStopId !== String(stop.stop_id)) return;
       console.error("Realtime virtual board error:", error);
       panel.querySelector(".virtual-board-list").innerHTML = `<div class="virtual-board-error">Realtime данните не могат да бъдат заредени.</div>`;
     } finally {
+      if (renderToken !== boardRenderToken || selectedStopId !== String(stop.stop_id)) return;
       const refreshButton = document.getElementById("virtualBoardRefresh");
       if (refreshButton) {
         refreshButton.disabled = false;
@@ -1228,25 +1234,11 @@
       const needle = normalized(query).trim();
       if (!needle) return [];
 
-      const seen = new Set();
-
       return stops
         .filter(stop => {
           const name = normalized(stop.name || stop.stop_name);
           const code = normalized(stop.stop_code || stop.stop_id);
           return name.includes(needle) || code.includes(needle);
-        })
-        .filter(stop => {
-          // transport.json may contain duplicate stop records with the same
-          // public code/id. The search dropdown should present each stop once.
-          const key = String(stop.stop_id || stop.stop_code || [
-            stop.stop_name,
-            stop.stop_lat,
-            stop.stop_lon
-          ].join('|')).trim();
-          if (!key || seen.has(key)) return false;
-          seen.add(key);
-          return true;
         })
         .slice(0, 8);
     };
@@ -1460,7 +1452,9 @@
   async function refreshSelectedBoard() {
     if (!selectedStopId) return;
 
-    const stop = findStopById(selectedStopId);
+    const requestedStopId = String(selectedStopId);
+    const requestToken = boardRenderToken;
+    const stop = findStopById(requestedStopId);
     if (!stop) return;
 
     const refreshButton = document.getElementById("virtualBoardRefresh");
@@ -1469,8 +1463,10 @@
 
     try {
       const data = await fetchVirtualBoard(stop);
+      if (requestToken !== boardRenderToken || selectedStopId !== requestedStopId) return;
       await renderStopBoard(stop, data);
     } catch (error) {
+      if (requestToken !== boardRenderToken || selectedStopId !== requestedStopId) return;
       console.error("Неуспешно зареждане на GTFS-Realtime виртуално табло:", error);
       const list = boardPanel()?.querySelector(".virtual-board-list");
       if (list) list.innerHTML = `<div class="virtual-board-error">Realtime данните не могат да бъдат заредени.</div>`;
