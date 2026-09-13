@@ -1003,7 +1003,7 @@ function showCourse(course) {
                   )}
                 </span>
                 <span class="course-stop-code">
-                  [ ${escapeHtml(
+                  [${escapeHtml(
                     stop.stop_code || stop.stop_id || ""
                   )}]
                 </span>
