@@ -748,6 +748,17 @@ SCHEDULES PAGE
 
 .course-stop-name {
   font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.course-stop-code {
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
 }
 
 .course-stop-time {
