@@ -1234,11 +1234,18 @@
       const needle = normalized(query).trim();
       if (!needle) return [];
 
+      const seen = new Set();
       return stops
         .filter(stop => {
           const name = normalized(stop.name || stop.stop_name);
           const code = normalized(stop.stop_code || stop.stop_id);
           return name.includes(needle) || code.includes(needle);
+        })
+        .filter(stop => {
+          const key = String(stop.stop_code || stop.stop_id || "").trim();
+          if (!key || seen.has(key)) return false;
+          seen.add(key);
+          return true;
         })
         .slice(0, 8);
     };
