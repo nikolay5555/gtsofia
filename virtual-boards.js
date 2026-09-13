@@ -1108,7 +1108,7 @@
       const list = panel.querySelector(".virtual-board-list");
 
       if (data.status !== "ok" || !data.routes.length) {
-        list.innerHTML = `<div class="virtual-board-no-data">Няма налични пристигания за тази спирка.</div>`;
+        list.innerHTML = `<div class="virtual-board-no-data">Няма предстоящи заминавания.</div>`;
         return;
       }
 
@@ -1130,7 +1130,7 @@
         .sort((a, b) => a.arrivals[0].timestamp - b.arrivals[0].timestamp);
 
       if (!rows.length) {
-        list.innerHTML = `<div class="virtual-board-no-data">Няма налични пристигания за тази спирка.</div>`;
+        list.innerHTML = `<div class="virtual-board-no-data">Няма предстоящи заминавания.</div>`;
         return;
       }
 
