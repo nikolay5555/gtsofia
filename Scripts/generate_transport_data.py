@@ -9,7 +9,6 @@ import urllib.parse
 import zipfile
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 from pathlib import Path
 
 
@@ -105,10 +104,8 @@ def parse_time(value):
 
 
 def get_today():
-    # GTFS service dates are local dates for the transit agency.
-    # Sofia is Europe/Sofia; using UTC can shift the service date around midnight.
     return datetime.now(
-        ZoneInfo("Europe/Sofia")
+        timezone.utc
     ).date()
 
 
@@ -550,78 +547,108 @@ def read_csv(filename):
 
 def build_active_service_ids(
     calendar_dates,
-    today,
-    calendar=None
+    today
 ):
     """
-    Return only the service_ids that are valid for *today*.
+    Python equivalent of Dimitar5555's 03-routes.js.
 
-    GTFS service validity is determined by:
-      1. calendar.txt regular weekly service, when present;
-      2. calendar_dates.txt exceptions for the exact service date.
-
-    This function intentionally does NOT look ahead to future dates.
-    Future route/service changes belong to future service dates and must not
-    leak into today's static fallback.
+    service_id -> False  => weekday
+    service_id -> True   => weekend/holiday
     """
 
-    active = set()
+    end_date = (
+        today
+        + timedelta(days=15)
+    )
 
-    # Base recurring services from calendar.txt.
-    if calendar:
-        weekday_field = [
-            "monday",
-            "tuesday",
-            "wednesday",
-            "thursday",
-            "friday",
-            "saturday",
-            "sunday",
-        ][today.weekday()]
+    stats = defaultdict(
+        lambda: {
+            "weekday_count": 0,
+            "weekend_count": 0,
+        }
+    )
 
-        for row in calendar:
-            service_id = normalize(row.get("service_id"))
-            if not service_id:
-                continue
-
-            start_date = parse_date(row.get("start_date"))
-            end_date = parse_date(row.get("end_date"))
-            if start_date is None or end_date is None:
-                continue
-            if not (start_date <= today <= end_date):
-                continue
-
-            if normalize(row.get(weekday_field)) == "1":
-                active.add(service_id)
-
-    # Date-specific GTFS exceptions. An exception for another date is
-    # deliberately ignored.
     for row in calendar_dates:
-        service_id = normalize(row.get("service_id"))
+
+        if normalize(
+            row.get(
+                "exception_type"
+            )
+        ) != "1":
+
+            continue
+
+        current = parse_date(
+            row.get(
+                "date"
+            )
+        )
+
+        if current is None:
+            continue
+
+        if current < today:
+            continue
+
+        if current > end_date:
+            continue
+
+        service_id = normalize(
+            row.get(
+                "service_id"
+            )
+        )
+
         if not service_id:
             continue
 
-        current = parse_date(row.get("date"))
-        if current != today:
-            continue
+        if is_weekend_date(
+            current
+        ):
 
-        exception_type = normalize(row.get("exception_type"))
-        if exception_type == "1":
-            active.add(service_id)
-        elif exception_type == "2":
-            active.discard(service_id)
+            stats[
+                service_id
+            ][
+                "weekend_count"
+            ] += 1
 
-    # Current code separates schedules into weekday/weekend buckets.
-    # All services selected above are services for today's actual Sofia date.
-    result = {
-        service_id: is_weekend_date(today)
-        for service_id in sorted(active)
-    }
+        else:
 
-    print(f"Active service IDs for {today}: {len(result)}")
+            stats[
+                service_id
+            ][
+                "weekday_count"
+            ] += 1
+
+    result = {}
+
+    for service_id, counts in stats.items():
+
+        result[
+            service_id
+        ] = (
+            counts[
+                "weekday_count"
+            ]
+            <=
+            counts[
+                "weekend_count"
+            ]
+        )
+
     print(
-        "Today's schedule bucket: "
-        + ("weekend/holiday" if is_weekend_date(today) else "weekday")
+        "Active service IDs: "
+        f"{len(result)}"
+    )
+
+    print(
+        "Weekday services: "
+        f"{sum(value is False for value in result.values())}"
+    )
+
+    print(
+        "Weekend/holiday services: "
+        f"{sum(value is True for value in result.values())}"
     )
 
     return result
@@ -2236,13 +2263,6 @@ def main():
             "calendar_dates.txt"
         )
 
-        # calendar.txt is optional when the feed expresses all service
-        # validity through calendar_dates.txt.
-        calendar = None
-        calendar_path = GTFS_DIR / "calendar.txt"
-        if calendar_path.exists():
-            calendar = read_csv("calendar.txt")
-
         today = get_today()
 
         print(
@@ -2256,8 +2276,7 @@ def main():
         active_service_ids = (
             build_active_service_ids(
                 calendar_dates,
-                today,
-                calendar
+                today
             )
         )
 
