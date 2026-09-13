@@ -997,9 +997,16 @@ function showCourse(course) {
               <div class="course-stop-marker"></div>
 
               <div class="course-stop-name">
-                ${escapeHtml(
-                  stop.name
-                )}
+                <span class="course-stop-name-text">
+                  ${escapeHtml(
+                    stop.name
+                  )}
+                </span>
+                <span class="course-stop-code">
+                  [${escapeHtml(
+                    stop.stop_code || stop.stop_id || ""
+                  )}]
+                </span>
               </div>
 
               <div class="course-stop-time">
