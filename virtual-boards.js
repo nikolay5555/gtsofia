@@ -19,6 +19,40 @@
 
   const boardPanel = () => document.getElementById("virtualBoardBody");
 
+
+  const FAVORITE_STOPS_KEY = "gtsofia.favoriteStops";
+
+  function getFavoriteStops() {
+    try {
+      const value = JSON.parse(localStorage.getItem(FAVORITE_STOPS_KEY) || "[]");
+      return Array.isArray(value) ? value : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function isFavoriteStop(stopId) {
+    return getFavoriteStops().some(item => String(item.stop_id) === String(stopId));
+  }
+
+  function setFavoriteStop(stop) {
+    const favorites = getFavoriteStops();
+    const index = favorites.findIndex(item => String(item.stop_id) === String(stop.stop_id));
+
+    if (index >= 0) {
+      favorites.splice(index, 1);
+    } else {
+      favorites.push({
+        stop_id: String(stop.stop_id),
+        stop_code: String(stop.stop_code || stop.stop_id || ""),
+        stop_name: String(stop.stop_name || stop.name || "Спирка")
+      });
+    }
+
+    localStorage.setItem(FAVORITE_STOPS_KEY, JSON.stringify(favorites));
+    return index < 0;
+  }
+
   function escapeHtml(value) {
     return String(value ?? "")
       .replaceAll("&", "&amp;")
@@ -1081,7 +1115,8 @@
           <h2>${escapeHtml(stop.stop_name || stop.name || "Спирка")}</h2>
         </div>
         <div class="virtual-board-header-actions">
-          <button type="button" class="virtual-board-refresh is-loading" id="virtualBoardRefresh" disabled aria-label="Обнови таблото"><span aria-hidden="true">↻</span></button>
+          <button type="button" class="virtual-board-refresh is-loading" id="virtualBoardRefresh" disabled aria-label="Обнови таблото" title="Обнови таблото"><span aria-hidden="true">↻</span></button>
+          <button type="button" class="virtual-board-favorite${isFavoriteStop(stop.stop_id) ? " is-favorite" : ""}" id="virtualBoardFavorite" aria-label="${isFavoriteStop(stop.stop_id) ? "Премахни от любими" : "Добави в любими"}" title="${isFavoriteStop(stop.stop_id) ? "Премахни от любими" : "Добави в любими"}"><span aria-hidden="true">${isFavoriteStop(stop.stop_id) ? "★" : "☆"}</span></button>
           <button type="button" class="virtual-board-close" id="virtualBoardClose" aria-label="Затвори таблото">×</button>
         </div>
       </div>
@@ -1100,6 +1135,15 @@
         selectedStopMarker = null;
       }
       renderEmptyBoard();
+    });
+
+    document.getElementById("virtualBoardFavorite")?.addEventListener("click", event => {
+      const button = event.currentTarget;
+      const favorite = setFavoriteStop(stop);
+      button.classList.toggle("is-favorite", favorite);
+      button.querySelector("span").textContent = favorite ? "★" : "☆";
+      button.setAttribute("aria-label", favorite ? "Премахни от любими" : "Добави в любими");
+      button.setAttribute("title", favorite ? "Премахни от любими" : "Добави в любими");
     });
 
     try {
@@ -1528,6 +1572,15 @@
       initMap(stops);
       setupStopSearch(stops);
       setupGeolocation();
+
+      const requestedStopId = new URLSearchParams(window.location.search).get("stop");
+      if (requestedStopId) {
+        const requestedStop = findStopById(requestedStopId);
+        if (requestedStop) {
+          selectStopOnMap(requestedStop);
+        }
+      }
+
       startTimers();
     } catch (error) {
       console.error("Неуспешно зареждане на GTFS за виртуалните табла:", error);
