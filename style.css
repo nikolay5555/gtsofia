@@ -1490,6 +1490,21 @@ RESPONSIVE
     grid-template-columns: 1fr;
   }
 
+  .schedule-minute-list {
+    width: 100%;
+    align-items: stretch;
+  }
+
+  .schedule-minute {
+    width: 100%;
+    margin: 0;
+    padding: 5px 0;
+    text-align: center;
+    text-indent: 0;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+
   .course-stop {
     grid-template-columns: 22px 1fr auto;
   }
