@@ -1708,3 +1708,463 @@ FAVORITE STOPS
     grid-template-columns: 1fr;
   }
 }
+
+
+/* =========================
+THEME
+========================= */
+
+html {
+  color-scheme: light;
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+.theme-switcher {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.theme-toggle {
+  width: 42px;
+  height: 42px;
+  border: 1px solid #d1d5db;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, .92);
+  color: #111827;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font: inherit;
+  font-size: 21px;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0,0,0,.08);
+}
+
+.theme-toggle:hover {
+  background: #f3f4f6;
+}
+
+.theme-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 1200;
+  width: 170px;
+  padding: 6px;
+  border: 1px solid #e5e7eb;
+  border-radius: 13px;
+  background: #fff;
+  box-shadow: 0 14px 35px rgba(0,0,0,.14);
+}
+
+.theme-menu[hidden] {
+  display: none;
+}
+
+.theme-menu button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #374151;
+  padding: 9px 10px;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.theme-menu button:hover {
+  background: #f3f4f6;
+}
+
+.theme-menu button.is-active {
+  background: #111827;
+  color: #fff;
+}
+
+html[data-theme="dark"] body {
+  background: #111827;
+  color: #f3f4f6;
+}
+
+html[data-theme="dark"] .navbar {
+  background: rgba(17, 24, 39, .88);
+  border-bottom-color: rgba(55, 65, 81, .8);
+}
+
+html[data-theme="dark"] .navbar.scrolled {
+  background: rgba(17, 24, 39, .78);
+}
+
+html[data-theme="dark"] .nav-logo,
+html[data-theme="dark"] .nav-toggle {
+  color: #f9fafb;
+}
+
+html[data-theme="dark"] .navbar nav a {
+  color: #d1d5db;
+}
+
+html[data-theme="dark"] .navbar nav a:hover {
+  background: #1f2937;
+}
+
+html[data-theme="dark"] .navbar nav a.active {
+  background: #f9fafb;
+  color: #111827;
+}
+
+html[data-theme="dark"] .theme-toggle {
+  background: #1f2937;
+  border-color: #374151;
+  color: #f9fafb;
+}
+
+html[data-theme="dark"] .theme-toggle:hover {
+  background: #374151;
+}
+
+html[data-theme="dark"] .theme-menu {
+  background: #1f2937;
+  border-color: #374151;
+}
+
+html[data-theme="dark"] .theme-menu button {
+  color: #d1d5db;
+}
+
+html[data-theme="dark"] .theme-menu button:hover {
+  background: #374151;
+}
+
+html[data-theme="dark"] .theme-menu button.is-active {
+  background: #f9fafb;
+  color: #111827;
+}
+
+/* Cards, panels and general surfaces */
+html[data-theme="dark"] .info-card,
+html[data-theme="dark"] .home-hero,
+html[data-theme="dark"] .home-card,
+html[data-theme="dark"] .home-info-card,
+html[data-theme="dark"] .schedule-card,
+html[data-theme="dark"] .schedule-summary,
+html[data-theme="dark"] .virtual-board-toolbar,
+html[data-theme="dark"] .virtual-board-panel {
+  background: #1f2937;
+  border-color: #374151;
+}
+
+html[data-theme="dark"] .home-card-primary {
+  background: #f9fafb;
+  border-color: #f9fafb;
+  color: #111827;
+}
+
+html[data-theme="dark"] .home-card-primary p {
+  color: #4b5563;
+}
+
+html[data-theme="dark"] .home-card-primary .home-card-label {
+  color: #4b5563;
+}
+
+html[data-theme="dark"] .home-hero-action {
+  background: #f9fafb;
+  color: #111827;
+}
+
+html[data-theme="dark"] .home-hero-action:hover {
+  background: #fff;
+}
+
+html[data-theme="dark"] .home-hero p,
+html[data-theme="dark"] .home-card p,
+html[data-theme="dark"] .home-info-card p {
+  color: #9ca3af;
+}
+
+html[data-theme="dark"] .home-eyebrow,
+html[data-theme="dark"] .home-section-kicker,
+html[data-theme="dark"] .home-card-label,
+html[data-theme="dark"] .schedule-section-kicker,
+html[data-theme="dark"] .schedule-data-status,
+html[data-theme="dark"] .schedule-summary-stop,
+html[data-theme="dark"] .schedule-no-data,
+html[data-theme="dark"] .course-stop-code,
+html[data-theme="dark"] .stock-author {
+  color: #9ca3af;
+}
+
+html[data-theme="dark"] .home-favorite-stop {
+  background: #1f2937;
+  border-color: #374151;
+}
+
+html[data-theme="dark"] .home-favorite-stop-info span,
+html[data-theme="dark"] .home-favorite-stop-arrow {
+  color: #9ca3af;
+}
+
+/* Rolling stock */
+html[data-theme="dark"] .stock-card {
+  background: #1f2937;
+  border-color: #374151;
+}
+
+html[data-theme="dark"] .stock-filters button {
+  background: #1f2937;
+  border-color: #374151;
+  color: #d1d5db;
+}
+
+html[data-theme="dark"] .stock-filters button:hover {
+  background: #374151;
+}
+
+/* Schedules */
+html[data-theme="dark"] .schedule-select-button,
+html[data-theme="dark"] .schedule-native-select {
+  background: #111827;
+  border-color: #4b5563;
+  color: #f3f4f6;
+}
+
+html[data-theme="dark"] .schedule-native-select:disabled {
+  background: #374151;
+  color: #9ca3af;
+}
+
+html[data-theme="dark"] .schedule-dropdown-menu {
+  background: #1f2937;
+  border-color: #374151;
+}
+
+html[data-theme="dark"] .schedule-dropdown-group-title {
+  color: #9ca3af;
+}
+
+html[data-theme="dark"] .schedule-line-option {
+  color: #f3f4f6;
+}
+
+html[data-theme="dark"] .schedule-line-option:hover {
+  background: #374151;
+}
+
+html[data-theme="dark"] .schedule-placeholder {
+  color: #9ca3af;
+}
+
+html[data-theme="dark"] .schedule-day-tabs {
+  border-top-color: #374151;
+}
+
+html[data-theme="dark"] .schedule-day-tab {
+  background: #374151;
+  color: #d1d5db;
+}
+
+html[data-theme="dark"] .schedule-day-tab.active {
+  background: #f9fafb;
+  color: #111827;
+}
+
+html[data-theme="dark"] .schedule-summary-stats div {
+  background: #111827;
+}
+
+html[data-theme="dark"] .schedule-summary-stats span {
+  color: #9ca3af;
+}
+
+html[data-theme="dark"] .timetable-scroll {
+  border-color: #374151;
+}
+
+html[data-theme="dark"] .schedule-timetable th {
+  background: #374151;
+  border-right-color: #4b5563;
+  border-bottom-color: #4b5563;
+}
+
+html[data-theme="dark"] .schedule-timetable td {
+  border-right-color: #374151;
+}
+
+html[data-theme="dark"] .schedule-minute {
+  color: #f3f4f6;
+}
+
+html[data-theme="dark"] .schedule-minute:hover {
+  background: #4a3f16;
+  color: #fef3c7;
+}
+
+html[data-theme="dark"] .schedule-close-button {
+  background: #f9fafb;
+  color: #111827;
+}
+
+html[data-theme="dark"] .course-stops {
+  border-top-color: #374151;
+}
+
+html[data-theme="dark"] .course-stop {
+  border-bottom-color: #374151;
+}
+
+html[data-theme="dark"] .course-stop.selected {
+  background: #4a3f16;
+}
+
+html[data-theme="dark"] .course-stop-marker {
+  background: #f9fafb;
+  border-color: #1f2937;
+  box-shadow: 0 0 0 1px #4b5563;
+}
+
+/* Virtual boards */
+html[data-theme="dark"] .virtual-board-controls {
+  background: #1f2937;
+  border-bottom-color: #374151;
+}
+
+html[data-theme="dark"] .virtual-stop-search input {
+  background: #111827;
+  border-color: #4b5563;
+  color: #f3f4f6;
+}
+
+html[data-theme="dark"] .virtual-stop-search input::placeholder {
+  color: #9ca3af;
+}
+
+html[data-theme="dark"] .virtual-stop-search-results {
+  background: #1f2937;
+  border-color: #374151;
+}
+
+html[data-theme="dark"] .virtual-stop-search-result {
+  background: #1f2937;
+  color: #f3f4f6;
+  border-bottom-color: #374151;
+}
+
+html[data-theme="dark"] .virtual-stop-search-result:hover {
+  background: #374151;
+}
+
+html[data-theme="dark"] .virtual-stop-search-result span,
+html[data-theme="dark"] .virtual-stop-search-empty {
+  color: #9ca3af;
+}
+
+html[data-theme="dark"] .map-tool-button,
+html[data-theme="dark"] .virtual-board-refresh,
+html[data-theme="dark"] .virtual-board-favorite,
+html[data-theme="dark"] .virtual-board-close {
+  background: #374151;
+  border-color: #4b5563;
+  color: #f3f4f6;
+}
+
+html[data-theme="dark"] .map-tool-button:hover,
+html[data-theme="dark"] .virtual-board-refresh:hover,
+html[data-theme="dark"] .virtual-board-favorite:hover,
+html[data-theme="dark"] .virtual-board-close:hover {
+  background: #4b5563;
+}
+
+html[data-theme="dark"] .virtual-board-header {
+  border-bottom-color: #374151;
+}
+
+html[data-theme="dark"] .virtual-board-kicker,
+html[data-theme="dark"] .virtual-board-header p,
+html[data-theme="dark"] .vb-arrival-minutes,
+html[data-theme="dark"] .vb-arrival-empty,
+html[data-theme="dark"] .vb-next-times {
+  color: #9ca3af;
+}
+
+html[data-theme="dark"] .vb-arrival-clock,
+html[data-theme="dark"] .vb-arrival-time,
+html[data-theme="dark"] .vb-arrival-countdown {
+  color: #f3f4f6;
+}
+
+html[data-theme="dark"] .vb-next-times span {
+  background: #374151;
+}
+
+html[data-theme="dark"] .vb-next-times span::after {
+  background: #f9fafb;
+  color: #111827;
+}
+
+html[data-theme="dark"] .vb-row {
+  border-bottom-color: #374151;
+}
+
+html[data-theme="dark"] .virtual-board-empty,
+html[data-theme="dark"] .virtual-board-error,
+html[data-theme="dark"] .virtual-map-error {
+  color: #9ca3af;
+}
+
+html[data-theme="dark"] .virtual-board-empty-title {
+  color: #f3f4f6;
+}
+
+html[data-theme="dark"] .virtual-board-no-service,
+html[data-theme="dark"] .virtual-board-no-data {
+  background: #111827;
+  color: #9ca3af;
+}
+
+html[data-theme="dark"] .virtual-map-card {
+  background: #374151;
+  border-color: #4b5563;
+}
+
+/* Keep the Leaflet map usable in dark mode while matching the surrounding UI. */
+html[data-theme="dark"] .leaflet-control-zoom a,
+html[data-theme="dark"] .leaflet-control-attribution {
+  background: rgba(31, 41, 55, .92);
+  color: #d1d5db;
+}
+
+html[data-theme="dark"] .leaflet-control-zoom a {
+  color: #f3f4f6;
+}
+
+html[data-theme="dark"] .leaflet-popup-content-wrapper,
+html[data-theme="dark"] .leaflet-popup-tip {
+  background: #1f2937;
+  color: #f3f4f6;
+}
+
+html[data-theme="dark"] .leaflet-popup-content {
+  color: #f3f4f6;
+}
+
+@media (max-width: 900px) {
+  .theme-switcher {
+    margin-left: 4px;
+  }
+}
+
+@media (max-width: 560px) {
+  .theme-menu {
+    right: -4px;
+  }
+}

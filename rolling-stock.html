@@ -26,6 +26,31 @@
     <a href="about.html">За проекта</a>
   </nav>
 
+  <div class="theme-switcher">
+      <button
+        type="button"
+        id="themeToggle"
+        class="theme-toggle"
+        aria-label="Автоматичен режим"
+        title="Автоматичен режим"
+        aria-haspopup="true"
+        aria-expanded="false"
+      >
+        <span aria-hidden="true">◐</span>
+      </button>
+      <div id="themeMenu" class="theme-menu" role="radiogroup" aria-label="Тема" hidden>
+        <button type="button" data-theme-choice="light" role="radio" aria-checked="false">
+          <span aria-hidden="true">☀</span><span>Светъл</span>
+        </button>
+        <button type="button" data-theme-choice="dark" role="radio" aria-checked="false">
+          <span aria-hidden="true">☾</span><span>Тъмен</span>
+        </button>
+        <button type="button" data-theme-choice="auto" role="radio" aria-checked="false">
+          <span aria-hidden="true">◐</span><span>Автоматичен</span>
+        </button>
+      </div>
+    </div>
+
 </header>
 
 <!-- PAGE -->
@@ -61,5 +86,6 @@
 <script src="rolling-stock.js"></script>
 <script src="navbar.js"></script>
 
+  <script src="theme.js"></script>
 </body>
 </html>
