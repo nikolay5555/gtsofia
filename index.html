@@ -3,18 +3,6 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <script>
-    (() => {
-      try {
-        const theme = localStorage.getItem("gtsofia.theme");
-        const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-        const effective = theme === "dark" || (theme !== "light" && systemDark) ? "dark" : "light";
-        document.documentElement.dataset.theme = effective;
-        document.documentElement.dataset.themePreference =
-          theme === "dark" || theme === "light" || theme === "auto" ? theme : "auto";
-      } catch {}
-    })();
-  </script>
   <title>Начало | GTSofia</title>
   <link href="https://fonts.googleapis.com/css2?family=Sofia+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
@@ -30,30 +18,6 @@
       <a href="rolling-stock.html">Подвижен състав</a>
       <a href="about.html">За проекта</a>
     </nav>
-    <div class="theme-switcher">
-      <button
-        type="button"
-        id="themeToggle"
-        class="theme-toggle"
-        aria-label="Автоматичен режим"
-        title="Автоматичен режим"
-        aria-haspopup="true"
-        aria-expanded="false"
-      >
-        <span aria-hidden="true">◐</span>
-      </button>
-      <div id="themeMenu" class="theme-menu" role="radiogroup" aria-label="Тема" hidden>
-        <button type="button" data-theme-choice="light" role="radio" aria-checked="false">
-          <span aria-hidden="true">☀</span><span>Светъл</span>
-        </button>
-        <button type="button" data-theme-choice="dark" role="radio" aria-checked="false">
-          <span aria-hidden="true">☾</span><span>Тъмен</span>
-        </button>
-        <button type="button" data-theme-choice="auto" role="radio" aria-checked="false">
-          <span aria-hidden="true">◐</span><span>Автоматичен</span>
-        </button>
-      </div>
-    </div>
   </header>
 
   <main class="home">
@@ -129,6 +93,5 @@
 
   <script src="navbar.js"></script>
   <script src="home-favorites.js"></script>
-  <script src="theme.js"></script>
 </body>
 </html>
