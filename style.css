@@ -2147,6 +2147,10 @@ html[data-theme="dark"] .leaflet-control-zoom a {
   color: #f3f4f6;
 }
 
+html[data-theme="dark"] .direction-arrow img {
+  filter: invert(1);
+}
+
 html[data-theme="dark"] .leaflet-popup-content-wrapper,
 html[data-theme="dark"] .leaflet-popup-tip {
   background: #1f2937;
