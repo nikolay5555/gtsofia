@@ -190,7 +190,7 @@ const rollingStock = [
     model: "Lion's City LE",
     year: 2018,
     quantity: 1,
-    image: "",
+    image: "https://www.istockphoto.com/illustrations/image-placeholder",
     lines: ["20", "21", "22"]
   },
 
