@@ -1221,11 +1221,43 @@
     const panel = boardPanel();
     if (!panel) return;
 
+    const favorites = getFavoriteStops();
+    const favoritesHtml = favorites.length
+      ? `
+        <div class="virtual-board-favorites">
+          <div class="virtual-board-favorites-heading">
+            <span class="virtual-board-empty-kicker">Запазени</span>
+            <h3>Любими спирки</h3>
+          </div>
+          <div class="virtual-board-favorites-list">
+            ${favorites.map(stop => `
+              <button type="button" class="virtual-board-favorite-stop" data-stop-id="${escapeHtml(stop.stop_id)}">
+                <span class="virtual-board-favorite-stop-star" aria-hidden="true">★</span>
+                <span class="virtual-board-favorite-stop-info">
+                  <strong>${escapeHtml(stop.stop_name || "Спирка")}</strong>
+                  <span>[${escapeHtml(stop.stop_code || stop.stop_id || "")}]</span>
+                </span>
+                <span class="virtual-board-favorite-stop-arrow" aria-hidden="true">→</span>
+              </button>
+            `).join("")}
+          </div>
+        </div>
+      `
+      : "";
+
     panel.innerHTML = `
       <div class="virtual-board-empty">
         <p>Изберете спирка от картата, за да видите следващите пристигания</p>
+        ${favoritesHtml}
       </div>
     `;
+
+    panel.querySelectorAll(".virtual-board-favorite-stop").forEach(button => {
+      button.addEventListener("click", () => {
+        const stop = findStopById(button.dataset.stopId);
+        if (stop) selectStopOnMap(stop);
+      });
+    });
   }
 
   function findStopById(stopId) {
@@ -1572,6 +1604,7 @@
       initMap(stops);
       setupStopSearch(stops);
       setupGeolocation();
+      renderEmptyBoard();
 
       const requestedStopId = new URLSearchParams(window.location.search).get("stop");
       if (requestedStopId) {
