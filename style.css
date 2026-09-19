@@ -828,59 +828,6 @@ VIRTUAL BOARDS
   gap: 14px;
 }
 
-
-.vehicle-map-icon {
-  background: transparent;
-  border: 0;
-}
-
-.vehicle-map-marker {
-  width: 38px;
-  height: 38px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  position: relative;
-  border-radius: 50%;
-  background: var(--vehicle-color, #BE1E2D);
-  color: var(--vehicle-text-color, #fff);
-  border: 3px solid #fff;
-  box-shadow: 0 3px 10px rgba(0,0,0,.28);
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 1;
-}
-
-.vehicle-map-marker::after {
-  content: "";
-  position: absolute;
-  inset: 4px;
-  border: 1px solid rgba(255,255,255,.45);
-  border-radius: 50%;
-}
-
-.vehicle-map-marker-line {
-  position: relative;
-  z-index: 1;
-  max-width: 31px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.vehicle-map-popup {
-  min-width: 120px;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  font-size: 13px;
-  line-height: 1.25;
-}
-
-.vehicle-map-popup strong {
-  font-size: 15px;
-}
-
 .virtual-map-card {
   min-height: 0;
   position: relative;
