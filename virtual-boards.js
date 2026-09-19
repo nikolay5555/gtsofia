@@ -17,6 +17,122 @@
   let tripById = new Map();
   let tripStopsById = new Map();
 
+  let vehicleMarkers = null;
+  let vehicleRefreshTimer = null;
+  const VEHICLE_REFRESH_MS = 10000;
+  const vehicleMarkerById = new Map();
+
+  function vehicleMarkerHtml(vehicle) {
+    const line = getLineMeta(vehicle.route_id, "");
+    const number = escapeHtml(line?.number || "—");
+    const color = escapeHtml(line?.color || "#BE1E2D");
+    const textColor = escapeHtml(line?.textColor || "#FFFFFF");
+
+    return `
+      <div class="vehicle-map-marker" style="--vehicle-color:${color};--vehicle-text-color:${textColor};">
+        <span class="vehicle-map-marker-line">${number}</span>
+      </div>
+    `;
+  }
+
+  function vehiclePopupHtml(vehicle) {
+    const line = getLineMeta(vehicle.route_id, "");
+    const number = line?.number || "—";
+    const vehicleId = vehicle.vehicle_label || vehicle.vehicle_id || "—";
+    const speed = Number.isFinite(Number(vehicle.speed_mps))
+      ? `${Math.round(Number(vehicle.speed_mps) * 3.6)} км/ч`
+      : "—";
+
+    return `
+      <div class="vehicle-map-popup">
+        <strong>Линия ${escapeHtml(number)}</strong>
+        <span>МПС: ${escapeHtml(vehicleId)}</span>
+        <span>Скорост: ${escapeHtml(speed)}</span>
+      </div>
+    `;
+  }
+
+  function updateVehicleMarkers(vehicles) {
+    if (!vehicleMarkers) return;
+
+    const seen = new Set();
+
+    for (const vehicle of vehicles || []) {
+      const id = String(vehicle?.vehicle_id || vehicle?.vehicle_label || vehicle?.trip_id || "").trim();
+      const lat = Number(vehicle?.latitude);
+      const lon = Number(vehicle?.longitude);
+      if (!id || !Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+
+      seen.add(id);
+
+      let marker = vehicleMarkerById.get(id);
+      if (!marker) {
+        marker = L.marker([lat, lon], {
+          icon: L.divIcon({
+            className: "vehicle-map-icon",
+            html: vehicleMarkerHtml(vehicle),
+            iconSize: [42, 42],
+            iconAnchor: [21, 21],
+            popupAnchor: [0, -20]
+          }),
+          zIndexOffset: 1000,
+          keyboard: true,
+          title: `Линия ${getLineMeta(vehicle.route_id, "")?.number || "—"}`
+        });
+
+        marker.bindPopup(vehiclePopupHtml(vehicle), {
+          closeButton: true,
+          offset: [0, -14]
+        });
+
+        marker.addTo(vehicleMarkers);
+        vehicleMarkerById.set(id, marker);
+      } else {
+        marker.setLatLng([lat, lon]);
+        marker.setIcon(L.divIcon({
+          className: "vehicle-map-icon",
+          html: vehicleMarkerHtml(vehicle),
+          iconSize: [42, 42],
+          iconAnchor: [21, 21],
+          popupAnchor: [0, -20]
+        }));
+        marker.setPopupContent(vehiclePopupHtml(vehicle));
+      }
+    }
+
+    for (const [id, marker] of vehicleMarkerById) {
+      if (seen.has(id)) continue;
+      vehicleMarkers.removeLayer(marker);
+      vehicleMarkerById.delete(id);
+    }
+  }
+
+  async function refreshVehiclePositions() {
+    if (!map || !vehicleMarkers) return;
+
+    try {
+      const response = await fetch("/api/vehicle-positions", {
+        cache: "no-store",
+        headers: { Accept: "application/json" }
+      });
+
+      if (!response.ok) {
+        throw new Error(`Vehicle positions: ${response.status}`);
+      }
+
+      const data = await response.json();
+      updateVehicleMarkers(data.vehicles || []);
+    } catch (error) {
+      console.warn("Неуспешно зареждане на позициите на превозните средства:", error);
+    }
+  }
+
+  function startVehiclePositionUpdates() {
+    clearInterval(vehicleRefreshTimer);
+    refreshVehiclePositions();
+    vehicleRefreshTimer = setInterval(refreshVehiclePositions, VEHICLE_REFRESH_MS);
+  }
+
   const boardPanel = () => document.getElementById("virtualBoardBody");
 
 
@@ -1485,8 +1601,10 @@
     }).addTo(map);
 
     stopMarkers = L.layerGroup().addTo(map);
+    vehicleMarkers = L.layerGroup().addTo(map);
 
     addStopMarkers(stops);
+    startVehiclePositionUpdates();
 
     setTimeout(() => map.invalidateSize(), 100);
   }
