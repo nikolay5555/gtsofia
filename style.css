@@ -1656,14 +1656,6 @@ VIRTUAL BOARD FAVORITES
   font-size: 18px;
 }
 
-.virtual-board-empty-kicker {
-  color: #6b7280;
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
 .virtual-board-favorites-list {
   display: grid;
   gap: 10px;
