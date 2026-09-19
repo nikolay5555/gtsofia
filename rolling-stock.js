@@ -190,7 +190,7 @@ const rollingStock = [
     model: "Lion's City LE",
     year: 2018,
     quantity: 1,
-    image: "https://trinmo.org/trinmo/gallery/vehicles/nikola-nikolov/2025/2c2aec37-71e7-48c8-9251-f3defc23bf25.jpg",
+    image: "",
     lines: ["20", "21", "22"]
   },
 
