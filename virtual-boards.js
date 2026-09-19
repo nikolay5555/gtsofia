@@ -1226,7 +1226,6 @@
       ? `
         <div class="virtual-board-favorites">
           <div class="virtual-board-favorites-heading">
-            <span class="virtual-board-empty-kicker">Запазени</span>
             <h3>Любими спирки</h3>
           </div>
           <div class="virtual-board-favorites-list">
