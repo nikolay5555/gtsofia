@@ -4,8 +4,6 @@ let selectedDirectionKey = null;
 let selectedStopIndex = 0;
 let selectedDayType = "weekday";
 let selectedCourse = null;
-let scheduleVirtualBoardTimer = null;
-let scheduleVirtualBoardRequestToken = 0;
 
 const typeLabels = {
   bus: "Автобуси",
@@ -584,191 +582,6 @@ function getCourseMinuteStyle(
 }
 
 
-function getScheduleVirtualBoardLineMeta(route) {
-  const routeId = String(route?.route_id || "").trim();
-  const routeRef = String(route?.route_ref || "").trim();
-
-  const staticRoute = (window.transportData?.routes || []).find(item =>
-    String(item?.route_id || "").trim() === routeId
-    || String(item?.route_short_name || "").trim() === routeRef
-  );
-
-  if (!staticRoute) {
-    return {
-      number: routeRef || "—",
-      color: "#BE1E2D",
-      textColor: "#FFFFFF"
-    };
-  }
-
-  const type = getLineType(staticRoute);
-  return {
-    number: String(staticRoute.route_short_name || routeRef || "—"),
-    color: getLineColor(staticRoute, type),
-    textColor: staticRoute.route_text_color
-      ? `#${staticRoute.route_text_color}`
-      : "#FFFFFF"
-  };
-}
-
-function formatVirtualBoardClock(timestamp) {
-  const seconds = Number(timestamp);
-  if (!Number.isFinite(seconds)) return "—";
-
-  return new Intl.DateTimeFormat("bg-BG", {
-    timeZone: "Europe/Sofia",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23"
-  }).format(new Date(seconds * 1000));
-}
-
-function getVirtualBoardMinutes(timestamp) {
-  const seconds = Number(timestamp);
-  if (!Number.isFinite(seconds)) return null;
-  return Math.max(0, (seconds - Date.now() / 1000) / 60);
-}
-
-function renderScheduleVirtualBoardRows(routes) {
-  const container = document.getElementById("scheduleVirtualBoardList");
-  if (!container) return;
-
-  const rows = routes
-    .map(route => ({
-      ...route,
-      arrivals: (route.times || [])
-        .map(time => ({
-          timestamp: Number(time?.timestamp),
-          scheduled: Boolean(time?.scheduled)
-        }))
-        .filter(time => Number.isFinite(time.timestamp))
-        .filter(time => getVirtualBoardMinutes(time.timestamp) >= 0)
-        .sort((a, b) => a.timestamp - b.timestamp)
-        .slice(0, 4)
-    }))
-    .filter(route => route.arrivals.length)
-    .sort((a, b) => a.arrivals[0].timestamp - b.arrivals[0].timestamp);
-
-  if (!rows.length) {
-    container.innerHTML =
-      `<div class="schedule-virtual-board-message">Няма предстоящи заминавания.</div>`;
-    return;
-  }
-
-  container.innerHTML = rows.map(row => {
-    const meta = getScheduleVirtualBoardLineMeta(row);
-    const first = row.arrivals[0];
-    const minutes = getVirtualBoardMinutes(first.timestamp);
-    const countdown = Number.isFinite(minutes)
-      ? (minutes < 1 ? "Сега" : `${Math.floor(minutes)} мин.`)
-      : "—";
-
-    const nextTimes = row.arrivals
-      .slice(1, 4)
-      .map(arrival => formatVirtualBoardClock(arrival.timestamp))
-      .join(" · ");
-
-    return `
-      <article class="schedule-virtual-board-row">
-        <div class="schedule-virtual-board-route">
-          <span
-            class="schedule-line-pill"
-            style="background:${escapeHtml(meta.color)};color:${escapeHtml(meta.textColor)}"
-          >
-            ${escapeHtml(meta.number)}
-          </span>
-          <span class="schedule-virtual-board-destination">
-            ${escapeHtml(row.destination || row.headsign || "—")}
-          </span>
-        </div>
-
-        <div class="schedule-virtual-board-times">
-          <strong>${escapeHtml(formatVirtualBoardClock(first.timestamp))}</strong>
-          <span>${escapeHtml(countdown)}</span>
-          ${nextTimes
-            ? `<small>${escapeHtml(nextTimes)}</small>`
-            : ""}
-        </div>
-      </article>
-    `;
-  }).join("");
-}
-
-async function loadScheduleVirtualBoard() {
-  const stop = getSelectedDirection()?.stops?.[selectedStopIndex];
-  const container = document.getElementById("scheduleVirtualBoardList");
-  if (!stop || !container) return;
-
-  const requestToken = ++scheduleVirtualBoardRequestToken;
-  const stopCode = String(stop.stop_code || stop.stop_id || "").trim();
-
-  if (!stopCode) {
-    container.innerHTML =
-      `<div class="schedule-virtual-board-message">Липсва код на избраната спирка.</div>`;
-    return;
-  }
-
-  container.innerHTML =
-    `<div class="schedule-virtual-board-message">Зареждане…</div>`;
-
-  try {
-    const response = await fetch(
-      `api/virtual-board?stop_code=${encodeURIComponent(stopCode)}`,
-      {
-        headers: { Accept: "application/json" },
-        cache: "no-store"
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error(`Realtime API: ${response.status}`);
-    }
-
-    const data = await response.json();
-
-    if (requestToken !== scheduleVirtualBoardRequestToken) return;
-
-    renderScheduleVirtualBoardRows(
-      Array.isArray(data?.routes) ? data.routes : []
-    );
-  } catch (error) {
-    if (requestToken !== scheduleVirtualBoardRequestToken) return;
-
-    console.error("Schedule virtual board error:", error);
-    container.innerHTML =
-      `<div class="schedule-virtual-board-message error">Realtime данните не могат да бъдат заредени.</div>`;
-  }
-}
-
-function openScheduleVirtualBoard() {
-  const section = document.getElementById("scheduleVirtualBoardSection");
-  if (!section) return;
-
-  section.hidden = false;
-  loadScheduleVirtualBoard();
-
-  clearInterval(scheduleVirtualBoardTimer);
-  scheduleVirtualBoardTimer = setInterval(
-    loadScheduleVirtualBoard,
-    15000
-  );
-
-  section.scrollIntoView({
-    behavior: "smooth",
-    block: "start"
-  });
-}
-
-function closeScheduleVirtualBoard() {
-  const section = document.getElementById("scheduleVirtualBoardSection");
-  if (section) section.hidden = true;
-
-  clearInterval(scheduleVirtualBoardTimer);
-  scheduleVirtualBoardTimer = null;
-  ++scheduleVirtualBoardRequestToken;
-}
-
-
 function renderSummary(courses) {
   const summary =
     document.getElementById(
@@ -859,14 +672,6 @@ function renderSummary(courses) {
           stop?.name || ""
         )}
       </span>
-
-      <button
-        id="openScheduleVirtualBoard"
-        class="schedule-virtual-board-button"
-        type="button"
-      >
-        Виртуално табло
-      </button>
     </div>
 
     <div class="schedule-summary-stats">
@@ -1230,8 +1035,6 @@ function renderSchedule() {
   if (!selectedScheduleLine) {
     empty.hidden = false;
 
-    closeScheduleVirtualBoard();
-
     document.getElementById(
       "scheduleSummary"
     ).hidden = true;
@@ -1257,15 +1060,6 @@ function renderSchedule() {
   renderSummary(
     courses
   );
-
-  closeScheduleVirtualBoard();
-
-  document
-    .getElementById("openScheduleVirtualBoard")
-    ?.addEventListener(
-      "click",
-      openScheduleVirtualBoard
-    );
 
   renderTimetable(
     courses
