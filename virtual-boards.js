@@ -343,7 +343,7 @@
     const remainingSeconds = seconds - nowSeconds;
     return remainingSeconds < 60
       ? "Сега"
-      : `${Math.floor(remainingSeconds / 60)} мин.`;
+      : `${Math.ceil(remainingSeconds / 60)} мин.`;
   }
 
   function formatArrivalClock(timestamp) {
