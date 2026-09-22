@@ -798,11 +798,13 @@
     return result.sort((a, b) => a.times[0].timestamp - b.times[0].timestamp);
   }
 
-  async function fetchWithTimeout(url, options = {}, timeoutMs = 45000) {
+  async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 45000) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      return await fetch(url, { ...options, signal: controller.signal, cache: "no-store" });
+      const response = await fetch(url, { ...options, signal: controller.signal, cache: "no-store" });
+      const data = await response.json();
+      return { response, data };
     } finally {
       clearTimeout(timeout);
     }
@@ -813,24 +815,16 @@
     if (!stopCode) throw new Error('Липсва код на спирката.');
 
     const url = `api/virtual-board?stop_code=${encodeURIComponent(stopCode)}`;
-    const response = await fetchWithTimeout(url, {
+    const { response, data } = await fetchJsonWithTimeout(url, {
       headers: {
         Accept: 'application/json'
       }
     }, 20000);
 
     if (!response.ok) {
-      let message = `Realtime API заявката върна ${response.status}.`;
-      try {
-        const data = await response.json();
-        message = data?.error || message;
-      } catch {
-        // The endpoint normally returns JSON on success and errors.
-      }
+      const message = data?.error || `Realtime API заявката върна ${response.status}.`;
       throw new Error(message);
     }
-
-    const data = await response.json();
     const generatedAt = data?.generated_at || Date.now();
     const realtimeRoutes = Array.isArray(data?.routes)
       ? data.routes
@@ -1790,6 +1784,19 @@
       if (list) list.innerHTML = `<div class="virtual-board-error">Realtime данните не могат да бъдат заредени.</div>`;
     } finally {
       refreshInFlight = false;
+
+      // Automatic refreshes can fail (network hiccup, proxy timeout, malformed
+      // response). In that case the board previously stayed in the spinning
+      // state forever because only renderStopBoard() reset the button.
+      // Restore the button whenever this refresh still belongs to the visible
+      // board so the next automatic/manual refresh can run normally.
+      if (requestToken === boardRenderToken && selectedStopId === requestedStopId) {
+        const button = document.getElementById("virtualBoardRefresh");
+        if (button) {
+          button.disabled = false;
+          button.classList.remove("is-loading");
+        }
+      }
 
       const primaryArrival = boardPanel()?.querySelector(".vb-arrival-minutes")?.dataset.arrivalTimestamp;
       lastExpiredPrimaryArrival = Number.isFinite(Number(primaryArrival))
