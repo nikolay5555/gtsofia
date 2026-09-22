@@ -343,9 +343,14 @@
     if (!Number.isFinite(seconds)) return "";
 
     const remainingSeconds = seconds - nowSeconds;
-    return remainingSeconds < 60
-      ? "Сега"
-      : `${Math.ceil(remainingSeconds / 60)} мин.`;
+    if (remainingSeconds < 60) return "Сега";
+
+    // Round to the nearest minute instead of always rounding up. With
+    // Math.ceil() the 1-minute state effectively existed only at exactly
+    // 60.000 seconds because anything below 60 seconds becomes "Сега".
+    // Nearest-minute rounding gives each minute a useful display window while
+    // still avoiding the old 2:59 -> 2 min. under-reporting.
+    return `${Math.max(1, Math.round(remainingSeconds / 60))} мин.`;
   }
 
   function formatArrivalClock(timestamp) {

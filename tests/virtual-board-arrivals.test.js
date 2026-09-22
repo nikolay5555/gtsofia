@@ -27,7 +27,7 @@ function createStorage(initialEntries = []) {
 function loadInternals(storage) {
   const exportedSource = source.replace(
     /\n\}\)\(\);\s*$/,
-    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival\n  };\n})();`
+    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    formatArrivalCountdown\n  };\n})();`
   );
 
   const context = {
@@ -50,6 +50,43 @@ function loadInternals(storage) {
 
 const storage = createStorage();
 const internals = loadInternals(storage);
+
+const countdownNow = 1_000;
+assert.equal(
+  internals.formatArrivalCountdown(countdownNow + 60, countdownNow),
+  '1 мин.',
+  'exactly 60 seconds remaining must still show one minute'
+);
+assert.equal(
+  internals.formatArrivalCountdown(countdownNow + 59.9, countdownNow),
+  'Сега',
+  'less than 60 seconds remaining must show Сега'
+);
+assert.equal(
+  internals.formatArrivalCountdown(countdownNow, countdownNow),
+  'Сега',
+  'at the arrival timestamp must show Сега'
+);
+assert.equal(
+  internals.formatArrivalCountdown(countdownNow + 60 + 59, countdownNow),
+  '2 мин.',
+  '1 minute 59 seconds remaining should round to two minutes'
+);
+assert.equal(
+  internals.formatArrivalCountdown(countdownNow + 60 + 29, countdownNow),
+  '1 мин.',
+  '1 minute 29 seconds remaining should still show one minute'
+);
+assert.equal(
+  internals.formatArrivalCountdown(countdownNow + 60 + 30, countdownNow),
+  '2 мин.',
+  '1 minute 30 seconds remaining should round to two minutes'
+);
+assert.equal(
+  internals.formatArrivalCountdown(countdownNow + 60 * 3 - 1, countdownNow),
+  '3 мин.',
+  '2 minutes 59 seconds remaining must display three minutes'
+);
 const nowSeconds = Date.now() / 1000;
 
 const stopId = '1017';
