@@ -6,6 +6,9 @@
   let map = null;
   let selectedStopId = null;
   let refreshTimer = null;
+  let countdownTimer = null;
+  let refreshInFlight = false;
+  let lastExpiredPrimaryArrival = null;
   let boardRenderToken = 0;
   let clockTimer = null;
   let stopMarkers = null;
@@ -333,6 +336,16 @@
     return Math.max(0, (seconds - Date.now() / 1000) / 60);
   }
 
+  function formatArrivalCountdown(timestamp, nowSeconds = Date.now() / 1000) {
+    const seconds = Number(timestamp);
+    if (!Number.isFinite(seconds)) return "";
+
+    const remainingSeconds = seconds - nowSeconds;
+    return remainingSeconds < 60
+      ? "Сега"
+      : `${Math.floor(remainingSeconds / 60)} мин.`;
+  }
+
   function formatArrivalClock(timestamp) {
     const seconds = Number(timestamp);
     if (!Number.isFinite(seconds)) return "—";
@@ -352,11 +365,9 @@
 
     const clock = formatArrivalClock(timestamp);
     const live = showLive ? '<span class="vb-arrival-live" aria-hidden="true"></span>' : '';
-    const countdown = minutes < 1
-      ? 'Сега'
-      : `${Math.floor(minutes)} мин.`;
+    const countdown = formatArrivalCountdown(timestamp);
 
-    return `<div class="vb-arrival-main">${live}<span class="vb-arrival-clock">${escapeHtml(clock)}</span><span class="vb-arrival-separator" aria-hidden="true">·</span><span class="vb-arrival-minutes">${countdown}</span></div>`;
+    return `<div class="vb-arrival-main">${live}<span class="vb-arrival-clock">${escapeHtml(clock)}</span><span class="vb-arrival-separator" aria-hidden="true">·</span><span class="vb-arrival-minutes" data-arrival-timestamp="${timestamp}">${escapeHtml(countdown)}</span></div>`;
   }
 
   function normalizeStopKey(value) {
@@ -1267,6 +1278,7 @@
     document.getElementById("virtualBoardClose")?.addEventListener("click", () => {
       ++boardRenderToken;
       selectedStopId = null;
+      lastExpiredPrimaryArrival = null;
       if (selectedStopMarker) {
         selectedStopMarker.setStyle({
           fillColor: "#111827",
@@ -1323,12 +1335,9 @@
         const meta = getLineMeta(row.route_id || row.routeId, row.route_ref);
         const arrivals = row.arrivals;
         const nextTimes = arrivals.slice(1, 4).map(time => {
-          const minutes = getArrivalMinutes(time.timestamp);
-          const tooltip = Number.isFinite(minutes)
-            ? (minutes < 1 ? "Сега" : `${Math.floor(minutes)} мин.`)
-            : "";
+          const tooltip = formatArrivalCountdown(time.timestamp);
           const clock = formatArrivalClock(time.timestamp);
-          return `<span class="vb-next-time" tabindex="0" data-tooltip="${escapeHtml(tooltip)}" aria-label="${escapeHtml(tooltip)}">${escapeHtml(clock)}</span>`;
+          return `<span class="vb-next-time" tabindex="0" data-arrival-timestamp="${time.timestamp}" data-tooltip="${escapeHtml(tooltip)}" aria-label="${escapeHtml(tooltip)}">${escapeHtml(clock)}</span>`;
         }).join("");
         return `
           <article class="vb-row">
@@ -1664,16 +1673,52 @@
   }
 
 
+  function updateBoardCountdowns() {
+    const panel = boardPanel();
+    if (!panel || !selectedStopId) return;
+
+    const nowSeconds = Date.now() / 1000;
+    let primaryArrivalExpired = null;
+
+    panel.querySelectorAll("[data-arrival-timestamp]").forEach(element => {
+      const timestamp = Number(element.dataset.arrivalTimestamp);
+      if (!Number.isFinite(timestamp)) return;
+
+      const countdown = formatArrivalCountdown(timestamp, nowSeconds);
+      if (element.classList.contains("vb-arrival-minutes")) {
+        element.textContent = countdown;
+        if (timestamp <= nowSeconds) primaryArrivalExpired = timestamp;
+        return;
+      }
+
+      element.dataset.tooltip = countdown;
+      element.setAttribute("aria-label", countdown);
+    });
+
+    if (
+      primaryArrivalExpired !== null
+      && primaryArrivalExpired !== lastExpiredPrimaryArrival
+      && !refreshInFlight
+    ) {
+      lastExpiredPrimaryArrival = primaryArrivalExpired;
+      refreshSelectedBoard();
+    }
+  }
+
   function startTimers() {
     clearInterval(refreshTimer);
+    clearInterval(countdownTimer);
 
+    countdownTimer = setInterval(updateBoardCountdowns, 1000);
     refreshTimer = setInterval(() => {
       if (selectedStopId) refreshSelectedBoard();
     }, REFRESH_MS);
+
+    updateBoardCountdowns();
   }
 
   async function refreshSelectedBoard() {
-    if (!selectedStopId) return;
+    if (!selectedStopId || refreshInFlight) return;
 
     const requestedStopId = String(selectedStopId);
     const requestToken = boardRenderToken;
@@ -1683,6 +1728,7 @@
     const refreshButton = document.getElementById("virtualBoardRefresh");
     refreshButton?.classList.add("is-loading");
     if (refreshButton) refreshButton.disabled = true;
+    refreshInFlight = true;
 
     try {
       const data = await fetchVirtualBoard(stop);
@@ -1693,6 +1739,13 @@
       console.error("Неуспешно зареждане на GTFS-Realtime виртуално табло:", error);
       const list = boardPanel()?.querySelector(".virtual-board-list");
       if (list) list.innerHTML = `<div class="virtual-board-error">Realtime данните не могат да бъдат заредени.</div>`;
+    } finally {
+      refreshInFlight = false;
+
+      const primaryArrival = boardPanel()?.querySelector(".vb-arrival-minutes")?.dataset.arrivalTimestamp;
+      lastExpiredPrimaryArrival = Number.isFinite(Number(primaryArrival))
+        ? Number(primaryArrival)
+        : null;
     }
   }
 
