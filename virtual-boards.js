@@ -17,10 +17,125 @@
   let tripById = new Map();
   let tripStopsById = new Map();
 
+  // Realtime stop updates disappear shortly after the vehicle passes the
+  // selected stop. Keep the scheduled time they represented so the static
+  // fallback does not immediately resurrect the same course (e.g. 10:57
+  // realtime for a 10:59 scheduled course).
+  const CONSUMED_REALTIME_ARRIVALS_KEY = "gtsofia.virtualBoard.consumedRealtimeArrivals.v1";
+  const CONSUMED_REALTIME_ARRIVAL_TTL_MS = 20 * 60 * 1000;
+  const consumedRealtimeArrivals = new Map();
+  let consumedRealtimeArrivalsLoaded = false;
+
   const boardPanel = () => document.getElementById("virtualBoardBody");
 
 
   const FAVORITE_STOPS_KEY = "gtsofia.favoriteStops";
+
+  function loadConsumedRealtimeArrivals() {
+    if (consumedRealtimeArrivalsLoaded) return;
+    consumedRealtimeArrivalsLoaded = true;
+
+    try {
+      const raw = sessionStorage.getItem(CONSUMED_REALTIME_ARRIVALS_KEY);
+      const stored = JSON.parse(raw || "[]");
+      if (!Array.isArray(stored)) return;
+
+      const now = Date.now();
+      for (const item of stored) {
+        const key = String(item?.key || "").trim();
+        const expiresAt = Number(item?.expiresAt);
+        if (key && Number.isFinite(expiresAt) && expiresAt > now) {
+          consumedRealtimeArrivals.set(key, expiresAt);
+        }
+      }
+    } catch {
+      // sessionStorage can be unavailable in private/restricted browsing
+      // contexts. The in-memory map still protects the current page session.
+    }
+  }
+
+  function pruneConsumedRealtimeArrivals() {
+    loadConsumedRealtimeArrivals();
+    const now = Date.now();
+    let changed = false;
+
+    for (const [key, expiresAt] of consumedRealtimeArrivals) {
+      if (!Number.isFinite(expiresAt) || expiresAt <= now) {
+        consumedRealtimeArrivals.delete(key);
+        changed = true;
+      }
+    }
+
+    if (changed) persistConsumedRealtimeArrivals();
+  }
+
+  function persistConsumedRealtimeArrivals() {
+    try {
+      sessionStorage.setItem(
+        CONSUMED_REALTIME_ARRIVALS_KEY,
+        JSON.stringify([...consumedRealtimeArrivals.entries()].map(([key, expiresAt]) => ({ key, expiresAt })))
+      );
+    } catch {
+      // Keep working with the in-memory cache when sessionStorage is blocked.
+    }
+  }
+
+  function getConsumedRealtimeArrivalKey(stopId, routeId, destination, scheduledTimestamp) {
+    const timestamp = Number(scheduledTimestamp);
+    if (!Number.isFinite(timestamp)) return "";
+
+    return [
+      normalizeStopKey(stopId),
+      String(routeId || "").trim(),
+      normalizeDirectionText(destination),
+      Math.floor(timestamp / 60)
+    ].join("|");
+  }
+
+  function rememberConsumedRealtimeArrivals(stop, realtimeRoutes) {
+    pruneConsumedRealtimeArrivals();
+    const nowSeconds = Date.now() / 1000;
+    const stopId = String(stop?.stop_id || stop?.stop_code || "").trim();
+    if (!stopId) return;
+
+    let changed = false;
+    for (const route of realtimeRoutes || []) {
+      const routeId = String(route?.route_id || "").trim();
+      if (!routeId) continue;
+
+      const destination = String(route?.destination || "").trim();
+      for (const time of route?.times || []) {
+        const actualTimestamp = Number(time?.timestamp);
+        const scheduledTimestamp = Number(time?.scheduled_time);
+        if (!Number.isFinite(actualTimestamp) || !Number.isFinite(scheduledTimestamp)) continue;
+
+        // The upstream API intentionally keeps a passed stop update visible
+        // for about 60 seconds. Remember its scheduled course while the
+        // realtime arrival is already at/past the current time, so a transient
+        // feed gap does not resurrect the static scheduled time.
+        if (actualTimestamp > nowSeconds) continue;
+
+        const key = getConsumedRealtimeArrivalKey(
+          stopId,
+          routeId,
+          destination,
+          scheduledTimestamp
+        );
+        if (!key || consumedRealtimeArrivals.has(key)) continue;
+
+        consumedRealtimeArrivals.set(key, Date.now() + CONSUMED_REALTIME_ARRIVAL_TTL_MS);
+        changed = true;
+      }
+    }
+
+    if (changed) persistConsumedRealtimeArrivals();
+  }
+
+  function isConsumedRealtimeScheduledArrival(stopId, routeId, destination, scheduledTimestamp) {
+    pruneConsumedRealtimeArrivals();
+    const key = getConsumedRealtimeArrivalKey(stopId, routeId, destination, scheduledTimestamp);
+    return !!key && consumedRealtimeArrivals.has(key);
+  }
 
   function getFavoriteStops() {
     try {
@@ -607,6 +722,21 @@
           if (timestamp < nowTimestamp) timestamp += 86400;
           if (timestamp < nowTimestamp || timestamp > horizonTimestamp) continue;
 
+          // A realtime course can be a few minutes early/late compared with
+          // the timetable. Once that realtime arrival has passed the stop, the
+          // same scheduled timestamp must not come back through the static
+          // fallback. Only this specific course is skipped; later scheduled
+          // courses remain eligible.
+          const destination = normalizeDirectionText(
+            direction?.destination || direction?.headsign || terminalStopId
+          );
+          if (isConsumedRealtimeScheduledArrival(
+            selectedStop,
+            routeId,
+            destination,
+            timestamp
+          )) continue;
+
           const existing = rowsByTerminal.get(terminalStopId);
           if (!existing) {
             rowsByTerminal.set(terminalStopId, {
@@ -826,6 +956,11 @@
           .slice(0, 4)
       }))
       .filter(route => route.times.length);
+
+    // Preserve the scheduled course behind a realtime arrival that has just
+    // passed. This is what lets the static fallback jump to the NEXT course
+    // instead of showing the timetable time of the already completed one.
+    rememberConsumedRealtimeArrivals(stop, mergedSurfaceRoutes);
 
     // For surface transport, use the static timetable as a fallback during
     // the two hours before the next scheduled course when CGM has not yet
