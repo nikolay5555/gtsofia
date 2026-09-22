@@ -760,34 +760,20 @@ function renderTimetable(courses) {
       });
   }
 
-  const availableHours =
-    [
-      ...byHour.keys()
-    ];
-
-  const firstHour =
-    availableHours.length
-      ? availableHours[0]
-      : 0;
-
-  const hours =
-    availableHours.sort(
-      (a, b) =>
-        (
-          (
-            a -
-            firstHour +
-            24
-          ) % 24
-        ) -
-        (
-          (
-            b -
-            firstHour +
-            24
-          ) % 24
-        )
-    );
+  /*
+   * Показваме всички 24 часа винаги,
+   * независимо дали за дадения час има
+   * налични минути.
+   *
+   * Редът започва от 01:00 и завършва
+   * с 00:00, т.е.:
+   * 1, 2, 3, ..., 23, 0
+   */
+  const hours = Array.from(
+    { length: 24 },
+    (_, index) =>
+      (index + 1) % 24
+  );
 
   const header =
     hours
@@ -801,13 +787,13 @@ function renderTimetable(courses) {
     hours
       .map(hour => {
         const entries =
-          byHour
-            .get(hour)
-            .sort(
-              (a, b) =>
-                a.minute -
-                b.minute
-            );
+          (
+            byHour.get(hour) || []
+          ).sort(
+            (a, b) =>
+              a.minute -
+              b.minute
+          );
 
         return `
           <td>
