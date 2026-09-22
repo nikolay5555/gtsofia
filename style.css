@@ -684,7 +684,9 @@ SCHEDULES PAGE
 
 .schedule-minute {
   display: block;
-  width: 100%;
+  width: fit-content;
+  min-width: 2.25rem;
+  margin-inline: auto;
   border: 0;
   background: transparent;
   color: #111827;
@@ -693,6 +695,7 @@ SCHEDULES PAGE
   padding: 5px 4px;
   border-radius: 7px;
   cursor: pointer;
+  text-align: center;
 }
 
 .schedule-minute:hover {
@@ -1496,8 +1499,9 @@ RESPONSIVE
   }
 
   .schedule-minute {
-    width: 100%;
-    margin: 0;
+    width: fit-content;
+    min-width: 2.25rem;
+    margin-inline: auto;
     padding: 5px 0;
     text-align: center;
     text-indent: 0;
