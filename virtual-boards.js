@@ -1384,7 +1384,7 @@
       if (refreshButton) {
         refreshButton.disabled = false;
         refreshButton.classList.remove("is-loading");
-        refreshButton.addEventListener("click", refreshSelectedBoard, { once: true });
+        refreshButton.addEventListener("click", () => refreshSelectedBoard(true), { once: true });
       }
     }
   }
@@ -1739,8 +1739,11 @@
     updateBoardCountdowns();
   }
 
-  async function refreshSelectedBoard() {
+  async function refreshSelectedBoard(force = false) {
     if (!selectedStopId || refreshInFlight) return;
+    // Do not let the regular 15s refresh interrupt the guaranteed 10s hold
+    // after the primary arrival reaches zero. A manual refresh may override it.
+    if (!force && expiredPrimaryRefreshTimer !== null) return;
 
     const requestedStopId = String(selectedStopId);
     const requestToken = boardRenderToken;
@@ -1755,6 +1758,25 @@
     try {
       const data = await fetchVirtualBoard(stop);
       if (requestToken !== boardRenderToken || selectedStopId !== requestedStopId) return;
+
+      // If an automatic refresh finishes after the currently displayed primary
+      // arrival has already expired, keep the existing "Сега" state until the
+      // 10s hold expires instead of replacing it prematurely.
+      if (!force && expiredPrimaryRefreshTimer !== null) return;
+
+      const displayedPrimaryArrival = Number(
+        boardPanel()?.querySelector(".vb-arrival-minutes")?.dataset.arrivalTimestamp
+      );
+      if (
+        !force
+        && Number.isFinite(displayedPrimaryArrival)
+        && displayedPrimaryArrival <= Date.now() / 1000
+      ) {
+        lastExpiredPrimaryArrival = displayedPrimaryArrival;
+        updateBoardCountdowns();
+        return;
+      }
+
       await renderStopBoard(stop, data);
     } catch (error) {
       if (requestToken !== boardRenderToken || selectedStopId !== requestedStopId) return;
