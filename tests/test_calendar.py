@@ -31,23 +31,43 @@ class CalendarTests(unittest.TestCase):
             {"service_id": "WE", "date": "20260922", "exception_type": "1"},
         ]
 
-    def test_gtfs_exception_switches_holiday_service(self):
+    def test_gtfs_exception_does_not_define_ui_day_type(self):
         service_types, calendar_result = module.build_calendar_context(
             self.calendar,
             self.calendar_dates,
             date(2026, 9, 22),
-            horizon_days=1,
+            horizon_days=0,
+        )
+
+        self.assertEqual(
+            calendar_result["dateTypes"]["2026-09-22"],
+            "weekday",
+        )
+        self.assertEqual(
+            calendar_result["serviceIdsByDate"]["2026-09-22"],
+            ["WE"],
+        )
+        self.assertNotIn("WD", service_types)
+        self.assertEqual(service_types["WE"], ["weekday"])
+
+    def test_central_calendar_override_defines_ui_day_type(self):
+        service_types, calendar_result = module.build_calendar_context(
+            self.calendar,
+            self.calendar_dates,
+            date(2026, 9, 22),
+            horizon_days=0,
+            calendar_config={
+                "dateOverrides": {
+                    "2026-09-22": "weekend",
+                },
+            },
         )
 
         self.assertEqual(
             calendar_result["dateTypes"]["2026-09-22"],
             "weekend",
         )
-        self.assertEqual(
-            calendar_result["serviceIdsByDate"]["2026-09-22"],
-            ["WE"],
-        )
-        self.assertEqual(service_types["WD"], ["weekday"])
+        self.assertNotIn("WD", service_types)
         self.assertEqual(service_types["WE"], ["weekend"])
 
     def test_service_operating_in_both_buckets_is_preserved(self):

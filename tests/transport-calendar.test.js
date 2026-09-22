@@ -36,26 +36,37 @@ context.transportData = {
       { service_id: 'WE', date: '20260922', exception_type: '1' }
     ],
     dateTypes: {
-      '2026-09-22': 'weekend'
+      '2026-09-23': 'weekday'
+    },
+    config: {
+      dateOverrides: {
+        '2026-09-22': 'weekend'
+      }
     }
   }
 };
 
-const at = iso => new Date(iso);
-
 assert.equal(
-  context.getTransportCalendarDayType(at('2026-09-22T12:00:00Z')),
+  context.getTransportCalendarDayType(new Date('2026-09-22T12:00:00Z')),
   'weekend'
 );
 
 assert.equal(
-  context.getTransportCalendarDayType(at('2026-09-23T12:00:00Z')),
+  context.getTransportCalendarDayType(new Date('2026-09-23T12:00:00Z')),
   'weekday'
 );
 
 assert.equal(
-  context.getTransportCalendarDayType(at('2026-09-26T12:00:00Z')),
+  context.getTransportCalendarDayType(new Date('2026-09-26T12:00:00Z')),
   'weekend'
+);
+
+// A GTFS exception by itself must not be interpreted as a holiday UI type.
+context.transportData.calendar.config.dateOverrides = {};
+context.transportData.calendar.dateTypes = {};
+assert.equal(
+  context.getTransportCalendarDayType(new Date('2026-09-22T12:00:00Z')),
+  'weekday'
 );
 
 console.log('transport-calendar: all tests passed');

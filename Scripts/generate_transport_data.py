@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
 GTFS_DIR = ROOT / ".gtfs"
 OUTPUT_FILE = DATA_DIR / "transport.json"
+CALENDAR_CONFIG_FILE = ROOT / "config" / "calendar.json"
 
 OSM_NETWORK_NAME = "Градски транспорт София"
 
@@ -595,11 +596,47 @@ def _apply_calendar_date_exceptions(
     return effective
 
 
+def load_calendar_config(path=CALENDAR_CONFIG_FILE):
+    if not path.exists():
+        return {"dateOverrides": {}}
+
+    with path.open("r", encoding="utf-8") as file:
+        raw = json.load(file)
+
+    if not isinstance(raw, dict):
+        raise ValueError("Calendar config must be a JSON object.")
+
+    overrides = raw.get("dateOverrides", {})
+    if not isinstance(overrides, dict):
+        raise ValueError("calendar.json dateOverrides must be an object.")
+
+    normalized_overrides = {}
+    for raw_date, raw_day_type in overrides.items():
+        date_value = parse_date(raw_date.replace("-", ""))
+        if date_value is None:
+            raise ValueError(
+                f"Invalid calendar override date: {raw_date}"
+            )
+
+        day_type = normalize(raw_day_type).lower()
+        if day_type not in {"weekday", "weekend"}:
+            raise ValueError(
+                f"Invalid calendar override type for {raw_date}: {raw_day_type}"
+            )
+
+        normalized_overrides[iso_date_string(date_value)] = day_type
+
+    return {
+        "dateOverrides": normalized_overrides,
+    }
+
+
 def build_calendar_context(
     calendar,
     calendar_dates,
     today,
-    horizon_days=15
+    horizon_days=15,
+    calendar_config=None
 ):
     """
     Evaluate GTFS service dates exactly from calendar.txt plus
@@ -609,6 +646,8 @@ def build_calendar_context(
 
     end_date = today + timedelta(days=horizon_days)
     has_calendar = bool(calendar)
+    calendar_config = calendar_config or {"dateOverrides": {}}
+    date_overrides = calendar_config.get("dateOverrides", {})
 
     calendar_by_service = {}
     for row in calendar:
@@ -650,26 +689,17 @@ def build_calendar_context(
             current
         )
 
-        # The GTFS standard itself does not define a field called
-        # "holiday". For this project's two-button UI, a Saturday/Sunday is
-        # always "weekend"; a weekday whose effective service set is changed
-        # by calendar_dates.txt is also treated as the non-weekday schedule
-        # bucket (holiday/special service). This is derived from GTFS data, not
-        # from a hard-coded public-holiday list.
-        is_weekend = current.weekday() >= 5
-        has_calendar_exception_effect = (
-            has_calendar
-            and effective_service_ids != base_service_ids
-            and bool(calendar_dates_by_date.get(gtfs_date_string(current)))
-        )
-
-        day_type = (
-            "weekend"
-            if is_weekend or has_calendar_exception_effect
-            else "weekday"
-        )
-
+        # GTFS determines which service_ids are active on the date. The
+        # project's two-button UI is a separate application-level view. By
+        # default it follows the local weekday/weekend of the date; explicit
+        # operational overrides live in config/calendar.json so holidays or
+        # other authority-defined schedule regimes are maintained centrally.
         date_key = iso_date_string(current)
+        day_type = date_overrides.get(
+            date_key,
+            "weekend" if current.weekday() >= 5 else "weekday"
+        )
+
         date_types[date_key] = day_type
         service_ids_by_date[date_key] = sorted(effective_service_ids)
 
@@ -704,6 +734,7 @@ def build_calendar_context(
         "serviceIdsByDate": service_ids_by_date,
         "dateTypes": date_types,
         "serviceDayTypes": result,
+        "config": calendar_config,
     }
 
     print(
@@ -2372,13 +2403,16 @@ def main():
         # Active services
         # --------------------------------------------------------
 
+        calendar_config = load_calendar_config()
+
         (
             service_day_types,
             calendar_result
         ) = build_calendar_context(
             calendar,
             calendar_dates,
-            today
+            today,
+            calendar_config=calendar_config
         )
 
         # --------------------------------------------------------
