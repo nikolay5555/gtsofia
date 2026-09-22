@@ -197,13 +197,19 @@
     };
   }
 
-  function isWeekendInSofia() {
+  function getCurrentScheduleDayType() {
+    if (typeof getTransportCalendarDayType === 'function') {
+      return getTransportCalendarDayType();
+    }
+
     const day = new Intl.DateTimeFormat("en-US", {
       timeZone: SOFIA_TIME_ZONE,
       weekday: "short"
     }).format(new Date());
 
-    return day === "Sat" || day === "Sun";
+    return day === "Sat" || day === "Sun"
+      ? "weekend"
+      : "weekday";
   }
 
   function getNowGtfsSeconds() {
@@ -606,7 +612,7 @@
 
   function getMetroScheduledArrivals(stop) {
     const now = getNowGtfsSeconds();
-    const weekend = isWeekendInSofia();
+    const dayType = getCurrentScheduleDayType();
     const selectedStop = String(stop?.stop_id || stop?.stop_code || '').trim();
     if (!selectedStop) return [];
 
@@ -625,7 +631,7 @@
         if (stopIndex < 0) continue;
         if (isTerminalDirectionForStop(routeId, selectedStop, direction)) continue;
 
-        const daySchedules = scheduleSet?.[directionKey]?.[weekend ? 'weekend' : 'weekday'];
+        const daySchedules = scheduleSet?.[directionKey]?.[dayType];
         if (!Array.isArray(daySchedules)) continue;
 
         const arrivals = [];
@@ -659,7 +665,7 @@
   function getSurfaceScheduledArrivals(stop) {
     const nowTimestamp = Date.now() / 1000;
     const horizonTimestamp = nowTimestamp + 2 * 60 * 60;
-    const weekend = isWeekendInSofia();
+    const dayType = getCurrentScheduleDayType();
     const selectedStop = String(stop?.stop_id || stop?.stop_code || '').trim();
     if (!selectedStop) return [];
 
@@ -686,7 +692,7 @@
         // by padding the unused tail with nulls. Therefore the actual terminal
         // of a particular course must be derived from that course's own times,
         // not from direction.pattern alone.
-        const daySchedules = scheduleSet?.[directionKey]?.[weekend ? 'weekend' : 'weekday'];
+        const daySchedules = scheduleSet?.[directionKey]?.[dayType];
         if (!Array.isArray(daySchedules)) continue;
 
         const rowsByTerminal = new Map();

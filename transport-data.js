@@ -45,6 +45,143 @@ async function loadTransportData() {
 }
 
 
+const TRANSPORT_TIME_ZONE = 'Europe/Sofia';
+const TRANSPORT_WEEKDAY_FIELDS = [
+    'monday',
+    'tuesday',
+    'wednesday',
+    'thursday',
+    'friday',
+    'saturday',
+    'sunday'
+];
+
+function getTransportCalendarDateKey(date = new Date()) {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: TRANSPORT_TIME_ZONE,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+    }).formatToParts(date);
+
+    const get = type =>
+        parts.find(part => part.type === type)?.value || '';
+
+    return `${get('year')}-${get('month')}-${get('day')}`;
+}
+
+function getTransportCalendarCompactDateKey(date = new Date()) {
+    return getTransportCalendarDateKey(date).replaceAll('-', '');
+}
+
+function getTransportCalendarWeekday(date = new Date()) {
+    const value = new Intl.DateTimeFormat('en-US', {
+        timeZone: TRANSPORT_TIME_ZONE,
+        weekday: 'short'
+    }).format(date);
+
+    return value;
+}
+
+function getTransportCalendarDayType(date = new Date()) {
+    const key = getTransportCalendarDateKey(date);
+    const calendar = window.transportData?.calendar;
+
+    const cachedType =
+        calendar?.dateTypes?.[key];
+
+    if (
+        cachedType === 'weekday' ||
+        cachedType === 'weekend'
+    ) {
+        return cachedType;
+    }
+
+    const compactDate =
+        getTransportCalendarCompactDateKey(date);
+
+    const weekdayIndex = (() => {
+        const short = getTransportCalendarWeekday(date);
+        return [
+            'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'
+        ].indexOf(short);
+    })();
+
+    const baseServiceIds = new Set();
+    const patterns = Array.isArray(calendar?.servicePatterns)
+        ? calendar.servicePatterns
+        : [];
+
+    for (const row of patterns) {
+        const serviceId = String(row?.service_id || '').trim();
+        if (!serviceId || weekdayIndex < 0) continue;
+
+        const start = String(row?.start_date || '').trim();
+        const end = String(row?.end_date || '').trim();
+        if (
+            !/^\d{8}$/.test(start) ||
+            !/^\d{8}$/.test(end) ||
+            compactDate < start ||
+            compactDate > end
+        ) {
+            continue;
+        }
+
+        const field =
+            TRANSPORT_WEEKDAY_FIELDS[weekdayIndex];
+
+        if (String(row?.[field] || '').trim() === '1') {
+            baseServiceIds.add(serviceId);
+        }
+    }
+
+    const effectiveServiceIds =
+        new Set(baseServiceIds);
+
+    const exceptions = Array.isArray(calendar?.exceptions)
+        ? calendar.exceptions
+        : [];
+
+    for (const row of exceptions) {
+        if (
+            String(row?.date || '').trim() !== compactDate
+        ) {
+            continue;
+        }
+
+        const serviceId = String(row?.service_id || '').trim();
+        const exceptionType = String(row?.exception_type || '').trim();
+        if (!serviceId) continue;
+
+        if (exceptionType === '1') {
+            effectiveServiceIds.add(serviceId);
+        } else if (exceptionType === '2') {
+            effectiveServiceIds.delete(serviceId);
+        }
+    }
+
+    const isWeekend =
+        weekdayIndex >= 5;
+
+    const hasSpecialServiceEffect =
+        patterns.length > 0 && (
+            effectiveServiceIds.size !== baseServiceIds.size ||
+            [...effectiveServiceIds].some(id => !baseServiceIds.has(id))
+        );
+
+    if (isWeekend || hasSpecialServiceEffect) {
+        return 'weekend';
+    }
+
+    return 'weekday';
+}
+
+window.getTransportCalendarDateKey =
+    getTransportCalendarDateKey;
+window.getTransportCalendarDayType =
+    getTransportCalendarDayType;
+
+
 function getTransportType(routeType) {
     switch (String(routeType)) {
         case '0':

@@ -1070,6 +1070,20 @@ async function initializeSchedules() {
     window.scheduleLines =
       scheduleLines;
 
+    selectedDayType =
+      typeof getTransportCalendarDayType === 'function'
+        ? getTransportCalendarDayType()
+        : 'weekday';
+
+    document
+      .querySelectorAll('.schedule-day-tab')
+      .forEach(button => {
+        button.classList.toggle(
+          'active',
+          button.dataset.dayType === selectedDayType
+        );
+      });
+
     renderLineDropdown();
 
   } catch (error) {
