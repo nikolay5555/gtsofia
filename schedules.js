@@ -409,9 +409,7 @@ function renderStops() {
       .map(
         (stop, index) => `
           <option value="${index}">
-            ${index + 1}. ${escapeHtml(
-              stop.name
-            )}
+            ${escapeHtml(stop.name)}
           </option>`
       )
       .join("");
