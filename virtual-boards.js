@@ -1,6 +1,7 @@
 (() => {
   const SOFIA_TIME_ZONE = "Europe/Sofia";
   const REFRESH_MS = 15000;
+  const EXPIRED_PRIMARY_HOLD_MS = 10000;
   const SOFIA_CENTER = [42.6977, 23.3219];
 
   let map = null;
@@ -9,6 +10,7 @@
   let countdownTimer = null;
   let refreshInFlight = false;
   let lastExpiredPrimaryArrival = null;
+  let expiredPrimaryRefreshTimer = null;
   let boardRenderToken = 0;
   let clockTimer = null;
   let stopMarkers = null;
@@ -1254,7 +1256,26 @@
     return fetchVirtualBoardViaServer(stop);
   }
 
+  function clearExpiredPrimaryRefreshTimer() {
+    if (expiredPrimaryRefreshTimer !== null) {
+      clearTimeout(expiredPrimaryRefreshTimer);
+      expiredPrimaryRefreshTimer = null;
+    }
+  }
+
+  function scheduleExpiredPrimaryRefresh(expiredTimestamp) {
+    if (expiredPrimaryRefreshTimer !== null || !selectedStopId) return;
+
+    const scheduledStopId = String(selectedStopId);
+    expiredPrimaryRefreshTimer = setTimeout(() => {
+      expiredPrimaryRefreshTimer = null;
+      if (selectedStopId !== scheduledStopId || lastExpiredPrimaryArrival !== expiredTimestamp) return;
+      refreshSelectedBoard();
+    }, EXPIRED_PRIMARY_HOLD_MS);
+  }
+
   async function renderStopBoard(stop, boardData = null) {
+    clearExpiredPrimaryRefreshTimer();
     const renderToken = ++boardRenderToken;
     selectedStopId = String(stop.stop_id);
     const panel = boardPanel();
@@ -1279,6 +1300,7 @@
       ++boardRenderToken;
       selectedStopId = null;
       lastExpiredPrimaryArrival = null;
+      clearExpiredPrimaryRefreshTimer();
       if (selectedStopMarker) {
         selectedStopMarker.setStyle({
           fillColor: "#111827",
@@ -1701,7 +1723,7 @@
       && !refreshInFlight
     ) {
       lastExpiredPrimaryArrival = primaryArrivalExpired;
-      refreshSelectedBoard();
+      scheduleExpiredPrimaryRefresh(primaryArrivalExpired);
     }
   }
 
