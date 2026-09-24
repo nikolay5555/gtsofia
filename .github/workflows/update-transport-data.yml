@@ -2,8 +2,7 @@ name: Update transport data
 
 on:
   schedule:
-    - cron: "30 8 * * *"
-      timezone: "Europe/Sofia"
+    - cron: "30 5,6 * * *"
 
   workflow_dispatch:
 
