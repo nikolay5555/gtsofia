@@ -126,6 +126,23 @@ function getTransportType(routeType) {
 }
 
 
+function getLineOverride(route) {
+    const routeId = String(route?.route_id || '').trim();
+    const routeNumber = String(route?.route_short_name || '').trim();
+    const overrides = Array.isArray(window.transportData?.lineOverrides)
+        ? window.transportData.lineOverrides
+        : [];
+
+    return overrides.find(override =>
+        String(override?.cgm_id || '').trim() === routeId ||
+        (
+            !override?.cgm_id &&
+            String(override?.route_ref || '').trim() === routeNumber
+        )
+    ) || null;
+}
+
+
 function getLineType(route) {
     const number =
         String(
@@ -150,24 +167,10 @@ function getLineType(route) {
         return 'night';
     }
 
-    const forcedBusLines =
-        new Set([
-            '3TM',
-            '73',
-            '60',
-            '288',
-            '74',
-            'E186',
-            '123',
-            '801'
-        ]);
+    const override = getLineOverride(route);
 
-    if (
-        forcedBusLines.has(
-            number
-        )
-    ) {
-        return 'bus';
+    if (override?.type) {
+        return override.type;
     }
 
     return getTransportType(
@@ -175,6 +178,21 @@ function getLineType(route) {
     );
 }
 
+
+function getLineDisplayNumber(route, type) {
+    const override = getLineOverride(route);
+    const sourceNumber = String(
+        route.route_short_name || ''
+    ).trim();
+
+    if (override?.route_ref) {
+        return String(override.route_ref).trim();
+    }
+
+    return type === 'metro'
+        ? sourceNumber.replace(/^[МM]/i, '')
+        : sourceNumber.replace(/^E(?=186$)/i, '');
+}
 
 function getTransportIcon(
     type,
@@ -233,31 +251,12 @@ function getLineColor(
     route,
     type
 ) {
-    const number =
-        String(
-            route.route_short_name || ''
-        )
-            .trim()
-            .toUpperCase();
+    const override = getLineOverride(route);
 
-    const forcedBusLines =
-        new Set([
-            '3TM',
-            '73',
-            '60',
-            '288',
-            '74',
-            'E186',
-            '123',
-            '801'
-        ]);
-
-    if (
-        forcedBusLines.has(
-            number
-        )
-    ) {
-        return '#BE1E2D';
+    if (override?.color) {
+        return String(override.color).startsWith('#')
+            ? String(override.color)
+            : `#${override.color}`;
     }
 
     if (route.route_color) {
@@ -278,13 +277,12 @@ function getLineColor(
             return '#27AAE1';
 
         case 'metro':
-            return '#9E1B32';
+            return '#1C75BC';
 
         default:
             return '#BE1E2D';
     }
 }
-
 
 function getDirections(
     routeLongName
@@ -397,24 +395,10 @@ function convertGtfsRoutes(
                     route.route_long_name
                 );
 
-            const displayNumber =
-                type === 'metro'
-                    ? String(
-                          route.route_short_name || ''
-                      )
-                          .trim()
-                          .replace(
-                              /^[МM]/i,
-                              ''
-                          )
-                    : String(
-                          route.route_short_name || ''
-                      )
-                          .trim()
-                          .replace(
-                              /^E(?=186$)/i,
-                              ''
-                          );
+            const displayNumber = getLineDisplayNumber(
+                route,
+                type
+            );
 
             return {
                 id:
@@ -439,9 +423,7 @@ function convertGtfsRoutes(
                 icon:
                     getTransportIcon(
                         type,
-                        String(
-                            route.route_short_name || ''
-                        ).trim()
+                        displayNumber
                     ),
 
                 /*
@@ -483,6 +465,13 @@ function convertGtfsRoutes(
             };
         });
 }
+
+
+window.getLineOverride = getLineOverride;
+window.getLineDisplayNumber = getLineDisplayNumber;
+window.getLineType = getLineType;
+window.getLineColor = getLineColor;
+window.getTransportIcon = getTransportIcon;
 
 
 async function loadTransportLines() {

@@ -20,6 +20,7 @@ DATA_DIR = ROOT / "data"
 GTFS_DIR = ROOT / ".gtfs"
 OUTPUT_FILE = DATA_DIR / "transport.json"
 CALENDAR_CONFIG_FILE = ROOT / "config" / "calendar.json"
+LINE_OVERRIDES_CONFIG_FILE = ROOT / "config" / "line-overrides.json"
 
 OSM_NETWORK_NAME = "Градски транспорт София"
 
@@ -41,6 +42,24 @@ OSM_STOPS_TYPES = [
         "public_transport": "platform",
     },
 ]
+
+
+def load_line_overrides():
+    if not LINE_OVERRIDES_CONFIG_FILE.exists():
+        return []
+
+    with LINE_OVERRIDES_CONFIG_FILE.open(
+        "r",
+        encoding="utf-8"
+    ) as file:
+        data = json.load(file)
+
+    if not isinstance(data, list):
+        raise ValueError(
+            "config/line-overrides.json must contain an array."
+        )
+
+    return data
 
 
 def normalize(value):
@@ -2394,6 +2413,7 @@ def main():
         )
 
         today = get_today()
+        line_overrides = load_line_overrides()
 
         print(
             f"Service reference date: {today}"
@@ -2625,6 +2645,12 @@ def main():
 
             "source":
                 "CGM Sofia official GTFS",
+
+            # Presentation-only mappings. The original GTFS routes above
+            # remain untouched; the frontend applies these overrides when
+            # displaying line metadata.
+            "lineOverrides":
+                line_overrides,
 
             "calendar":
                 calendar_result,
