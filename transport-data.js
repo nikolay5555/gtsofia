@@ -259,7 +259,10 @@ function getLineColor(
             : `#${override.color}`;
     }
 
-    if (route.route_color) {
+    // When the transport type is masked by an override, do not let
+    // the original CGM route color leak through (e.g. trolleybus blue
+    // on a line that the UI masks as a bus).
+    if (!override?.type && route.route_color) {
         return `#${route.route_color}`;
     }
 
