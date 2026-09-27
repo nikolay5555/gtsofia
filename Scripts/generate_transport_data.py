@@ -23,18 +23,25 @@ CALENDAR_CONFIG_FILE = ROOT / "config" / "calendar.json"
 LINE_OVERRIDES_CONFIG_FILE = ROOT / "config" / "line-overrides.json"
 
 OSM_NETWORK_NAME = "Градски транспорт София"
-OSM_NETWORK_WIKIDATA = "Q124360139"
-OSM_OVERPASS_ENDPOINTS = (
-    "https://overpass-api.de/api/interpreter",
-    "https://overpass.private.coffee/api/interpreter",
-)
-OSM_QUERY_TIMEOUT = 60
-OSM_HTTP_TIMEOUT = 90
 
-# Sofia-area bounding box: south, west, north, east.
-# The network tags below are still required, so we do not accidentally
-# import unrelated public-transport stops from nearby cities.
-OSM_BBOX = "42.55,23.15,42.85,23.65"
+OSM_STOPS_TYPES = [
+    {
+        "type": "subway",
+        "public_transport": "station",
+    },
+    {
+        "type": "tram",
+        "public_transport": "stop_position",
+    },
+    {
+        "type": "bus",
+        "public_transport": "platform",
+    },
+    {
+        "type": "trolleybus",
+        "public_transport": "platform",
+    },
+]
 
 
 def load_line_overrides():
@@ -217,196 +224,247 @@ def transliterate(text):
     )
 
 
-def build_osm_query():
-    """Build a resilient Overpass query for Sofia public-transport stops."""
+def fetch_osm_stops():
+    """
+    Python equivalent of Dimitar5555's fetch_osm_stops().
 
-    # Sofia OSM data uses both the network name and the network Wikidata id.
-    # Stop objects can be tagged as public_transport=platform/stop_position/
-    # station, and some also retain the older highway=bus_stop or
-    # railway=tram_stop tagging. Query all of those forms, but keep the
-    # network constraint and a Sofia bounding box.
-    return (
-        f"[out:json][timeout:{OSM_QUERY_TIMEOUT}];"
-        "("
-        f"nwr[ref][network=\"{OSM_NETWORK_NAME}\"][public_transport~\"^(platform|stop_position|station)$\"]({OSM_BBOX});"
-        f"nwr[ref][network=\"{OSM_NETWORK_NAME}\"][highway=\"bus_stop\"]({OSM_BBOX});"
-        f"nwr[ref][network=\"{OSM_NETWORK_NAME}\"][railway=\"tram_stop\"]({OSM_BBOX});"
-        f"nwr[ref][network:wikidata=\"{OSM_NETWORK_WIKIDATA}\"][public_transport~\"^(platform|stop_position|station)$\"]({OSM_BBOX});"
-        f"nwr[ref][network:wikidata=\"{OSM_NETWORK_WIKIDATA}\"][highway=\"bus_stop\"]({OSM_BBOX});"
-        f"nwr[ref][network:wikidata=\"{OSM_NETWORK_WIKIDATA}\"][railway=\"tram_stop\"]({OSM_BBOX});"
-        ");"
-        "out center tags;"
+    OSM is used only to improve/complete stop metadata.
+    It does NOT replace GTFS geometry or schedules.
+    """
+
+    elements = "".join(
+        (
+            f'node[{item["type"]}=yes]'
+            f'[public_transport={item["public_transport"]}]'
+            f'[ref]'
+            f'[network="{OSM_NETWORK_NAME}"];'
+        )
+        for item in OSM_STOPS_TYPES
     )
 
-
-def _osm_element_coordinates(element):
-    """Return an element's latitude/longitude for nodes and centered ways."""
-
-    lat = element.get("lat")
-    lon = element.get("lon")
-
-    if lat is None or lon is None:
-        center = element.get("center") or {}
-        lat = center.get("lat")
-        lon = center.get("lon")
-
-    return (
-        round_coordinate(lat),
-        round_coordinate(lon),
+    query = (
+        "[out:json][timeout:25];"
+        f"({elements});"
+        "out geom;"
     )
 
-
-def _osm_candidate_score(candidate):
-    """Prefer records with a translated name and coordinates when de-duplicating."""
-
-    return (
-        bool(candidate.get("name")),
-        bool(candidate.get("name_en")),
-        candidate.get("lat") is not None and candidate.get("lon") is not None,
+    body = urllib.parse.urlencode(
+        {
+            "data": query
+        }
+    ).encode(
+        "utf-8"
     )
 
+    request = urllib.request.Request(
+        "https://overpass-api.de/api/interpreter",
+        data=body,
+        method="POST",
+        headers={
+            "Referer":
+                "https://overpass-turbo.eu/",
 
-def parse_osm_stops(data):
-    """Parse Overpass JSON into a stop-code keyed dictionary."""
+            "User-Agent":
+                "github/nikolay5555/gtsofia"
+        }
+    )
+
+    try:
+
+        with urllib.request.urlopen(
+            request,
+            timeout=90
+        ) as response:
+
+            payload = response.read()
+
+        data = json.loads(
+            payload.decode(
+                "utf-8"
+            )
+        )
+
+    except Exception as error:
+
+        print(
+            "WARNING: OSM stop fetch failed:"
+        )
+
+        print(
+            f"  {error}"
+        )
+
+        print(
+            "Continuing with GTFS stop names."
+        )
+
+        return {}
+
+    elements_data = data.get(
+        "elements",
+        []
+    )
 
     result = {}
 
-    elements_data = data.get("elements", [])
-
     for element in elements_data:
-        tags = element.get("tags") or {}
 
-        ref = normalize(tags.get("ref"))
+        tags = element.get(
+            "tags",
+            {}
+        )
+
+        ref = normalize(
+            tags.get(
+                "ref"
+            )
+        )
+
         if not ref:
             continue
 
-        is_subway = (
-            tags.get("subway") == "yes"
-            or tags.get("railway") == "subway"
+        if (
+            tags.get(
+                "subway"
+            )
+            == "yes"
+        ):
+
+            code = (
+                "M"
+                + ref
+            )
+
+        else:
+
+            code = ref.zfill(
+                4
+            )
+
+        name_bg = normalize(
+            tags.get(
+                "name"
+            )
         )
 
-        code = (
-            "M" + ref.lstrip("M")
-            if is_subway
-            else normalize_stop_id(ref)
+        name_en = normalize(
+            tags.get(
+                "name:en"
+            )
         )
 
-        name_bg = normalize(tags.get("name"))
-        name_en = normalize(tags.get("name:en"))
-        if not name_en and name_bg:
-            name_en = transliterate(name_bg)
+        if not name_en:
+            name_en = transliterate(
+                name_bg
+            )
 
-        lat, lon = _osm_element_coordinates(element)
+        result[
+            code
+        ] = {
+            "code":
+                code,
 
-        candidate = {
-            "code": code,
-            "name": name_bg,
-            "name_en": name_en,
-            "lat": lat,
-            "lon": lon,
+            "name":
+                name_bg,
+
+            "name_en":
+                name_en,
+
+            "lat":
+                round_coordinate(
+                    element.get(
+                        "lat"
+                    )
+                ),
+
+            "lon":
+                round_coordinate(
+                    element.get(
+                        "lon"
+                    )
+                ),
         }
 
-        current = result.get(code)
-        if current is None or _osm_candidate_score(candidate) > _osm_candidate_score(current):
-            result[code] = candidate
+    print(
+        "OSM stops fetched: "
+        f"{len(result)}"
+    )
 
     return result
 
 
-def fetch_osm_stops():
-    """Fetch Sofia stop names from OSM with Overpass failover."""
+def merge_osm_stop_names(
+    stops,
+    osm_stops
+):
+    """
+    Preserve the current transport.json structure.
 
-    query = build_osm_query()
-    body = urllib.parse.urlencode({"data": query}).encode("utf-8")
+    For matching stop codes:
+        OSM name -> preferred
+        GTFS name -> fallback
 
-    errors = []
+    The rest of the GTFS stop record remains unchanged.
+    """
 
-    for endpoint in OSM_OVERPASS_ENDPOINTS:
-        request = urllib.request.Request(
-            endpoint,
-            data=body,
-            method="POST",
-            headers={
-                "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
-                "Referer": "https://overpass-turbo.eu/",
-                "User-Agent": "github/nikolay5555/gtsofia (+https://github.com/nikolay5555/gtsofia)",
-            },
-        )
-
-        try:
-            print(f"Fetching OSM stops from {endpoint}")
-
-            with urllib.request.urlopen(
-                request,
-                timeout=OSM_HTTP_TIMEOUT,
-            ) as response:
-                payload = response.read()
-
-            data = json.loads(payload.decode("utf-8"))
-            result = parse_osm_stops(data)
-
-            if not result:
-                raise RuntimeError(
-                    "Overpass returned a successful response but no matching Sofia stops."
-                )
-
-            named = sum(1 for stop in result.values() if stop.get("name"))
-            named_en = sum(1 for stop in result.values() if stop.get("name_en"))
-
-            print(f"OSM stops fetched: {len(result)}")
-            print(f"OSM stops with Bulgarian names: {named}")
-            print(f"OSM stops with English names: {named_en}")
-
-            return result
-
-        except Exception as error:
-            errors.append(f"{endpoint}: {error}")
-            print(f"WARNING: OSM stop fetch failed on {endpoint}: {error}")
-
-    print("WARNING: All OSM Overpass endpoints failed.")
-    for error in errors:
-        print(f"  {error}")
-    print("Continuing with GTFS stop names as fallback.")
-    return {}
-
-
-def merge_osm_stop_names(stops, osm_stops):
-    """Prefer OSM names for matching stop codes and keep GTFS as fallback."""
+    if not osm_stops:
+        return stops
 
     updated = []
+
     matched = 0
-    osm_names_applied = 0
-    osm_names_en_applied = 0
 
     for stop in stops:
-        stop_copy = dict(stop)
-        stop_id = normalize_stop_id(stop_copy.get("stop_id"))
-        osm_stop = osm_stops.get(stop_id)
+
+        stop_copy = dict(
+            stop
+        )
+
+        stop_id = normalize(
+            stop_copy.get(
+                "stop_id"
+            )
+        )
+
+        osm_stop = osm_stops.get(
+            stop_id
+        )
 
         if osm_stop:
+
             matched += 1
 
-            osm_name = normalize(osm_stop.get("name"))
+            osm_name = normalize(
+                osm_stop.get(
+                    "name"
+                )
+            )
+
             if osm_name:
-                stop_copy["stop_name"] = osm_name
-                osm_names_applied += 1
+                stop_copy[
+                    "stop_name"
+                ] = osm_name
 
-            osm_name_en = normalize(osm_stop.get("name_en"))
+            osm_name_en = normalize(
+                osm_stop.get(
+                    "name_en"
+                )
+            )
+
             if osm_name_en:
-                stop_copy["stop_name_en"] = osm_name_en
-                osm_names_en_applied += 1
 
-        updated.append(stop_copy)
+                stop_copy[
+                    "stop_name_en"
+                ] = osm_name_en
 
-    gtfs_fallback = len(stops) - osm_names_applied
+        updated.append(
+            stop_copy
+        )
 
-    print(f"GTFS stops matched with OSM: {matched}")
-    print(f"OSM Bulgarian names applied: {osm_names_applied}")
-    print(f"OSM English names applied: {osm_names_en_applied}")
-    print(f"GTFS name fallback used: {gtfs_fallback}")
-
-    if stops and not osm_stops:
-        print("WARNING: No OSM stop data was applied; all GTFS names remain in use.")
+    print(
+        "GTFS stops matched with OSM: "
+        f"{matched}"
+    )
 
     return updated
 
