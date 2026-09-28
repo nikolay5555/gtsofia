@@ -2,7 +2,10 @@ name: Update transport data
 
 on:
   schedule:
-    - cron: "30 4 * * *"
+    # GitHub schedules are delayed occasionally under load. Use a non-round
+    # minute and pin the schedule to Sofia time so DST is handled for us.
+    - cron: "17 7 * * *"
+      timezone: "Europe/Sofia"
 
   workflow_dispatch:
 
