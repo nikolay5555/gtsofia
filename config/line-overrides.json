@@ -1,0 +1,40 @@
+[
+  {
+    "type": "bus",
+    "cgm_id": "TB34",
+    "route_ref": "20ТМ"
+  },
+  {
+    "type": "bus",
+    "cgm_id": "TB37"
+  },
+  {
+    "type": "bus",
+    "cgm_id": "TB43"
+  },
+  {
+    "type": "bus",
+    "cgm_id": "TB35"
+  },
+  {
+    "type": "bus",
+    "cgm_id": "TB36"
+  },
+  {
+    "type": "bus",
+    "cgm_id": "TB46",
+    "route_ref": "186"
+  },
+  {
+    "type": "bus",
+    "cgm_id": "TB39"
+  },
+  {
+    "type": "bus",
+    "cgm_id": "TB24"
+  },
+  {
+    "type": "bus",
+    "cgm_id": "TB41"
+  }
+]
