@@ -640,6 +640,67 @@ def load_calendar_config(path=CALENDAR_CONFIG_FILE):
     if not isinstance(overrides, dict):
         raise ValueError("calendar.json dateOverrides must be an object.")
 
+    direction_overrides = raw.get("directionOverrides", [])
+    if not isinstance(direction_overrides, list):
+        raise ValueError("calendar.json directionOverrides must be an array.")
+
+    normalized_direction_overrides = []
+    for index, rule in enumerate(direction_overrides):
+        if not isinstance(rule, dict):
+            raise ValueError(
+                f"calendar.json directionOverrides[{index}] must be an object."
+            )
+
+        start_date = parse_date(
+            str(rule.get("startDate", "")).replace("-", "")
+        )
+        end_date = parse_date(
+            str(rule.get("endDate", "")).replace("-", "")
+        )
+
+        if start_date is None or end_date is None or start_date > end_date:
+            raise ValueError(
+                f"Invalid direction override date range at index {index}."
+            )
+
+        route_id = normalize(rule.get("routeId"))
+        if not route_id:
+            raise ValueError(
+                f"directionOverrides[{index}] requires routeId."
+            )
+
+        exclude_codes = rule.get("excludeCodes", [])
+        include_codes = rule.get("includeCodes")
+
+        if not isinstance(exclude_codes, list):
+            raise ValueError(
+                f"directionOverrides[{index}].excludeCodes must be an array."
+            )
+
+        if include_codes is not None and not isinstance(include_codes, list):
+            raise ValueError(
+                f"directionOverrides[{index}].includeCodes must be an array."
+            )
+
+        normalized_rule = {
+            "startDate": iso_date_string(start_date),
+            "endDate": iso_date_string(end_date),
+            "routeId": route_id,
+            "excludeCodes": sorted({normalize(code) for code in exclude_codes if normalize(code)}),
+        }
+
+        if include_codes is not None:
+            normalized_rule["includeCodes"] = sorted({
+                normalize(code) for code in include_codes if normalize(code)
+            })
+
+        if not normalized_rule["excludeCodes"] and "includeCodes" not in normalized_rule:
+            raise ValueError(
+                f"directionOverrides[{index}] requires excludeCodes or includeCodes."
+            )
+
+        normalized_direction_overrides.append(normalized_rule)
+
     normalized_overrides = {}
     for raw_date, raw_day_type in overrides.items():
         date_value = parse_date(raw_date.replace("-", ""))
@@ -658,7 +719,102 @@ def load_calendar_config(path=CALENDAR_CONFIG_FILE):
 
     return {
         "dateOverrides": normalized_overrides,
+        "directionOverrides": normalized_direction_overrides,
     }
+
+
+def _date_inclusive_range(current, start_date, end_date):
+    return start_date <= current <= end_date
+
+
+def apply_direction_overrides(
+    directions_result,
+    calendar_config,
+    current_date
+):
+    """
+    Apply date-specific operational direction changes after GTFS service
+    filtering. This is intentionally generic: it can target any route and
+    any direction codes, not just a single line.
+
+    GTFS calendar/calendar_dates remains the primary source of truth. These
+    rules are only needed when the feed keeps multiple operational patterns
+    under the same service_id and therefore cannot express a temporary
+    direction change through calendar exceptions alone.
+    """
+
+    config = calendar_config or {}
+    rules = config.get("directionOverrides", [])
+
+    if not rules:
+        return directions_result, []
+
+    result = {}
+    applied = []
+
+    for route_id, route_directions in directions_result.items():
+        current_directions = dict(route_directions)
+
+        for rule in rules:
+            if normalize(rule.get("routeId")) != normalize(route_id):
+                continue
+
+            start_date = parse_date(
+                str(rule.get("startDate", "")).replace("-", "")
+            )
+            end_date = parse_date(
+                str(rule.get("endDate", "")).replace("-", "")
+            )
+
+            if (
+                start_date is None
+                or end_date is None
+                or not _date_inclusive_range(current_date, start_date, end_date)
+            ):
+                continue
+
+            exclude_codes = {
+                normalize(code)
+                for code in rule.get("excludeCodes", [])
+                if normalize(code)
+            }
+            include_codes = rule.get("includeCodes")
+
+            before = set(current_directions)
+
+            if include_codes is not None:
+                include_codes = {
+                    normalize(code)
+                    for code in include_codes
+                    if normalize(code)
+                }
+                current_directions = {
+                    key: direction
+                    for key, direction in current_directions.items()
+                    if normalize(direction.get("code")) in include_codes
+                }
+
+            if exclude_codes:
+                current_directions = {
+                    key: direction
+                    for key, direction in current_directions.items()
+                    if normalize(direction.get("code")) not in exclude_codes
+                }
+
+            removed = sorted(before - set(current_directions))
+            if removed:
+                applied.append({
+                    "routeId": route_id,
+                    "startDate": rule["startDate"],
+                    "endDate": rule["endDate"],
+                    "removedDirectionKeys": removed,
+                    "excludedCodes": sorted(exclude_codes),
+                })
+
+        if current_directions:
+            result[route_id] = current_directions
+
+    return result, applied
 
 
 def build_calendar_context(
@@ -2435,7 +2591,8 @@ def build_public_calendar(calendar_result):
         "serviceIdsByDate": calendar_result.get("serviceIdsByDate", {}),
         "dateTypes": calendar_result.get("dateTypes", {}),
         "serviceDayTypes": calendar_result.get("serviceDayTypes", {}),
-        "config": calendar_result.get("config", {"dateOverrides": {}}),
+        "config": calendar_result.get("config", {"dateOverrides": {}, "directionOverrides": []}),
+        "appliedDirectionOverrides": calendar_result.get("appliedDirectionOverrides", []),
     }
 
 
@@ -2751,6 +2908,25 @@ def main():
         )
 
         # --------------------------------------------------------
+        # Date-specific operational direction exceptions
+        # --------------------------------------------------------
+
+        (
+            directions_result,
+            applied_direction_overrides
+        ) = apply_direction_overrides(
+            directions_result,
+            calendar_config,
+            today
+        )
+
+        if applied_direction_overrides:
+            print(
+                "Applied direction overrides: "
+                f"{len(applied_direction_overrides)}"
+            )
+
+        # --------------------------------------------------------
         # Schedules
         # --------------------------------------------------------
 
@@ -2791,6 +2967,10 @@ def main():
         shapes_result = load_shapes(
             selected_shape_ids
         )
+
+        # Keep a small audit trail in generated calendar metadata so it is
+        # clear which date-specific operational rules were applied.
+        calendar_result["appliedDirectionOverrides"] = applied_direction_overrides
 
         # --------------------------------------------------------
         # Final output

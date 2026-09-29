@@ -1,5 +1,13 @@
 {
   "dateOverrides": {
     "2026-09-22": "weekend"
-  }
+  },
+  "directionOverrides": [
+    {
+      "startDate": "2026-09-14",
+      "endDate": "2026-10-12",
+      "routeId": "TM28",
+      "excludeCodes": ["541", "542"]
+    }
+  ]
 }

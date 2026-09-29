@@ -149,3 +149,63 @@ class CalendarTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class DirectionOverrideTests(unittest.TestCase):
+    def test_direction_override_is_generic_and_date_bounded(self):
+        directions = {
+            "R1": {
+                "D1": {"code": "10"},
+                "D2": {"code": "20"},
+                "D3": {"code": "30"},
+            },
+            "R2": {
+                "D1": {"code": "20"},
+            },
+        }
+        config = {
+            "directionOverrides": [
+                {
+                    "startDate": "2026-09-14",
+                    "endDate": "2026-10-12",
+                    "routeId": "R1",
+                    "excludeCodes": ["20", "30"],
+                }
+            ]
+        }
+
+        active, applied = module.apply_direction_overrides(
+            directions,
+            config,
+            date(2026, 9, 29),
+        )
+
+        self.assertEqual(list(active["R1"]), ["D1"])
+        self.assertIn("R2", active)
+        self.assertEqual(applied[0]["routeId"], "R1")
+
+    def test_direction_override_stops_after_end_date(self):
+        directions = {
+            "R1": {
+                "D1": {"code": "10"},
+                "D2": {"code": "20"},
+            }
+        }
+        config = {
+            "directionOverrides": [
+                {
+                    "startDate": "2026-09-14",
+                    "endDate": "2026-10-12",
+                    "routeId": "R1",
+                    "excludeCodes": ["20"],
+                }
+            ]
+        }
+
+        active, applied = module.apply_direction_overrides(
+            directions,
+            config,
+            date(2026, 10, 13),
+        )
+
+        self.assertEqual(set(active["R1"]), {"D1", "D2"})
+        self.assertEqual(applied, [])
