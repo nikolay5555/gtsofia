@@ -1,5 +1,7 @@
 """GTFS download and CSV loading stage."""
 
+from pathlib import Path
+
 import csv
 import io
 import shutil
