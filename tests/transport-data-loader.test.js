@@ -20,11 +20,44 @@ vm.runInContext(source, context, { filename: 'transport-data.js' });
 
 (async () => {
   const data = await context.loadTransportData();
-  assert.equal(data.routes.length, 204);
-  assert.equal(data.trips.length, 29700);
-  assert.equal(Object.keys(data.directions).length, 142);
-  assert.equal(Object.keys(data.shapes).length, 333);
-  assert.equal(Object.keys(data.schedules).length, 142);
+  const expectedRoutes = JSON.parse(
+    fs.readFileSync(path.join(root, 'data/routes.json'), 'utf8')
+  );
+  const expectedStops = JSON.parse(
+    fs.readFileSync(path.join(root, 'data/stops.json'), 'utf8')
+  );
+  const expectedTrips = JSON.parse(
+    fs.readFileSync(path.join(root, 'data/trips.json'), 'utf8')
+  );
+  const expectedDirections = JSON.parse(
+    fs.readFileSync(path.join(root, 'data/directions.json'), 'utf8')
+  );
+
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(root, 'data/manifest.json'), 'utf8')
+  );
+  const expectedShapes = Object.assign(
+    {},
+    ...manifest.shapes.map(file =>
+      JSON.parse(fs.readFileSync(path.join(root, 'data', file), 'utf8'))
+    )
+  );
+  const expectedSchedules = Object.assign(
+    {},
+    ...manifest.schedules.map(file =>
+      JSON.parse(fs.readFileSync(path.join(root, 'data', file), 'utf8'))
+    )
+  );
+
+  // The GTFS feed changes over time, so these assertions intentionally compare
+  // the loader result with the current generated files instead of hardcoding a
+  // snapshot's trip/direction counts.
+  assert.equal(data.routes.length, expectedRoutes.length);
+  assert.equal(data.stops.length, expectedStops.length);
+  assert.equal(data.trips.length, expectedTrips.length);
+  assert.equal(JSON.stringify(data.directions), JSON.stringify(expectedDirections));
+  assert.equal(JSON.stringify(data.shapes), JSON.stringify(expectedShapes));
+  assert.equal(JSON.stringify(data.schedules), JSON.stringify(expectedSchedules));
   assert.equal(data.stops.filter(s => s.stop_id === '0024').length, 1);
   assert.equal(data.stops.find(s => s.stop_id === '0024').stop_name, '28-МИ ДКЦ');
   assert.equal(data.directions.A91.D1.stops.find(s => s.stop_id === '0024').name, '28-МИ ДКЦ');
