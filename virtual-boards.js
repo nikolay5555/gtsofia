@@ -680,7 +680,53 @@
     return result;
   }
 
-  function getSurfaceScheduledArrivals(stop) {
+  function isSkippedStaticSchedule(schedule, routeId, directionKey, skippedTrips = []) {
+    if (!Array.isArray(skippedTrips) || !skippedTrips.length) return false;
+
+    const scheduleRouteId = String(routeId || '').trim();
+    const scheduleDirectionKey = String(directionKey || '').trim();
+    const scheduleOriginalTripId = String(schedule?.original_trip_id || '').trim();
+    const scheduleStartTime = parseGtfsTime(schedule?.start_time);
+
+    return skippedTrips.some(skipped => {
+      if (!skipped) return false;
+
+      const skippedRouteId = String(skipped.route_id || '').trim();
+      if (skippedRouteId && scheduleRouteId && skippedRouteId !== scheduleRouteId) return false;
+
+      const skippedTripId = String(skipped.trip_id || '').trim();
+
+      // Newer generated transport.json contains the exact original GTFS trip
+      // id on every schedule row. This is the strongest possible match.
+      if (scheduleOriginalTripId && skippedTripId && scheduleOriginalTripId === skippedTripId) {
+        return true;
+      }
+
+      // Keep compatibility with older transport.json files that only contain
+      // the logical schedule trip id. Resolve the realtime trip back to its
+      // static direction and then match its GTFS start_time. Direction +
+      // start_time identifies the scheduled course without suppressing later
+      // courses in the same direction.
+      if (!skippedTripId || scheduleStartTime == null) return false;
+
+      const staticTrip = findStaticTrip(skippedTripId);
+      if (!staticTrip) return false;
+
+      const skippedDirection = getStaticDirectionForTrip(staticTrip);
+      if (skippedDirection?.key
+        && scheduleDirectionKey
+        && String(skippedDirection.key) !== scheduleDirectionKey) {
+        return false;
+      }
+
+      const skippedStartTime = parseGtfsTime(skipped.start_time);
+      if (skippedStartTime == null) return false;
+
+      return skippedStartTime === scheduleStartTime;
+    });
+  }
+
+  function getSurfaceScheduledArrivals(stop, skippedTrips = []) {
     const nowTimestamp = Date.now() / 1000;
     const horizonTimestamp = nowTimestamp + 2 * 60 * 60;
     const dayType = getCurrentScheduleDayType();
@@ -754,6 +800,11 @@
           const destination = normalizeDirectionText(
             direction?.destination || direction?.headsign || terminalStopId
           );
+
+          if (isSkippedStaticSchedule(schedule, routeId, directionKey, skippedTrips)) {
+            continue;
+          }
+
           if (isConsumedRealtimeScheduledArrival(
             selectedStop,
             routeId,
@@ -826,6 +877,7 @@
       throw new Error(message);
     }
     const generatedAt = data?.generated_at || Date.now();
+    const skippedTrips = Array.isArray(data?.skipped_trips) ? data.skipped_trips : [];
     const realtimeRoutes = Array.isArray(data?.routes)
       ? data.routes
           .filter(route => route && Array.isArray(route.times))
@@ -984,7 +1036,7 @@
     // the two hours before the next scheduled course when CGM has not yet
     // published realtime data for that line/direction. Once realtime appears,
     // it wins and replaces the static fallback.
-    const scheduledSurfaceRoutes = isMetroStop(stop) ? [] : getSurfaceScheduledArrivals(stop);
+    const scheduledSurfaceRoutes = isMetroStop(stop) ? [] : getSurfaceScheduledArrivals(stop, skippedTrips);
     function directionPatternsShareLongPrefix(shortDirection, longDirection, selectedStopId) {
       const shortPattern = Array.isArray(shortDirection?.pattern)
         ? shortDirection.pattern.map(String)
