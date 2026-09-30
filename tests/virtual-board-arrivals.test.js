@@ -27,7 +27,7 @@ function createStorage(initialEntries = []) {
 function loadInternals(storage) {
   const exportedSource = source.replace(
     /\n\}\)\(\);\s*$/,
-    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    formatArrivalCountdown\n  };\n})();`
+    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    formatArrivalCountdown,\n    isScheduleOnlyRoute\n  };\n})();`
   );
 
   const context = {
@@ -50,6 +50,32 @@ function loadInternals(storage) {
 
 const storage = createStorage();
 const internals = loadInternals(storage);
+
+assert.equal(
+  internals.isScheduleOnlyRoute({ route_type: '3', route_short_name: 'N1' }),
+  true,
+  'N1 must allow the static schedule fallback'
+);
+assert.equal(
+  internals.isScheduleOnlyRoute({ route_type: '3', route_short_name: 'N4' }),
+  true,
+  'N4 must allow the static schedule fallback'
+);
+assert.equal(
+  internals.isScheduleOnlyRoute({ route_type: '1', route_short_name: 'M1' }),
+  true,
+  'metro routes must allow the static schedule fallback'
+);
+assert.equal(
+  internals.isScheduleOnlyRoute({ route_type: '3', route_short_name: '78' }),
+  false,
+  'realtime-enabled surface lines such as 78 must not allow the static fallback'
+);
+assert.equal(
+  internals.isScheduleOnlyRoute({ route_type: '0', route_short_name: '22' }),
+  false,
+  'surface tram lines must not allow the static fallback'
+);
 
 const countdownNow = 1_000;
 assert.equal(
