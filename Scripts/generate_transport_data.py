@@ -2172,6 +2172,8 @@ def build_output_directions(
         for route in routes_data
     }
 
+    result = []
+
     surviving_codes = set()
     for trip in logical_trips:
         if trip.get("is_deleted", False):
