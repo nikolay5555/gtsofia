@@ -680,19 +680,44 @@
     return result;
   }
 
-  function isSkippedStaticSchedule(schedule, routeId, directionKey, skippedTrips = []) {
+  function isSkippedStaticSchedule(
+    schedule,
+    routeId,
+    directionKey,
+    selectedStopId,
+    stopIndex,
+    skippedTrips = []
+  ) {
     if (!Array.isArray(skippedTrips) || !skippedTrips.length) return false;
 
     const scheduleRouteId = String(routeId || '').trim();
     const scheduleDirectionKey = String(directionKey || '').trim();
     const scheduleOriginalTripId = String(schedule?.original_trip_id || '').trim();
     const scheduleStartTime = parseGtfsTime(schedule?.start_time);
+    const scheduleStopSequences = Array.isArray(schedule?.stop_sequences)
+      ? schedule.stop_sequences
+      : [];
+    const selectedSequence = Number.isInteger(stopIndex)
+      ? Number(scheduleStopSequences[stopIndex])
+      : NaN;
 
     return skippedTrips.some(skipped => {
       if (!skipped) return false;
 
       const skippedRouteId = String(skipped.route_id || '').trim();
       if (skippedRouteId && scheduleRouteId && skippedRouteId !== scheduleRouteId) return false;
+
+      // A SKIPPED record is meaningful only for the exact stop represented by
+      // this static schedule row. Prefer stop_id; when GTFS-RT omitted it,
+      // resolve the stop through stop_sequence against the generated pattern.
+      const skippedStopId = String(skipped.stop_id || '').trim();
+      if (skippedStopId) {
+        if (!stopIdsMatch(skippedStopId, selectedStopId)) return false;
+      } else {
+        const skippedSequence = Number(skipped.stop_sequence);
+        if (!Number.isFinite(skippedSequence) || !Number.isFinite(selectedSequence)) return false;
+        if (skippedSequence !== selectedSequence) return false;
+      }
 
       const skippedTripId = String(skipped.trip_id || '').trim();
 
@@ -702,11 +727,10 @@
         return true;
       }
 
-      // Keep compatibility with older transport.json files that only contain
-      // the logical schedule trip id. Resolve the realtime trip back to its
-      // static direction and then match its GTFS start_time. Direction +
-      // start_time identifies the scheduled course without suppressing later
-      // courses in the same direction.
+      // Compatibility with older generated data: resolve the realtime trip to
+      // its static direction and match its GTFS start_time. The stop check above
+      // is deliberately done first so an unrelated SKIPPED stop cannot suppress
+      // the same scheduled course.
       if (!skippedTripId || scheduleStartTime == null) return false;
 
       const staticTrip = findStaticTrip(skippedTripId);
@@ -801,7 +825,7 @@
             direction?.destination || direction?.headsign || terminalStopId
           );
 
-          if (isSkippedStaticSchedule(schedule, routeId, directionKey, skippedTrips)) {
+          if (isSkippedStaticSchedule(schedule, routeId, directionKey, selectedStop, stopIndex, skippedTrips)) {
             continue;
           }
 
