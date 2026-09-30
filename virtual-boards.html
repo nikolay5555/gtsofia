@@ -20,35 +20,20 @@
       <a href="about.html">За проекта</a>
     </nav>
   </header>
-
   <main class="virtual-boards">
-
     <section class="virtual-board-layout">
       <div class="virtual-map-card">
         <div id="virtualMap" class="virtual-map" aria-label="Карта на спирките в София"></div>
       </div>
-
       <aside class="virtual-board-panel" id="virtualBoardPanel">
         <div id="virtualBoardContent" class="virtual-board-content">
           <div class="virtual-board-controls">
             <div class="virtual-stop-search virtual-stop-search-panel">
               <label class="sr-only" for="stopSearch">Търсене по спирка</label>
-              <input
-                id="stopSearch"
-                type="search"
-                placeholder="Търсене по спирка…"
-                autocomplete="off"
-                aria-label="Търсене по спирка"
-              />
+              <input id="stopSearch" type="search" placeholder="Търсене по спирка…" autocomplete="off" aria-label="Търсене по спирка" />
               <div id="stopSearchResults" class="virtual-stop-search-results" hidden></div>
             </div>
-            <button
-              type="button"
-              id="locateUserButton"
-              class="map-tool-button map-location-button"
-              aria-label="Моята локация"
-              title="Моята локация"
-            >
+            <button type="button" id="locateUserButton" class="map-tool-button map-location-button" aria-label="Моята локация" title="Моята локация">
               <img src="Icons/location.svg" alt="" aria-hidden="true" />
             </button>
           </div>
@@ -57,10 +42,9 @@
       </aside>
     </section>
   </main>
-
   <script src="navbar.js"></script>
   <script src="transport-data.js"></script>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="virtual-boards.js?v=21"></script>
+  <script src="virtual-boards.js?v=22"></script>
 </body>
 </html>
