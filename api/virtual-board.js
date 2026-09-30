@@ -308,6 +308,7 @@ function buildBoard(updates, stopCode, feedTimestamp) {
   const now = Math.floor(Date.now() / 1000);
   const target = normalizeStopKey(stopCode);
   const grouped = new Map();
+  const skippedTrips = new Map();
 
   for (const tripUpdate of updates) {
     const trip = tripUpdate?.trip;
@@ -333,13 +334,39 @@ function buildBoard(updates, stopCode, feedTimestamp) {
         ? Number(stopUpdate.scheduleRelationship)
         : STOP_RELATIONSHIP.SCHEDULED;
 
-      // SKIPPED means the vehicle will not stop here. NO_DATA explicitly says
-      // that no realtime timing is available here, so there is no arrival time
-      // to put on the realtime board. UNSCHEDULED is valid and must be kept.
-      if (stopRelationship === STOP_RELATIONSHIP.SKIPPED
-        || stopRelationship === STOP_RELATIONSHIP.NO_DATA) {
+      // SKIPPED is an explicit negative realtime signal: the vehicle will not
+      // stop at this exact stop. Keep it separate from arrivals so the
+      // frontend can suppress only the matching static course instead of
+      // interpreting the missing realtime arrival as ordinary NO_DATA.
+      if (stopRelationship === STOP_RELATIONSHIP.SKIPPED) {
+        const skippedKey = [
+          trip.tripId || '',
+          trip.startDate || tripUpdate.tripProperties?.startDate || '',
+          trip.startTime || tripUpdate.tripProperties?.startTime || '',
+          trip.routeId || '',
+          trip.directionId || '',
+          normalizeStopKey(stopUpdate.stopId || target)
+        ].join('|');
+
+        if (!skippedTrips.has(skippedKey)) {
+          skippedTrips.set(skippedKey, {
+            trip_id: trip.tripId || '',
+            start_date: trip.startDate || tripUpdate.tripProperties?.startDate || '',
+            start_time: trip.startTime || tripUpdate.tripProperties?.startTime || '',
+            route_id: trip.routeId || '',
+            direction_id: trip.directionId || '',
+            stop_id: stopUpdate.stopId || String(stopCode),
+            stop_schedule_relationship: stopRelationship,
+            stop_schedule_relationship_name: STOP_RELATIONSHIP_NAME[stopRelationship]
+              || `UNKNOWN_${stopRelationship}`
+          });
+        }
         continue;
       }
+
+      // NO_DATA explicitly says that no realtime timing is available here.
+      // It must NOT suppress the static fallback.
+      if (stopRelationship === STOP_RELATIONSHIP.NO_DATA) continue;
 
       const timestamp = eventTimestamp(stopUpdate);
       if (!Number.isFinite(timestamp)) continue;
@@ -450,6 +477,10 @@ function buildBoard(updates, stopCode, feedTimestamp) {
     stop_code: String(stopCode),
     generated_at: feedTimestamp,
     active_trips: activeTrips,
+    // SKIPPED is intentionally exposed as an explicit suppression signal for
+    // the static fallback. It is kept per trip + stop so unrelated scheduled
+    // courses on the same line/direction are not hidden.
+    skipped_trips: [...skippedTrips.values()],
     // Keep this field for compatibility with the current frontend while the
     // richer active_trips representation is adopted.
     active_trip_ids: activeTrips.map(item => item.trip_id).filter(Boolean),
