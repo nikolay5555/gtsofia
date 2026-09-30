@@ -172,9 +172,11 @@ const skipped = [{
 
 assert.equal(
   internals.isSkippedStaticSchedule(
-    { trip_id: 42, start_time: '08:10:00' },
+    { trip_id: 42, original_trip_id: 'REALTIME-11', start_time: '08:10:00', stop_sequences: [1, 24, 25] },
     'TEST_ROUTE',
     'D1',
+    '0605',
+    1,
     skipped
   ),
   true,
@@ -183,9 +185,11 @@ assert.equal(
 
 assert.equal(
   internals.isSkippedStaticSchedule(
-    { trip_id: 43, start_time: '08:25:00' },
+    { trip_id: 43, original_trip_id: 'OTHER-TRIP', start_time: '08:25:00', stop_sequences: [1, 24, 25] },
     'TEST_ROUTE',
     'D1',
+    '0605',
+    1,
     skipped
   ),
   false,
@@ -194,9 +198,11 @@ assert.equal(
 
 assert.equal(
   internals.isSkippedStaticSchedule(
-    { trip_id: 42, original_trip_id: 'REALTIME-11', start_time: '08:25:00' },
+    { trip_id: 42, original_trip_id: 'REALTIME-11', start_time: '08:25:00', stop_sequences: [1, 24, 25] },
     'TEST_ROUTE',
     'D1',
+    '0605',
+    1,
     skipped
   ),
   true,
@@ -205,13 +211,48 @@ assert.equal(
 
 assert.equal(
   internals.isSkippedStaticSchedule(
-    { trip_id: 44, start_time: '08:10:00' },
+    { trip_id: 44, original_trip_id: 'REALTIME-11', start_time: '08:10:00', stop_sequences: [1, 24, 25] },
     'OTHER_ROUTE',
     'D1',
+    '0605',
+    1,
     skipped
   ),
   false,
   'SKIPPED from another route must never suppress this route fallback'
+);
+
+
+const sequenceOnlySkipped = [{
+  trip_id: 'REALTIME-11',
+  route_id: 'TEST_ROUTE',
+  start_time: '08:10:00',
+  stop_id: '',
+  stop_sequence: 24
+}];
+assert.equal(
+  internals.isSkippedStaticSchedule(
+    { trip_id: 42, original_trip_id: 'REALTIME-11', start_time: '08:10:00', stop_sequences: [1, 24, 25] },
+    'TEST_ROUTE',
+    'D1',
+    '0605',
+    1,
+    sequenceOnlySkipped
+  ),
+  true,
+  'sequence-only SKIPPED must suppress the matching stop'
+);
+assert.equal(
+  internals.isSkippedStaticSchedule(
+    { trip_id: 42, original_trip_id: 'REALTIME-11', start_time: '08:10:00', stop_sequences: [1, 24, 25] },
+    'TEST_ROUTE',
+    'D1',
+    '2000',
+    2,
+    sequenceOnlySkipped
+  ),
+  false,
+  'sequence-only SKIPPED must not suppress a different stop in the same trip'
 );
 
 console.log('virtual-board-arrivals: all tests passed');

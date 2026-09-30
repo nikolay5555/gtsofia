@@ -30,11 +30,11 @@ function encodeTripDescriptor({ tripId, startTime, routeId }) {
   ]);
 }
 
-function encodeStopTimeUpdate({ stopId, relationship, timestamp = null, scheduledTime = null }) {
-  const fields = [
-    field(4, 2, text(stopId)),
-    field(5, 0, varint(relationship))
-  ];
+function encodeStopTimeUpdate({ stopId = null, stopSequence = null, relationship, timestamp = null, scheduledTime = null }) {
+  const fields = [];
+  if (stopSequence != null) fields.push(field(1, 0, varint(stopSequence)));
+  if (stopId != null) fields.push(field(4, 2, text(stopId)));
+  fields.push(field(5, 0, varint(relationship)));
 
   if (timestamp != null || scheduledTime != null) {
     const eventFields = [];
@@ -73,6 +73,18 @@ const skippedTrip = encodeTripUpdate({
   }]
 });
 
+const sequenceSkippedTrip = encodeTripUpdate({
+  trip: {
+    tripId: 'REALTIME-SKIPPED-SEQUENCE',
+    startTime: '08:10:00',
+    routeId: 'TB2'
+  },
+  stopUpdates: [{
+    stopSequence: 24,
+    relationship: 1
+  }]
+});
+
 const noDataTrip = encodeTripUpdate({
   trip: {
     tripId: 'REALTIME-NODATA',
@@ -101,6 +113,7 @@ const normalTrip = encodeTripUpdate({
 
 const feed = Buffer.concat([
   field(2, 2, encodeEntity('skipped', skippedTrip)),
+  field(2, 2, encodeEntity('skipped-sequence', sequenceSkippedTrip)),
   field(2, 2, encodeEntity('no-data', noDataTrip)),
   field(2, 2, encodeEntity('normal', normalTrip))
 ]);
@@ -132,10 +145,13 @@ const res = {
   await handler(req, res);
 
   assert.equal(res.statusCode, 200);
-  assert.equal(payload.skipped_trips.length, 1);
+  assert.equal(payload.skipped_trips.length, 2);
   assert.equal(payload.skipped_trips[0].trip_id, 'REALTIME-SKIPPED');
   assert.equal(payload.skipped_trips[0].route_id, 'TB2');
   assert.equal(payload.skipped_trips[0].start_time, '08:10:00');
+  assert.equal(payload.skipped_trips[1].trip_id, 'REALTIME-SKIPPED-SEQUENCE');
+  assert.equal(payload.skipped_trips[1].stop_id, '');
+  assert.equal(payload.skipped_trips[1].stop_sequence, 24);
 
   assert.equal(
     payload.routes.length,
