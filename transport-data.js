@@ -1,47 +1,140 @@
+
+
 let gtfsRoutes = [];
 let gtfsStops = [];
 
-async function loadTransportData() {
-    const response = await fetch(
-        './data/transport.json'
+const TRANSPORT_DATA_FILES = [
+    ['routes', './data/routes.json'],
+    ['stops', './data/stops.json'],
+    ['directionsFlat', './data/directions.json'],
+    ['trips', './data/trips.json'],
+    ['stopTimes', './data/stop_times.json'],
+    ['tripAliases', './data/trip_aliases.json'],
+    ['calendar', './data/calendar.json'],
+    ['lineOverrides', './config/line-overrides.json'],
+];
+
+function normalizeLoadedRoute(route) {
+    const id = String(route?.cgm_id ?? route?.route_id ?? '').trim();
+    const type = String(route?.type || '').trim();
+    return {
+        ...route,
+        cgm_id: id,
+        route_id: id,
+        route_short_name: String(route?.route_ref || '').trim(),
+        route_ref: String(route?.route_ref || '').trim(),
+        route_type: type === 'tram' ? '0'
+            : type === 'metro' ? '1'
+            : type === 'trolley' ? '11'
+            : '3',
+        route_color: String(route?.bg_color || '').replace(/^#/, ''),
+        route_text_color: String(route?.text_color || 'FFFFFF').replace(/^#/, '')
+    };
+}
+
+function normalizeLoadedStop(stop) {
+    const code = String(stop?.code || '').trim();
+    const names = stop?.names || {};
+    const name = String(names.bg || names.en || '').trim();
+    const lat = Number(stop?.coords?.[0]);
+    const lon = Number(stop?.coords?.[1]);
+
+    return {
+        ...stop,
+        code,
+        stop_id: code,
+        stop_code: code,
+        stop_name: name,
+        name,
+        stop_name_en: String(names.en || '').trim(),
+        stop_lat: Number.isFinite(lat) ? lat : '',
+        stop_lon: Number.isFinite(lon) ? lon : ''
+    };
+}
+
+async function loadTransportData(options = {}) {
+    const includeShapes = Boolean(options?.includeShapes);
+    const files = includeShapes
+        ? [...TRANSPORT_DATA_FILES, ['shapes', './data/shapes.json']]
+        : TRANSPORT_DATA_FILES;
+
+    const loaded = await Promise.all(
+        files.map(async ([key, path]) => {
+            const response = await fetch(path);
+            if (!response.ok) {
+                throw new Error(`Неуспешно зареждане на ${path}: ${response.status}`);
+            }
+            return [key, await response.json()];
+        })
     );
 
-    if (!response.ok) {
-        throw new Error(
-            `Неуспешно зареждане на transport.json: ${response.status}`
-        );
+    const raw = Object.fromEntries(loaded);
+    const routes = (raw.routes || []).map(normalizeLoadedRoute);
+    const stops = (raw.stops || []).map(normalizeLoadedStop);
+    const stopsById = new Map(
+        stops.map(stop => [String(stop.stop_id), stop])
+    );
+    const stopTimes = raw.stopTimes || [];
+    const stopTimesByTrip = new Map();
+    for (const row of stopTimes) {
+        const tripId = String(row?.trip ?? '').trim();
+        if (!tripId) continue;
+        const rows = stopTimesByTrip.get(tripId) || [];
+        rows.push(row);
+        stopTimesByTrip.set(tripId, rows);
     }
 
-    const data =
-        await response.json();
+    gtfsRoutes = routes;
+    gtfsStops = stops;
 
-    gtfsRoutes =
-        data.routes || [];
+    // directions.json is intentionally flat on disk. Rehydrate D1/D2/...
+    // only in memory so the existing UI keeps a convenient per-route index.
+    const directions = {};
+    for (const direction of raw.directionsFlat || []) {
+        const routeId = String(direction?.cgm_id ?? direction?.route_id ?? '').trim();
+        if (!routeId) continue;
+        if (!directions[routeId]) directions[routeId] = {};
+        const key = `D${Object.keys(directions[routeId]).length + 1}`;
+        const pattern = Array.isArray(direction?.stops)
+            ? direction.stops.map(String).filter(Boolean)
+            : [];
 
-    gtfsStops =
-        data.stops || [];
+        directions[routeId][key] = {
+            ...direction,
+            key,
+            code: String(direction.code),
+            route_id: routeId,
+            stops: pattern.map(stop_id => ({
+                stop_id,
+                name: stopsById.get(String(stop_id))?.stop_name || ''
+            })),
+            pattern
+        };
+    }
 
-    window.transportData =
-        data;
+    window.transportData = {
+        routes,
+        stops,
+        directions,
+        directionsFlat: raw.directionsFlat || [],
+        trips: raw.trips || [],
+        stopTimes,
+        stop_times: stopTimes,
+        stopTimesByTrip,
+        tripAliases: raw.tripAliases || {},
+        calendar: raw.calendar || {},
+        lineOverrides: raw.lineOverrides || [],
+        shapes: raw.shapes || {}
+    };
 
-    console.log(
-        'GTFS routes:',
-        gtfsRoutes.length
-    );
+    console.log('GTFS routes:', routes.length);
+    console.log('GTFS stops:', stops.length);
+    console.log('GTFS directions:', Array.isArray(raw.directionsFlat) ? raw.directionsFlat.length : 0);
+    console.log('GTFS logical trips:', Array.isArray(raw.trips) ? raw.trips.length : 0);
+    console.log('GTFS stop-time rows:', Array.isArray(raw.stopTimes) ? raw.stopTimes.length : 0);
+    if (includeShapes) console.log('GTFS shapes:', Object.keys(raw.shapes || {}).length);
 
-    console.log(
-        'GTFS stops:',
-        gtfsStops.length
-    );
-
-    console.log(
-        'GTFS shapes:',
-        Object.keys(
-            data.shapes || {}
-        ).length
-    );
-
-    return data;
+    return window.transportData;
 }
 
 
@@ -127,8 +220,8 @@ function getTransportType(routeType) {
 
 
 function getLineOverride(route) {
-    const routeId = String(route?.route_id || '').trim();
-    const routeNumber = String(route?.route_short_name || '').trim();
+    const routeId = String(route?.route_id || route?.cgm_id || '').trim();
+    const routeNumber = String(route?.route_short_name || route?.route_ref || '').trim();
     const overrides = Array.isArray(window.transportData?.lineOverrides)
         ? window.transportData.lineOverrides
         : [];
@@ -146,7 +239,7 @@ function getLineOverride(route) {
 function getLineType(route) {
     const number =
         String(
-            route.route_short_name || ''
+            route.route_short_name || route.route_ref || ''
         )
             .trim()
             .toUpperCase();
@@ -169,20 +262,20 @@ function getLineType(route) {
 
     const override = getLineOverride(route);
 
-    if (override?.type) {
-        return override.type;
-    }
+    if (override?.type) return override.type;
 
-    return getTransportType(
-        route.route_type
-    );
+    if (route?.subtype === 'night') return 'night';
+    if (route?.type === 'trolley') return 'trolleybus';
+    if (['bus', 'tram', 'metro'].includes(String(route?.type || ''))) return route.type;
+
+    return getTransportType(route.route_type);
 }
 
 
 function getLineDisplayNumber(route, type) {
     const override = getLineOverride(route);
     const sourceNumber = String(
-        route.route_short_name || ''
+        route.route_short_name || route.route_ref || ''
     ).trim();
 
     if (override?.route_ref) {
@@ -262,8 +355,8 @@ function getLineColor(
     // When the transport type is masked by an override, do not let
     // the original CGM route color leak through (e.g. trolleybus blue
     // on a line that the UI masks as a bus).
-    if (!override?.type && route.route_color) {
-        return `#${route.route_color}`;
+    if (!override?.type && (route.route_color || route.bg_color)) {
+        return `#${String(route.route_color || route.bg_color).replace(/^#/, '')}`;
     }
 
     switch (type) {
@@ -326,7 +419,7 @@ function convertGtfsRoutes(
                 .map(
                     trip =>
                         String(
-                            trip.route_id || ''
+                            trip.route_id || trip.cgm_id || ''
                         ).trim()
                 )
                 .filter(Boolean)
@@ -336,7 +429,7 @@ function convertGtfsRoutes(
         .filter(route =>
             activeRouteIds.has(
                 String(
-                    route.route_id || ''
+                    route.route_id || route.cgm_id || ''
                 ).trim()
             )
         )
@@ -344,7 +437,7 @@ function convertGtfsRoutes(
 
             const routeId =
                 String(
-                    route.route_id || ''
+                    route.route_id || route.cgm_id || ''
                 ).trim();
 
             const type =

@@ -20,7 +20,6 @@
   let routeMetaById = new Map();
   let routeMetaByNumber = new Map();
   let tripById = new Map();
-  let tripStopsById = new Map();
 
   // Realtime stop updates disappear shortly after the vehicle passes the
   // selected stop. Keep the scheduled time they represented so the static
@@ -235,6 +234,9 @@
   }
 
   function parseGtfsTime(value) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return Math.trunc(value) * 60;
+    }
     if (!value) return null;
 
     const parts = String(value).trim().split(":");
@@ -456,53 +458,45 @@
   }
 
   function getStaticDirectionForTrip(staticTrip) {
-    if (!staticTrip?.route_id) return null;
+    const routeId = String(staticTrip?.route_id || staticTrip?.cgm_id || '').trim();
+    if (!routeId) return null;
 
-    const routeId = String(staticTrip.route_id);
     const directions = transportData?.directions?.[routeId] || {};
-    const tripId = String(staticTrip.trip_id || '').trim();
+    const directionCode = String(staticTrip?.direction ?? staticTrip?.direction_code ?? '').trim();
+    if (directionCode) {
+      const direct = Object.values(directions).find(direction =>
+        String(direction?.code || '').trim() === directionCode
+      );
+      if (direct) return direct;
+    }
+
+    const tripId = String(staticTrip?.trip_id || '').trim();
     if (!tripId) return null;
 
-    // Direction identity follows the same model as Dimitar5555's data: a
-    // trip belongs to a logical direction, and that direction is the unit
-    // used by the board. Display text is not the identifier.
-    for (const [key, direction] of Object.entries(directions)) {
-      const tripIds = Array.isArray(direction?.trip_ids)
-        ? direction.trip_ids.map(String)
-        : [];
-      if (tripIds.includes(tripId)) return { key, ...direction };
-    }
-
-    // Backward-compatible fallback for an older transport.json that does not
-    // yet contain trip_ids on directions. Prefer the representative trip id,
-    // then a unique shape id, and only finally the display headsign.
-    for (const [key, direction] of Object.entries(directions)) {
-      if (String(direction?.trip_id || '').trim() === tripId) {
-        return { key, ...direction };
+    const alias = transportData?.tripAliases?.[tripId];
+    if (alias !== undefined) {
+      const logicalTrip = tripById.get(String(alias));
+      if (logicalTrip) {
+        const direct = Object.values(directions).find(direction =>
+          String(direction?.code || '').trim() === String(logicalTrip.direction || '').trim()
+        );
+        if (direct) return direct;
       }
     }
 
-    const shapeId = String(staticTrip.shape_id || '').trim();
+    const shapeId = String(staticTrip?.shape_id || '').trim();
     if (shapeId) {
-      const shapeMatches = Object.entries(directions).filter(([, direction]) =>
+      const shapeMatches = Object.values(directions).filter(direction =>
         String(direction?.shape_id || '').trim() === shapeId
       );
-      if (shapeMatches.length === 1) {
-        const [key, direction] = shapeMatches[0];
-        return { key, ...direction };
-      }
+      if (shapeMatches.length === 1) return shapeMatches[0];
     }
 
-    const headsign = normalizeDirectionText(staticTrip.trip_headsign);
+    const headsign = normalizeDirectionText(staticTrip?.trip_headsign);
     if (headsign) {
-      for (const [key, direction] of Object.entries(directions)) {
-        const directionHeadsign = normalizeDirectionText(
-          direction?.headsign || direction?.destination
-        );
-        if (directionHeadsign && directionHeadsign === headsign) {
-          return { key, ...direction };
-        }
-      }
+      return Object.values(directions).find(direction =>
+        normalizeDirectionText(direction?.headsign || direction?.destination) === headsign
+      ) || null;
     }
 
     return null;
@@ -628,6 +622,27 @@
     return !!selectedName && !!destinationName && selectedName === destinationName;
   }
 
+  function getStaticCourses(routeId, direction, dayType) {
+    const route = String(routeId || '').trim();
+    const code = String(direction?.code || '').trim();
+    if (!route || !code) return [];
+
+    const logicalTrips = (transportData?.trips || []).filter(trip =>
+      String(trip?.cgm_id ?? trip?.route_id ?? '').trim() === route
+      && String(trip?.direction ?? trip?.direction_code ?? '').trim() === code
+      && Array.isArray(trip?.day_types)
+      && trip.day_types.includes(dayType)
+    );
+    const ids = logicalTrips.map(trip => String(trip.id));
+    if (transportData?.stopTimesByTrip instanceof Map) {
+      return ids.flatMap(id => transportData.stopTimesByTrip.get(id) || []);
+    }
+    const idSet = new Set(ids);
+    return (transportData?.stopTimes || transportData?.stop_times || []).filter(row =>
+      idSet.has(String(row?.trip))
+    );
+  }
+
   function getMetroScheduledArrivals(stop) {
     const now = getNowGtfsSeconds();
     const dayType = getCurrentScheduleDayType();
@@ -640,7 +655,6 @@
 
       const routeId = String(route.route_id || '').trim();
       const directionSet = transportData?.directions?.[routeId] || {};
-      const scheduleSet = transportData?.schedules?.[routeId] || {};
       const meta = getLineMeta(routeId, route.route_short_name || '');
 
       for (const [directionKey, direction] of Object.entries(directionSet)) {
@@ -649,8 +663,8 @@
         if (stopIndex < 0) continue;
         if (isTerminalDirectionForStop(routeId, selectedStop, direction)) continue;
 
-        const daySchedules = scheduleSet?.[directionKey]?.[dayType];
-        if (!Array.isArray(daySchedules)) continue;
+        const daySchedules = getStaticCourses(routeId, direction, dayType);
+        if (!daySchedules.length) continue;
 
         const arrivals = [];
         for (const schedule of daySchedules) {
@@ -698,7 +712,6 @@
       if (!routeId) continue;
 
       const directionSet = transportData?.directions?.[routeId] || {};
-      const scheduleSet = transportData?.schedules?.[routeId] || {};
       const meta = getLineMeta(routeId, route.route_short_name || '');
 
       for (const [directionKey, direction] of Object.entries(directionSet)) {
@@ -710,8 +723,8 @@
         // by padding the unused tail with nulls. Therefore the actual terminal
         // of a particular course must be derived from that course's own times,
         // not from direction.pattern alone.
-        const daySchedules = scheduleSet?.[directionKey]?.[dayType];
-        if (!Array.isArray(daySchedules)) continue;
+        const daySchedules = getStaticCourses(routeId, direction, dayType);
+        if (!daySchedules.length) continue;
 
         const rowsByTerminal = new Map();
         for (const schedule of daySchedules) {
@@ -1811,28 +1824,32 @@
 
       routeById = new Map(
         (transportData.routes || []).map(route => [
-          String(route.route_id),
+          String(route.route_id || route.cgm_id),
           route
         ])
       );
 
       tripById = new Map(
         (transportData.trips || []).map(trip => [
-          String(trip.trip_id),
-          trip
+          String(trip.id),
+          {
+            ...trip,
+            trip_id: String(trip.id),
+            route_id: String(trip.cgm_id || trip.route_id || ''),
+            direction_code: String(trip.direction || trip.direction_code || '')
+          }
         ])
       );
 
-      tripStopsById = new Map();
-      for (const directionSet of Object.values(transportData.directions || {})) {
-        for (const direction of Object.values(directionSet || {})) {
-          const tripId = String(direction?.trip_id || '').trim();
-          if (!tripId) continue;
-          const stopIds = Array.isArray(direction?.stops)
-            ? direction.stops.map(stop => String(stop?.stop_id || '').trim()).filter(Boolean)
-            : [];
-          if (stopIds.length) tripStopsById.set(tripId, stopIds);
-        }
+      // GTFS-RT uses physical trip ids; the compact model uses logical ids.
+      // Aliases keep realtime/static joins without restoring raw trips.json.
+      for (const [originalTripId, logicalTripId] of Object.entries(transportData.tripAliases || {})) {
+        const logicalTrip = tripById.get(String(logicalTripId));
+        if (!logicalTrip) continue;
+        tripById.set(String(originalTripId), {
+          ...logicalTrip,
+          trip_id: String(originalTripId)
+        });
       }
 
       const lines = convertGtfsRoutes(

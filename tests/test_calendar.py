@@ -89,14 +89,7 @@ class CalendarTests(unittest.TestCase):
 
         self.assertEqual(service_types["DAILY"], ["weekday", "weekend"])
 
-    def test_trip_available_in_both_buckets_is_written_to_both_schedules(self):
-        directions = {
-            "R1": {
-                "D1": {
-                    "code": "1",
-                }
-            }
-        }
+    def test_trip_available_in_both_buckets_stays_a_single_logical_trip(self):
         logical_trips = [
             {
                 "id": 1,
@@ -106,6 +99,7 @@ class CalendarTests(unittest.TestCase):
                 "is_deleted": False,
             }
         ]
+        routes = [{"cgm_id": "R1", "route_index": 0}]
         logical_stop_times = [
             {
                 "trip": 1,
@@ -114,14 +108,17 @@ class CalendarTests(unittest.TestCase):
             }
         ]
 
-        result = module.build_schedules(
-            directions,
-            logical_trips,
+        trips = module.build_output_trips(logical_trips, routes)
+        stop_times = module.build_output_stop_times(
             logical_stop_times,
+            {1},
         )
 
-        self.assertEqual(len(result["R1"]["D1"]["weekday"]), 1)
-        self.assertEqual(len(result["R1"]["D1"]["weekend"]), 1)
+        self.assertEqual(len(trips), 1)
+        self.assertEqual(trips[0]["day_types"], ["weekday", "weekend"])
+        self.assertFalse(trips[0]["is_weekend"])
+        self.assertEqual(len(stop_times), 1)
+        self.assertEqual(stop_times[0]["times"], [330])
 
     def test_calendar_dates_only_feed_uses_explicit_service_dates(self):
         dates_only = [

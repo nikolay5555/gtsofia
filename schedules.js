@@ -434,58 +434,53 @@ function renderStops() {
   }
 }
 
+function formatMinutesToTime(minutes) {
+  const value = Number(minutes);
+  if (!Number.isFinite(value)) return "";
+  const total = Math.max(0, Math.trunc(value));
+  const hour = Math.floor(total / 60) % 24;
+  const minute = total % 60;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:00`;
+}
+
 function getCourses() {
-  if (!selectedScheduleLine) {
-    return [];
-  }
+  if (!selectedScheduleLine) return [];
 
-  const schedules =
-    window.transportData?.schedules
-      || {};
+  const data = window.transportData || {};
+  const routeId = String(selectedScheduleLine.id || '').trim();
+  const direction = getSelectedDirection();
+  if (!routeId || !direction) return [];
 
-  const routeSchedule =
-    schedules[
-      selectedScheduleLine.id
-    ];
-
-  /*
-   * Новият модел:
-   *
-   * D1 / D2 / D3 / ...
-   */
-  if (
-    routeSchedule &&
-    routeSchedule[
-      selectedDirectionKey
-    ]
-  ) {
-    return (
-      routeSchedule[
-        selectedDirectionKey
-      ]?.[
-        selectedDayType
-      ] || []
-    );
-  }
-
-  /*
-   * Стар fallback.
-   */
-  const legacyKey =
-    selectedDirectionKey === "B"
-      ? "B"
-      : "A";
-
-  const directionSchedule =
-    routeSchedule?.[
-      legacyKey
-    ];
-
-  return (
-    directionSchedule?.[
-      selectedDayType
-    ] || []
+  const directionCode = String(direction.code ?? '').trim();
+  const logicalTrips = (data.trips || []).filter(trip =>
+    String(trip?.cgm_id ?? trip?.route_id ?? '').trim() === routeId
+    && String(trip?.direction ?? trip?.direction_code ?? '').trim() === directionCode
+    && Array.isArray(trip?.day_types)
+    && trip.day_types.includes(selectedDayType)
   );
+
+  const ids = logicalTrips.map(trip => String(trip.id));
+  const rows = data.stopTimesByTrip instanceof Map
+    ? ids.flatMap(id => data.stopTimesByTrip.get(id) || [])
+    : (data.stopTimes || data.stop_times || []).filter(row =>
+        ids.includes(String(row?.trip))
+      );
+
+  return rows.map(row => {
+    const times = Array.isArray(row?.times)
+      ? row.times.map(formatMinutesToTime)
+      : [];
+    return {
+      trip_id: row.trip,
+      start_time: times.find(Boolean) || '',
+      times,
+      car: row?.car || ''
+    };
+  }).sort((a, b) => {
+    const ta = parseTime(a.start_time);
+    const tb = parseTime(b.start_time);
+    return (ta ?? 1e12) - (tb ?? 1e12);
+  });
 }
 
 function getStopTime(

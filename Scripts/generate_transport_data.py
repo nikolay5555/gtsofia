@@ -3,6 +3,7 @@
 import csv
 import io
 import json
+import re
 import shutil
 import urllib.request
 import urllib.parse
@@ -18,7 +19,6 @@ GTFS_URL = "https://gtfs.sofiatraffic.bg/api/v1/static"
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
 GTFS_DIR = ROOT / ".gtfs"
-OUTPUT_FILE = DATA_DIR / "transport.json"
 CALENDAR_CONFIG_FILE = ROOT / "config" / "calendar.json"
 LINE_OVERRIDES_CONFIG_FILE = ROOT / "config" / "line-overrides.json"
 
@@ -398,7 +398,7 @@ def merge_osm_stop_names(
     osm_stops
 ):
     """
-    Preserve the current transport.json structure.
+    Preserve the current GTFS stop structure while enriching names.
 
     For matching stop codes:
         OSM name -> preferred
@@ -1854,437 +1854,6 @@ def choose_shape_id(
 
 
 # ============================================================
-# Output directions
-# ============================================================
-
-def build_output_directions(
-    routes_data,
-    directions,
-    logical_trips,
-    trips_by_id,
-    stop_times_by_trip,
-    stops_by_id
-):
-    """
-    Output ALL surviving directions.
-
-    No A/B restriction.
-    """
-
-    result = {}
-
-    directions_by_code = {
-        direction[
-            "code"
-        ]:
-            direction
-        for direction in directions
-    }
-
-    for route in routes_data:
-
-        route_id = normalize(
-            route.get(
-                "route_id"
-            )
-        )
-
-        route_trips = [
-            trip
-            for trip in logical_trips
-            if (
-                trip[
-                    "route_id"
-                ]
-                == route_id
-                and not trip.get(
-                    "is_deleted",
-                    False
-                )
-            )
-        ]
-
-        if not route_trips:
-            continue
-
-        direction_codes = []
-
-        for trip in route_trips:
-
-            code = trip[
-                "direction_code"
-            ]
-
-            if code not in direction_codes:
-
-                direction_codes.append(
-                    code
-                )
-
-        route_directions = {}
-
-        for ordinal, code in enumerate(
-            direction_codes,
-            start=1
-        ):
-
-            direction = directions_by_code.get(
-                code
-            )
-
-            if direction is None:
-                continue
-
-            stop_records = []
-
-            for stop_id in direction[
-                "stops"
-            ]:
-
-                stop = stops_by_id.get(
-                    stop_id
-                )
-
-                if stop is None:
-                    continue
-
-                stop_records.append({
-                    "stop_id":
-                        normalize(
-                            stop.get(
-                                "stop_id"
-                            )
-                        ),
-
-                    "name":
-                        normalize(
-                            stop.get(
-                                "stop_name"
-                            )
-                        )
-                })
-
-            if not stop_records:
-                continue
-
-            direction_trips = [
-                trip
-                for trip in route_trips
-                if trip[
-                    "direction_code"
-                ]
-                == code
-            ]
-
-            representative = None
-
-            if direction_trips:
-
-                representative_id = (
-                    direction_trips[
-                        0
-                    ].get(
-                        "original_trip_ids",
-                        []
-                    )[0]
-                    if direction_trips[
-                        0
-                    ].get(
-                        "original_trip_ids"
-                    )
-                    else ""
-                )
-
-                if representative_id:
-
-                    representative = (
-                        trips_by_id.get(
-                            representative_id
-                        )
-                    )
-
-            direction_key = (
-                f"D{ordinal}"
-            )
-
-            direction_name = (
-                choose_direction_name(
-                    direction,
-                    stops_by_id
-                )
-            )
-
-            route_directions[
-                direction_key
-            ] = {
-
-                "key":
-                    direction_key,
-
-                "code":
-                    code,
-
-                "headsign":
-                    direction_name,
-
-                "destination":
-                    direction_name,
-
-                "trip_id":
-                    (
-                        representative[
-                            "trip_id"
-                        ]
-                        if representative
-                        else ""
-                    ),
-
-                "direction_id":
-                    (
-                        representative[
-                            "direction_id"
-                        ]
-                        if representative
-                        else ""
-                    ),
-
-                "shape_id":
-                    choose_shape_id(
-                        direction
-                    ),
-
-                "service_id":
-                    (
-                        representative[
-                            "service_id"
-                        ]
-                        if representative
-                        else ""
-                    ),
-
-                "frequency":
-                    len(
-                        direction_trips
-                    ),
-
-                "stop_count":
-                    len(
-                        stop_records
-                    ),
-
-                "stops":
-                    stop_records,
-
-                "pattern":
-                    [
-                        stop[
-                            "stop_id"
-                        ]
-                        for stop in stop_records
-                    ]
-            }
-
-        if route_directions:
-
-            result[
-                route_id
-            ] = route_directions
-
-    return result
-
-
-# ============================================================
-# Schedules
-# ============================================================
-
-def build_schedules(
-    directions_result,
-    logical_trips,
-    logical_stop_times
-):
-    """
-    Schedules use the SAME D1/D2/... direction keys as directions.
-    """
-
-    schedules = {}
-
-    for route_id, route_directions in (
-        directions_result.items()
-    ):
-
-        route_schedule = {}
-
-        for key, direction in (
-            route_directions.items()
-        ):
-
-            code = direction[
-                "code"
-            ]
-
-            weekday = []
-            weekend = []
-
-            matching_trips = [
-                trip
-                for trip in logical_trips
-                if (
-                    trip[
-                        "route_id"
-                    ]
-                    == route_id
-                    and trip[
-                        "direction_code"
-                    ]
-                    == code
-                    and not trip.get(
-                        "is_deleted",
-                        False
-                    )
-                )
-            ]
-
-            for logical_trip in matching_trips:
-
-                trip_day_types = logical_trip.get(
-                    "day_types",
-                    []
-                )
-
-                if not trip_day_types:
-                    trip_day_types = [
-                        "weekend"
-                        if logical_trip.get(
-                            "is_weekend",
-                            False
-                        )
-                        else "weekday"
-                    ]
-
-                trip_times = [
-                    item
-                    for item in logical_stop_times
-                    if (
-                        item[
-                            "trip"
-                        ]
-                        == logical_trip[
-                            "id"
-                        ]
-                    )
-                ]
-
-                for item in trip_times:
-
-                    values = item.get(
-                        "times",
-                        []
-                    )
-
-                    if not values:
-                        continue
-
-                    non_null = [
-                        value
-                        for value in values
-                        if value is not None
-                    ]
-
-                    if not non_null:
-                        continue
-
-                    first = non_null[
-                        0
-                    ]
-
-                    schedule_row = {
-
-                        "trip_id":
-                            logical_trip[
-                                "id"
-                            ],
-
-                        "start_time":
-                            (
-                                f"{first // 60:02d}:"
-                                f"{first % 60:02d}:00"
-                            ),
-
-                        "times":
-                            [
-                                (
-                                    f"{value // 60:02d}:"
-                                    f"{value % 60:02d}:00"
-                                )
-                                if value is not None
-                                else None
-                                for value in values
-                            ],
-
-                        "car":
-                            item.get(
-                                "car",
-                                ""
-                            )
-                    }
-
-                    if "weekday" in trip_day_types:
-                        weekday.append(dict(schedule_row))
-
-                    if "weekend" in trip_day_types:
-                        weekend.append(dict(schedule_row))
-
-            weekday.sort(
-                key=lambda item:
-                    parse_time(
-                        item[
-                            "start_time"
-                        ]
-                    )
-                    if parse_time(
-                        item[
-                            "start_time"
-                        ]
-                    ) is not None
-                    else 10**12
-            )
-
-            weekend.sort(
-                key=lambda item:
-                    parse_time(
-                        item[
-                            "start_time"
-                        ]
-                    )
-                    if parse_time(
-                        item[
-                            "start_time"
-                        ]
-                    ) is not None
-                    else 10**12
-            )
-
-            route_schedule[
-                key
-            ] = {
-
-                "weekday":
-                    weekday,
-
-                "weekend":
-                    weekend
-            }
-
-        if route_schedule:
-
-            schedules[
-                route_id
-            ] = route_schedule
-
-    return schedules
-
-
-# ============================================================
 # Shapes
 # ============================================================
 
@@ -2404,6 +1973,405 @@ def load_shapes(
         ]
 
     return result
+
+
+# ============================================================
+# Split output (Dimitar5555-style model)
+# ============================================================
+
+def normalize_route_ref(route_ref):
+    """Normalize CGM line references like Dimitar5555's 03-routes.js."""
+    value = normalize(route_ref).upper()
+    if not value:
+        return ""
+
+    number = re.sub(r"[A-ZА-Я]", "", value, flags=re.IGNORECASE)
+
+    if value.startswith(("E", "Е")):
+        return number
+    if value.startswith("N"):
+        return f"N{number}"
+    if value.startswith("Y"):
+        return f"У{number}"
+    if value.endswith(("ТБ", "TB")):
+        return f"{number}ТБ"
+    if value.endswith(("ТМ", "TM", "Т", "T")):
+        return f"{number}ТМ"
+
+    return value
+
+
+def apply_route_override(route_ref, route_type, route_id, overrides):
+    override = next(
+        (
+            item for item in overrides
+            if normalize(item.get("cgm_id")) == route_id
+        ),
+        None,
+    )
+
+    if override is None:
+        override = next(
+            (
+                item for item in overrides
+                if not normalize(item.get("cgm_id"))
+                and normalize(item.get("route_ref")) == route_ref
+            ),
+            None,
+        )
+
+    if override:
+        if normalize(override.get("route_ref")):
+            route_ref = normalize(override.get("route_ref"))
+        if normalize(override.get("type")):
+            route_type = normalize(override.get("type"))
+
+    return route_ref, route_type
+
+
+def build_output_routes(routes_data, logical_trips, overrides):
+    """Write compact route metadata; do not expose the raw GTFS routes table."""
+    active_ids = {
+        normalize(trip.get("route_id"))
+        for trip in logical_trips
+        if normalize(trip.get("route_id"))
+        and not trip.get("is_deleted", False)
+    }
+
+    result = []
+
+    for route in routes_data:
+        route_id = normalize(route.get("route_id"))
+        if route_id not in active_ids:
+            continue
+
+        route_ref = normalize_route_ref(route.get("route_short_name"))
+        route_type = {
+            "0": "tram",
+            "1": "metro",
+            "3": "bus",
+            "11": "trolley",
+        }.get(normalize(route.get("route_type")), "other")
+
+        base_route_type = route_type
+        route_ref, route_type = apply_route_override(
+            route_ref, route_type, route_id, overrides
+        )
+
+        # Match Dimitar5555's current route post-processing:
+        # replacement-bus refs and trolley refs 50+ are treated as buses.
+        route_number = re.sub(r"[^0-9]", "", route_ref)
+        if (
+            route_ref.endswith(("ТБ", "ТМ"))
+            or (route_ref.startswith("М") and route_type == "bus")
+            or (base_route_type == "trolley" and route_number.isdigit() and int(route_number) >= 50)
+        ):
+            route_type = "bus"
+
+        subtype = ""
+        if route_ref.startswith("N"):
+            route_type = "bus"
+            subtype = "night"
+        elif route_ref.startswith("У"):
+            route_type = "bus"
+            subtype = "school"
+        elif route_ref.endswith(("ТБ", "ТМ")) or (route_ref.startswith("M") and route_type == "bus"):
+            route_type = "bus"
+            if route_ref.endswith(("ТБ", "ТМ")):
+                subtype = "temporary"
+
+        item = {
+            "cgm_id": route_id,
+            "route_index": len(result),
+            "route_ref": route_ref,
+            "type": route_type,
+        }
+
+        if subtype:
+            item["subtype"] = subtype
+
+        override = next(
+            (
+                item for item in overrides
+                if normalize(item.get("cgm_id")) == route_id
+            ),
+            None,
+        )
+        if override is None:
+            override = next(
+                (
+                    item for item in overrides
+                    if not normalize(item.get("cgm_id"))
+                    and normalize(item.get("route_ref")) == normalize(route_ref)
+                ),
+                None,
+            )
+
+        color = normalize(route.get("route_color"))
+        text_color = normalize(route.get("route_text_color"))
+        if color and not (override and normalize(override.get("type"))):
+            item["bg_color"] = f"#{color.lstrip('#')}"
+        if text_color and not (override and normalize(override.get("type"))):
+            item["text_color"] = f"#{text_color.lstrip('#')}"
+
+        result.append(item)
+
+    return result
+
+
+def build_output_stops(stops, directions):
+    """Compact stop records to code/coords/names, then filter unused stops."""
+    used = {
+        normalize(stop_id)
+        for direction in directions
+        for stop_id in direction.get("stops", [])
+        if normalize(stop_id)
+    }
+
+    best = {}
+    for stop in stops:
+        code = normalize(stop.get("stop_id")) or normalize(stop.get("stop_code"))
+        if not code or code not in used:
+            continue
+
+        try:
+            lat = round(float(stop.get("stop_lat")), 5)
+            lon = round(float(stop.get("stop_lon")), 5)
+        except (TypeError, ValueError):
+            continue
+
+        bg = normalize(stop.get("stop_name"))
+        en = normalize(stop.get("stop_name_en")) or transliterate(bg)
+        candidate = {
+            "code": code,
+            "coords": [lat, lon],
+            "names": {"bg": bg, "en": en},
+        }
+
+        current = best.get(code)
+        if current is None or (
+            not current["names"].get("en")
+            and candidate["names"].get("en")
+        ):
+            best[code] = candidate
+
+    return [best[key] for key in sorted(best)]
+
+
+def build_output_directions(
+    routes_data,
+    directions,
+    logical_trips,
+    trips_by_id,
+    stop_times_by_trip,
+    stops_by_id,
+):
+    """Flat global directions, matching the current Dimitar5555 data model."""
+    route_ids = {
+        normalize(route.get("route_id"))
+        for route in routes_data
+    }
+
+    surviving_codes = set()
+    for trip in logical_trips:
+        if trip.get("is_deleted", False):
+            continue
+        code = normalize(trip.get("direction_code"))
+        if code:
+            surviving_codes.add(code)
+
+    for direction in directions:
+        code = normalize(direction.get("code"))
+        route_id = normalize(direction.get("route_id"))
+        if not code or code not in surviving_codes:
+            continue
+
+        result.append({
+            "code": int(code) if code.isdigit() else code,
+            "cgm_id": route_id,
+            "stops": [normalize(x) for x in direction.get("stops", []) if normalize(x)],
+            "headsign": choose_direction_name(direction, stops_by_id),
+            "destination": choose_direction_name(direction, stops_by_id),
+            "direction_id": normalize(
+                next(
+                    (
+                        trips_by_id[trip_id].get("direction_id")
+                        for trip_id in direction.get("trip_ids", [])
+                        if trip_id in trips_by_id
+                        and normalize(trips_by_id[trip_id].get("direction_id"))
+                    ),
+                    "",
+                )
+            ),
+            "shape_id": choose_shape_id(direction),
+        })
+
+    return result
+
+
+def build_output_trips(logical_trips, routes):
+    route_index_by_id = {
+        normalize(route.get("cgm_id")): route.get("route_index")
+        for route in routes
+    }
+
+    result = []
+    for trip in logical_trips:
+        if trip.get("is_deleted", False):
+            continue
+
+        route_id = normalize(trip.get("route_id"))
+        direction = trip.get("direction_code")
+        day_types = [
+            value for value in trip.get("day_types", [])
+            if value in {"weekday", "weekend"}
+        ]
+
+        item = {
+            "id": trip.get("id"),
+            "route_index": route_index_by_id.get(route_id, -1),
+            "cgm_id": route_id,
+            "direction": int(direction) if normalize(direction).isdigit() else direction,
+            "is_weekend": day_types == ["weekend"],
+            "day_types": day_types,
+        }
+        result.append(item)
+
+    return result
+
+
+def build_output_stop_times(logical_stop_times, valid_trip_ids):
+    result = []
+    for row in logical_stop_times:
+        trip_id = row.get("trip")
+        if trip_id not in valid_trip_ids:
+            continue
+        times = []
+        for value in row.get("times", []):
+            if value is None:
+                times.append(None)
+            else:
+                try:
+                    times.append(int(value))
+                except (TypeError, ValueError):
+                    times.append(None)
+
+        if not times or not any(value is not None for value in times):
+            continue
+
+        result.append({
+            "trip": trip_id,
+            "times": times,
+            "car": normalize(row.get("car")),
+        })
+
+    return result
+
+
+def build_trip_aliases(logical_trips):
+    """Map GTFS-RT physical trip ids to the compact logical trip id."""
+    result = {}
+    for trip in logical_trips:
+        if trip.get("is_deleted", False):
+            continue
+        logical_id = trip.get("id")
+        for original_id in trip.get("original_trip_ids", []):
+            value = normalize(original_id)
+            if value:
+                result[value] = logical_id
+    return result
+
+
+def build_compact_calendar(calendar_result):
+    return {
+        "referenceDate": calendar_result.get("referenceDate"),
+        "endDate": calendar_result.get("endDate"),
+        "dateTypes": calendar_result.get("dateTypes", {}),
+        "config": calendar_result.get("config", {}),
+    }
+
+
+def build_active_service_ids(calendar_result):
+    counts = defaultdict(lambda: {"weekday": 0, "weekend": 0})
+    date_types = calendar_result.get("dateTypes", {})
+    services_by_date = calendar_result.get("serviceIdsByDate", {})
+
+    for date_key, service_ids in services_by_date.items():
+        day_type = date_types.get(date_key)
+        if day_type not in {"weekday", "weekend"}:
+            continue
+        for service_id in service_ids:
+            counts[normalize(service_id)][day_type] += 1
+
+    return [
+        [service_id, values["weekend"] >= values["weekday"]]
+        for service_id, values in sorted(counts.items())
+    ]
+
+
+def write_json(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as file:
+        json.dump(value, file, ensure_ascii=False, separators=(",", ":"))
+
+
+def sha256_file(path):
+    import hashlib
+    digest = hashlib.sha256()
+    with path.open("rb") as file:
+        for chunk in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def write_split_data(
+    routes,
+    stops,
+    directions,
+    logical_trips,
+    logical_stop_times,
+    trip_aliases,
+    calendar_result,
+    active_service_ids,
+    shapes,
+    updated_at,
+):
+    """Write independently cacheable files instead of transport.json."""
+    files = {
+        "routes.json": routes,
+        "stops.json": stops,
+        "directions.json": directions,
+        "trips.json": logical_trips,
+        "stop_times.json": logical_stop_times,
+        "trip_aliases.json": trip_aliases,
+        "calendar.json": build_compact_calendar(calendar_result),
+        "active_service_ids.json": active_service_ids,
+        "shapes.json": shapes,
+    }
+
+    # Remove the legacy monolith and any stale generated file not in the split model.
+    legacy = DATA_DIR / "transport.json"
+    if legacy.exists():
+        legacy.unlink()
+
+    for filename, value in files.items():
+        write_json(DATA_DIR / filename, value)
+
+    metadata = {
+        "version": 1,
+        "generatedAt": updated_at,
+        "source": "CGM Sofia official GTFS",
+        "files": {
+            filename: {
+                "sha256": sha256_file(DATA_DIR / filename),
+                "bytes": (DATA_DIR / filename).stat().st_size,
+            }
+            for filename in files
+        },
+    }
+    write_json(DATA_DIR / "metadata.json", metadata)
+
+    return metadata
 
 
 # ============================================================
@@ -2607,245 +2575,101 @@ def main():
         )
 
         # --------------------------------------------------------
-        # Output directions
+        # Split output
         # --------------------------------------------------------
 
-        directions_result = (
-            build_output_directions(
-                routes_data,
-                directions,
-                logical_trips,
-                trips_by_id,
-                stop_times_by_trip,
-                stops_by_id
-            )
+        output_directions = build_output_directions(
+            routes_data,
+            directions,
+            logical_trips,
+            trips_by_id,
+            stop_times_by_trip,
+            stops_by_id,
         )
 
-        # --------------------------------------------------------
-        # Schedules
-        # --------------------------------------------------------
-
-        schedules_result = (
-            build_schedules(
-                directions_result,
-                logical_trips,
-                logical_stop_times
-            )
+        output_routes = build_output_routes(
+            routes_data,
+            logical_trips,
+            line_overrides,
         )
 
-        # --------------------------------------------------------
-        # Shapes
-        # --------------------------------------------------------
-
-        selected_shape_ids = set()
-
-        for route_directions in (
-            directions_result.values()
-        ):
-
-            for direction in (
-                route_directions.values()
-            ):
-
-                shape_id = normalize(
-                    direction.get(
-                        "shape_id"
-                    )
-                )
-
-                if shape_id:
-
-                    selected_shape_ids.add(
-                        shape_id
-                    )
-
-        shapes_result = load_shapes(
-            selected_shape_ids
+        output_stops = build_output_stops(
+            output_stops,
+            output_directions,
         )
 
-        # --------------------------------------------------------
-        # Final output
-        # --------------------------------------------------------
+        output_trips = build_output_trips(
+            logical_trips,
+            output_routes,
+        )
+        valid_trip_ids = {trip["id"] for trip in output_trips}
+        output_stop_times = build_output_stop_times(
+            logical_stop_times,
+            valid_trip_ids,
+        )
+        output_trip_aliases = build_trip_aliases(logical_trips)
 
-        result = {
-
-            "updatedAt":
-                today.isoformat(),
-
-            "source":
-                "CGM Sofia official GTFS",
-
-            # Presentation-only mappings. The original GTFS routes above
-            # remain untouched; the frontend applies these overrides when
-            # displaying line metadata.
-            "lineOverrides":
-                line_overrides,
-
-            "calendar":
-                calendar_result,
-
-            "routes":
-                [
-                    dict(row)
-                    for row in routes_data
-                ],
-
-            "stops":
-                output_stops,
-
-            "trips":
-                [
-                    dict(row)
-                    for row in trips_data
-                ],
-
-            "directions":
-                directions_result,
-
-            "shapes":
-                shapes_result,
-
-            "schedules":
-                schedules_result
+        selected_shape_ids = {
+            normalize(direction.get("shape_id"))
+            for direction in output_directions
+            if normalize(direction.get("shape_id"))
         }
+        shapes_result = load_shapes(selected_shape_ids)
 
-        DATA_DIR.mkdir(
-            parents=True,
-            exist_ok=True
+        active_service_ids = build_active_service_ids(calendar_result)
+        metadata = write_split_data(
+            output_routes,
+            output_stops,
+            output_directions,
+            output_trips,
+            output_stop_times,
+            output_trip_aliases,
+            calendar_result,
+            active_service_ids,
+            shapes_result,
+            today.isoformat(),
         )
 
-        with OUTPUT_FILE.open(
-            "w",
-            encoding="utf-8"
-        ) as file:
+        print("")
+        print("=== Split data summary ===")
+        print(f"Routes: {len(output_routes)}")
+        print(f"Stops: {len(output_stops)}")
+        print(f"Directions: {len(output_directions)}")
+        print(f"Logical trips: {len(output_trips)}")
+        print(f"Stop-time rows: {len(output_stop_times)}")
+        print(f"Trip aliases: {len(output_trip_aliases)}")
+        print(f"Shapes: {len(shapes_result)}")
+        print(f"Metadata files: {len(metadata['files'])}")
 
-            json.dump(
-                result,
-                file,
-                ensure_ascii=False,
-                separators=(
-                    ",",
-                    ":"
-                )
-            )
+        print("")
+        print("=== Direction diagnostics ===")
 
-        print(
-            ""
-        )
-
-        print(
-            "=== Generation summary ==="
-        )
-
-        print(
-            "Routes: "
-            f"{len(routes_data)}"
-        )
-
-        print(
-            "Stops: "
-            f"{len(output_stops)}"
-        )
-
-        print(
-            "Directions: "
-            f"{sum(len(value) for value in directions_result.values())}"
-        )
-
-        print(
-            "Schedule routes: "
-            f"{len(schedules_result)}"
-        )
-
-        print(
-            "Shapes: "
-            f"{len(shapes_result)}"
-        )
-
-        # --------------------------------------------------------
-        # Diagnostics
-        # --------------------------------------------------------
-
-        print(
-            ""
-        )
-
-        print(
-            "=== Direction diagnostics ==="
-        )
-
-        for route in routes_data:
-
-            route_id = normalize(
-                route.get(
-                    "route_id"
-                )
-            )
-
-            short_name = normalize(
-                route.get(
-                    "route_short_name"
-                )
-            )
-
-            route_directions = (
-                directions_result.get(
-                    route_id,
-                    {}
-                )
-            )
-
-            if not route_directions:
+        for route in output_routes:
+            route_id = normalize(route.get("cgm_id"))
+            refs = [
+                direction for direction in output_directions
+                if normalize(direction.get("cgm_id")) == route_id
+            ]
+            if not refs:
                 continue
-
-            print(
-                f"\n{short_name}:"
-            )
-
-            for key, direction in (
-                route_directions.items()
-            ):
-
-                schedule = (
-                    schedules_result
-                    .get(
-                        route_id,
-                        {}
-                    )
-                    .get(
-                        key,
-                        {}
-                    )
+            print(f"\n{route.get('route_ref', route_id)}:")
+            for direction in refs:
+                trip_count = sum(
+                    1 for trip in output_trips
+                    if normalize(trip.get("cgm_id")) == route_id
+                    and normalize(trip.get("direction")) == normalize(direction.get("code"))
                 )
-
                 print(
-                    "  "
-                    f"{key}: "
-                    f"{direction['headsign']} | "
-                    f"stops={len(direction['stops'])} | "
-                    f"weekday={len(schedule.get('weekday', []))} | "
-                    f"weekend={len(schedule.get('weekend', []))}"
+                    f"  direction {direction.get('code')}: "
+                    f"{len(direction.get('stops', []))} stops, {trip_count} logical trip groups"
                 )
-
-        print(
-            ""
-        )
-
-        print(
-            f"Written: {OUTPUT_FILE}"
-        )
 
     finally:
 
         if GTFS_DIR.exists():
+            shutil.rmtree(GTFS_DIR)
 
-            shutil.rmtree(
-                GTFS_DIR
-            )
-
-        print(
-            "Temporary GTFS files removed."
-        )
+        print("Temporary GTFS files removed.")
 
 
 if __name__ == "__main__":
