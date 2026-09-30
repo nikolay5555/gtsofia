@@ -273,6 +273,21 @@
     };
   }
 
+  // Schedule fallback is intentionally limited to services that do not have
+  // reliable realtime coverage. Do not infer this from the current realtime
+  // response: a temporary feed gap on a realtime-enabled line must NOT bring
+  // its static timetable back onto the virtual board.
+  //
+  // Known schedule-only services are the night buses (N1, N2, ...) and metro.
+  // The N-line check is pattern-based so a future N5/N6 does not require a code
+  // change merely to inherit the same schedule-only behaviour.
+  function isScheduleOnlyRoute(route) {
+    const number = String(route?.route_short_name || '').trim().toUpperCase();
+    const type = String(route?.route_type || '').trim();
+
+    return type === '1' || /^N\d+$/.test(number);
+  }
+
   function getLineMeta(routeId, routeRef) {
     const id = String(routeId ?? "").trim();
     const ref = String(routeRef ?? "").trim();
@@ -690,9 +705,10 @@
     const result = [];
 
     for (const route of (transportData?.routes || [])) {
-      // Static fallback applies only to surface transport. Metro keeps its
-      // existing static timetable logic below.
-      if (String(route?.route_type) === '1') continue;
+      // Static fallback is allowed only for schedule-only services. Realtime-
+      // enabled surface lines must never resurrect from their static timetable
+      // just because realtime is temporarily absent at this stop.
+      if (!isScheduleOnlyRoute(route) || String(route?.route_type) === '1') continue;
 
       const routeId = String(route?.route_id || '').trim();
       if (!routeId) continue;
@@ -1231,8 +1247,9 @@
       .sort((a, b) => Number(a.times?.[0]?.timestamp) - Number(b.times?.[0]?.timestamp));
 
     // Sofia Traffic currently does not provide usable Trip Updates for metro.
-    // Keep surface transport realtime-only and add metro from the static GTFS
-    // timetable when the selected stop is a metro station.
+    // Metro therefore remains schedule-only and is added from the static GTFS
+    // timetable when the selected stop is a metro station. Night buses use the
+    // same schedule-only fallback policy through getSurfaceScheduledArrivals().
     const realtimeRouteIds = new Set(
       mergedSurfaceRoutes.map(route => String(route?.route_id || ''))
     );
