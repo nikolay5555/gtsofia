@@ -2204,6 +2204,20 @@ def build_schedules(
                                 "id"
                             ],
 
+                        # Keep the original GTFS trip id on every schedule
+                        # row. GTFS-Realtime references this original id,
+                        # while the public schedule uses the logical trip id
+                        # created by the generator. This lets the virtual board
+                        # suppress a SKIPPED course exactly, without hiding
+                        # later courses in the same direction.
+                        "original_trip_id":
+                            normalize(
+                                item.get(
+                                    "original_trip_id",
+                                    ""
+                                )
+                            ),
+
                         "start_time":
                             (
                                 f"{first // 60:02d}:"
