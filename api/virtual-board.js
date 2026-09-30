@@ -328,24 +328,25 @@ function buildBoard(updates, stopCode, feedTimestamp) {
     }
 
     for (const stopUpdate of tripUpdate.stopTimeUpdates || []) {
-      if (!stopUpdate?.stopId || !stopIdsMatch(stopUpdate.stopId, target)) continue;
-
       const stopRelationship = Number.isFinite(Number(stopUpdate.scheduleRelationship))
         ? Number(stopUpdate.scheduleRelationship)
         : STOP_RELATIONSHIP.SCHEDULED;
 
-      // SKIPPED is an explicit negative realtime signal: the vehicle will not
-      // stop at this exact stop. Keep it separate from arrivals so the
-      // frontend can suppress only the matching static course instead of
-      // interpreting the missing realtime arrival as ordinary NO_DATA.
+      // SKIPPED is useful even when the producer identifies the stop only by
+      // stop_sequence (GTFS-RT permits either stop_id or stop_sequence). Keep
+      // sequence-only SKIPPED records so the frontend can resolve them against
+      // the generated static pattern. When stop_id is present, only keep
+      // records relevant to the requested board stop.
       if (stopRelationship === STOP_RELATIONSHIP.SKIPPED) {
+        if (stopUpdate?.stopId && !stopIdsMatch(stopUpdate.stopId, target)) continue;
+
         const skippedKey = [
           trip.tripId || '',
           trip.startDate || tripUpdate.tripProperties?.startDate || '',
           trip.startTime || tripUpdate.tripProperties?.startTime || '',
           trip.routeId || '',
           trip.directionId || '',
-          normalizeStopKey(stopUpdate.stopId || target)
+          stopUpdate.stopId ? normalizeStopKey(stopUpdate.stopId) : `seq:${Number.isFinite(Number(stopUpdate.stopSequence)) ? Number(stopUpdate.stopSequence) : ''}`
         ].join('|');
 
         if (!skippedTrips.has(skippedKey)) {
@@ -355,7 +356,10 @@ function buildBoard(updates, stopCode, feedTimestamp) {
             start_time: trip.startTime || tripUpdate.tripProperties?.startTime || '',
             route_id: trip.routeId || '',
             direction_id: trip.directionId || '',
-            stop_id: stopUpdate.stopId || String(stopCode),
+            stop_id: stopUpdate.stopId || '',
+            stop_sequence: Number.isFinite(Number(stopUpdate.stopSequence))
+              ? Number(stopUpdate.stopSequence)
+              : null,
             stop_schedule_relationship: stopRelationship,
             stop_schedule_relationship_name: STOP_RELATIONSHIP_NAME[stopRelationship]
               || `UNKNOWN_${stopRelationship}`
@@ -363,6 +367,11 @@ function buildBoard(updates, stopCode, feedTimestamp) {
         }
         continue;
       }
+
+      // A normal arrival must still be for the requested stop. A sequence-only
+      // SKIPPED record was handled above and is deliberately not treated as an
+      // arrival.
+      if (!stopUpdate?.stopId || !stopIdsMatch(stopUpdate.stopId, target)) continue;
 
       // NO_DATA explicitly says that no realtime timing is available here.
       // It must NOT suppress the static fallback.
