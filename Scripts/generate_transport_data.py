@@ -1319,6 +1319,15 @@ def build_reference_directions(
             "times":
                 times,
 
+            # Preserve the GTFS stop_sequence alongside the padded timetable.
+            # GTFS-Realtime StopTimeUpdate may identify a stop by sequence
+            # instead of stop_id, so the virtual board needs this mapping to
+            # decide whether a SKIPPED update applies to the selected stop.
+            "stop_sequences": [
+                item.get("sequence")
+                for item in trip_stop_times
+            ],
+
             "car":
                 extract_car_number(
                     trip_id
@@ -1549,6 +1558,19 @@ def merge_partial_directions(
                         + item[
                             "times"
                         ]
+                        + [None]
+                        * end_padding
+                    )
+
+                    item[
+                        "stop_sequences"
+                    ] = (
+                        [None]
+                        * begin_padding
+                        + item.get(
+                            "stop_sequences",
+                            []
+                        )
                         + [None]
                         * end_padding
                     )
@@ -2217,6 +2239,17 @@ def build_schedules(
                                     ""
                                 )
                             ),
+
+                        "stop_sequences":
+                            [
+                                sequence
+                                if sequence is None
+                                else int(sequence)
+                                for sequence in item.get(
+                                    "stop_sequences",
+                                    []
+                                )
+                            ],
 
                         "start_time":
                             (
