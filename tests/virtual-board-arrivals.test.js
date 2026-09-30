@@ -27,7 +27,7 @@ function createStorage(initialEntries = []) {
 function loadInternals(storage) {
   const exportedSource = source.replace(
     /\n\}\)\(\);\s*$/,
-    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    formatArrivalCountdown\n  };\n})();`
+    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isSkippedStaticSchedule,\n    formatArrivalCountdown,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
   );
 
   const context = {
@@ -136,6 +136,82 @@ assert.equal(
   reloadedInternals.isConsumedRealtimeScheduledArrival(stopId, routeId, destination, scheduledTime),
   true,
   'consumed scheduled courses must survive a page refresh within the session'
+);
+
+// SKIPPED must suppress exactly the matching scheduled course, not the whole
+// direction. The compatibility path uses route + direction + GTFS start_time
+// until regenerated data carries the exact original_trip_id on each row.
+internals.setTestState({
+  transportData: {
+    directions: {
+      TEST_ROUTE: {
+        D1: {
+          key: 'D1',
+          destination: 'Тестова спирка',
+          headsign: 'Тестова спирка',
+          shape_id: 'SHAPE-1',
+          pattern: ['1000', '0605', '2000']
+        }
+      }
+    }
+  },
+  trips: [{
+    trip_id: 'REALTIME-11',
+    route_id: 'TEST_ROUTE',
+    trip_headsign: 'Тестова спирка',
+    shape_id: 'SHAPE-1'
+  }]
+});
+
+const skipped = [{
+  trip_id: 'REALTIME-11',
+  route_id: 'TEST_ROUTE',
+  start_time: '08:10:00',
+  stop_id: '0605'
+}];
+
+assert.equal(
+  internals.isSkippedStaticSchedule(
+    { trip_id: 42, start_time: '08:10:00' },
+    'TEST_ROUTE',
+    'D1',
+    skipped
+  ),
+  true,
+  'SKIPPED must suppress the exact matching scheduled course'
+);
+
+assert.equal(
+  internals.isSkippedStaticSchedule(
+    { trip_id: 43, start_time: '08:25:00' },
+    'TEST_ROUTE',
+    'D1',
+    skipped
+  ),
+  false,
+  'a later scheduled course must remain eligible after an earlier course is SKIPPED'
+);
+
+assert.equal(
+  internals.isSkippedStaticSchedule(
+    { trip_id: 42, original_trip_id: 'REALTIME-11', start_time: '08:25:00' },
+    'TEST_ROUTE',
+    'D1',
+    skipped
+  ),
+  true,
+  'exact original_trip_id match must suppress the course even when legacy start times differ'
+);
+
+assert.equal(
+  internals.isSkippedStaticSchedule(
+    { trip_id: 44, start_time: '08:10:00' },
+    'OTHER_ROUTE',
+    'D1',
+    skipped
+  ),
+  false,
+  'SKIPPED from another route must never suppress this route fallback'
 );
 
 console.log('virtual-board-arrivals: all tests passed');
