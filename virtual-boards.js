@@ -902,6 +902,11 @@
     }
     const generatedAt = data?.generated_at || Date.now();
     const skippedTrips = Array.isArray(data?.skipped_trips) ? data.skipped_trips : [];
+    const realtimeSupportedRouteIds = new Set(
+      (Array.isArray(data?.realtime_route_ids) ? data.realtime_route_ids : [])
+        .map(value => String(value || '').trim())
+        .filter(Boolean)
+    );
     const realtimeRoutes = Array.isArray(data?.routes)
       ? data.routes
           .filter(route => route && Array.isArray(route.times))
@@ -1283,6 +1288,16 @@
       // Passenger-facing merge for equivalent named terminals (e.g. 94 /
       // stop 1699 vs 1700).
       const routeId = String(route.route_id || '');
+      // If this line is represented anywhere in the current GTFS-RT feed,
+      // never use its static timetable as a fallback. A missing realtime
+      // arrival at this stop can mean no vehicle is currently approaching,
+      // a short-turn/temporary organization, or another operational state.
+      // Falling back to the normal GTFS route would turn that absence into a
+      // misleading predicted arrival.
+      if (realtimeSupportedRouteIds.has(routeId)) {
+        return false;
+      }
+
       const destinationKey = normalizeDirectionText(route.destination || '');
       const displayedKey = `${routeId}|${destinationKey}|${String(route.route_ref || '')}`;
       return !realtimeDirectionKeys.has(displayedKey);
