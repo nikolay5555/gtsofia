@@ -129,6 +129,9 @@ function getTransportType(routeType) {
 function getLineOverride(route) {
     const routeId = String(route?.route_id || '').trim();
     const routeNumber = String(route?.route_short_name || '').trim();
+    const normalizedNumber = String(
+        route?.normalized?.route_ref || ''
+    ).trim();
     const overrides = Array.isArray(window.transportData?.lineOverrides)
         ? window.transportData.lineOverrides
         : [];
@@ -137,16 +140,22 @@ function getLineOverride(route) {
         String(override?.cgm_id || '').trim() === routeId ||
         (
             !override?.cgm_id &&
-            String(override?.route_ref || '').trim() === routeNumber
+            (
+                String(override?.route_ref || '').trim() === routeNumber ||
+                String(override?.route_ref || '').trim() === normalizedNumber
+            )
         )
     ) || null;
 }
 
 
 function getLineType(route) {
+    const normalized = route?.normalized || {};
     const number =
         String(
-            route.route_short_name || ''
+            normalized.route_ref ||
+            route.route_short_name ||
+            ''
         )
             .trim()
             .toUpperCase();
@@ -160,6 +169,7 @@ function getLineType(route) {
         ]);
 
     if (
+        normalized.subtype === 'night' ||
         nightBusLines.has(
             number
         )
@@ -173,6 +183,12 @@ function getLineType(route) {
         return override.type;
     }
 
+    if (normalized.type) {
+        return normalized.type === 'trolley'
+            ? 'trolleybus'
+            : normalized.type;
+    }
+
     return getTransportType(
         route.route_type
     );
@@ -181,8 +197,13 @@ function getLineType(route) {
 
 function getLineDisplayNumber(route, type) {
     const override = getLineOverride(route);
+    const normalizedNumber = String(
+        route?.normalized?.route_ref || ''
+    ).trim();
     const sourceNumber = String(
-        route.route_short_name || ''
+        normalizedNumber ||
+        route.route_short_name ||
+        ''
     ).trim();
 
     if (override?.route_ref) {
@@ -191,7 +212,7 @@ function getLineDisplayNumber(route, type) {
 
     return type === 'metro'
         ? sourceNumber.replace(/^[МM]/i, '')
-        : sourceNumber.replace(/^E(?=186$)/i, '');
+        : sourceNumber;
 }
 
 function getTransportIcon(

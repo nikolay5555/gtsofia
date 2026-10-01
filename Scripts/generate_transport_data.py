@@ -66,6 +66,57 @@ def normalize(value):
     return str(value).strip() if value is not None else ""
 
 
+def normalize_route_ref(value):
+    """Normalize Sofia route references using Dimitar5555's rules."""
+
+    ref = normalize(value).upper()
+    if not ref:
+        return ""
+
+    number = "".join(
+        char
+        for char in ref
+        if char.isdigit()
+    )
+
+    if ref.startswith(("E", "Е")):
+        return number
+
+    if ref.startswith("N"):
+        return f"N{number}"
+
+    if ref.startswith(("Y", "У")):
+        return f"У{number}"
+
+    if ref.endswith(("ТБ", "TB")):
+        return f"{number}ТБ"
+
+    if ref.endswith(("ТМ", "TM", "Т", "T")):
+        return f"{number}ТМ"
+
+    return ref
+
+
+def normalize_stop_code(stop_id=None, stop_code=None):
+    """Return the canonical stop code used by the normalized dataset."""
+
+    raw_id = normalize(stop_id)
+    raw_code = normalize(stop_code)
+
+    if raw_id.upper().startswith("M"):
+        return raw_id.upper()
+
+    if raw_code.upper().startswith("M"):
+        return raw_code.upper()
+
+    source = raw_code or raw_id
+    if not source:
+        return ""
+
+    digits = "".join(char for char in source if char.isdigit())
+    return digits.zfill(4) if digits else ""
+
+
 def normalize_stop_id(value):
     value = normalize(value)
 
@@ -224,13 +275,64 @@ def transliterate(text):
     )
 
 
-def fetch_osm_stops():
-    """
-    Python equivalent of Dimitar5555's fetch_osm_stops().
+def validate_osm_stop_names(tags, ref, element):
+    """Mirror Dimitar's validation of OSM name tags."""
 
-    OSM is used only to improve/complete stop metadata.
-    It does NOT replace GTFS geometry or schedules.
-    """
+    if tags.get("short_name"):
+        print(
+            "WARNING: stop with ref "
+            f"{ref} has an unqualified short_name tag "
+            f"(node {element.get('id')})."
+        )
+
+    if tags.get("full_name"):
+        print(
+            "WARNING: stop with ref "
+            f"{ref} has an unqualified full_name tag "
+            f"(node {element.get('id')})."
+        )
+
+    supported_languages = {"bg", "en"}
+    keys = set(tags)
+    names = {key for key in keys if key == "name" or key.startswith("name:")}
+    short_names = {key for key in keys if key.startswith("short_name:")}
+    full_names = {key for key in keys if key.startswith("full_name:")}
+    ignore_keys = {"int_name", "old_name", "noname"}
+
+    other_names = {
+        key
+        for key in keys
+        if (
+            "name" in key
+            and key not in short_names
+            and key not in full_names
+            and key not in names
+            and key not in ignore_keys
+        )
+    }
+
+    if other_names:
+        print(
+            "WARNING: stop with ref "
+            f"{ref} has unsupported name tags: "
+            f"{', '.join(sorted(other_names))}."
+        )
+
+    unsupported_languages = {
+        (key.split(":", 1)[1] if ":" in key else "bg")
+        for key in names | short_names | full_names
+    } - supported_languages
+
+    if unsupported_languages:
+        print(
+            "WARNING: stop with ref "
+            f"{ref} has unsupported languages: "
+            f"{', '.join(sorted(unsupported_languages))}."
+        )
+
+
+def fetch_osm_stops():
+    """Fetch and normalize OSM stop metadata with OSM-first naming."""
 
     elements = "".join(
         (
@@ -248,225 +350,209 @@ def fetch_osm_stops():
         "out geom;"
     )
 
-    body = urllib.parse.urlencode(
-        {
-            "data": query
-        }
-    ).encode(
-        "utf-8"
-    )
-
+    body = urllib.parse.urlencode({"data": query}).encode("utf-8")
     request = urllib.request.Request(
         "https://overpass-api.de/api/interpreter",
         data=body,
         method="POST",
         headers={
-            "Referer":
-                "https://overpass-turbo.eu/",
-
-            "User-Agent":
-                "github/nikolay5555/gtsofia"
-        }
+            "Referer": "https://overpass-turbo.eu/",
+            "User-Agent": "github/nikolay5555/gtsofia",
+        },
     )
 
     try:
-
-        with urllib.request.urlopen(
-            request,
-            timeout=90
-        ) as response:
-
+        with urllib.request.urlopen(request, timeout=90) as response:
             payload = response.read()
 
-        data = json.loads(
-            payload.decode(
-                "utf-8"
-            )
-        )
-
+        data = json.loads(payload.decode("utf-8"))
     except Exception as error:
-
-        print(
-            "WARNING: OSM stop fetch failed:"
-        )
-
-        print(
-            f"  {error}"
-        )
-
-        print(
-            "Continuing with GTFS stop names."
-        )
-
+        print("WARNING: OSM stop fetch failed:")
+        print(f"  {error}")
+        print("Continuing with GTFS stop names.")
         return {}
-
-    elements_data = data.get(
-        "elements",
-        []
-    )
 
     result = {}
 
-    for element in elements_data:
-
-        tags = element.get(
-            "tags",
-            {}
-        )
-
-        ref = normalize(
-            tags.get(
-                "ref"
-            )
-        )
-
+    for element in data.get("elements", []):
+        tags = element.get("tags", {})
+        ref = normalize(tags.get("ref"))
         if not ref:
             continue
 
-        if (
-            tags.get(
-                "subway"
-            )
-            == "yes"
-        ):
+        validate_osm_stop_names(tags, ref, element)
 
-            code = (
-                "M"
-                + ref
-            )
-
-        else:
-
-            code = ref.zfill(
-                4
-            )
-
-        name_bg = normalize(
-            tags.get(
-                "name"
-            )
+        is_subway = tags.get("subway") == "yes"
+        code = (
+            f"M{ref}"
+            if is_subway
+            else ref.zfill(4)
         )
 
-        name_en = normalize(
-            tags.get(
-                "name:en"
-            )
-        )
-
+        name_bg = normalize(tags.get("name"))
+        name_en = normalize(tags.get("name:en"))
         if not name_en:
-            name_en = transliterate(
-                name_bg
-            )
+            name_en = transliterate(name_bg)
 
-        result[
-            code
-        ] = {
-            "code":
-                code,
-
-            "name":
-                name_bg,
-
-            "name_en":
-                name_en,
-
-            "lat":
-                round_coordinate(
-                    element.get(
-                        "lat"
-                    )
-                ),
-
-            "lon":
-                round_coordinate(
-                    element.get(
-                        "lon"
-                    )
-                ),
+        names = {
+            "bg": name_bg,
+            "en": name_en,
         }
 
-    print(
-        "OSM stops fetched: "
-        f"{len(result)}"
-    )
+        optional_names = (
+            ("bg_short", "short_name:bg"),
+            ("en_short", "short_name:en"),
+            ("bg_full", "full_name:bg"),
+            ("en_full", "full_name:en"),
+        )
+        for target_key, source_key in optional_names:
+            value = normalize(tags.get(source_key))
+            if value:
+                names[target_key] = value
 
+        stop = {
+            "code": code,
+            "coords": [
+                round_coordinate(element.get("lat")),
+                round_coordinate(element.get("lon")),
+            ],
+            "names": names,
+            "_osm_public_transport": normalize(
+                tags.get("public_transport")
+            ),
+        }
+
+        if tags.get("request_stop") == "yes":
+            stop["request_stop"] = True
+
+        if tags.get("local_ref"):
+            stop["local_ref"] = normalize(tags.get("local_ref"))
+
+        if tags.get("local_ref:metro"):
+            stop["metro_ref"] = normalize(tags.get("local_ref:metro"))
+
+        # Keep the last OSM record for a duplicate code, like Dimitar's Map
+        # merge does. Prefer platform records over stop_position when both
+        # exist by processing them in that order.
+        priority = {"stop_position": 1, "platform": 2, "station": 3}.get(
+            stop["_osm_public_transport"],
+            0,
+        )
+        stop["_osm_priority"] = priority
+
+        existing = result.get(code)
+        if existing is None or stop["_osm_priority"] >= existing.get("_osm_priority", -1):
+            result[code] = stop
+
+    print(f"OSM stops fetched: {len(result)}")
     return result
 
 
-def merge_osm_stop_names(
-    stops,
-    osm_stops
-):
-    """
-    Preserve the current transport.json structure.
+def _gtfs_stop_to_canonical(stop):
+    stop_copy = dict(stop)
+    code = normalize_stop_code(
+        stop_copy.get("stop_id"),
+        stop_copy.get("stop_code"),
+    )
+    if not code:
+        return None
 
-    For matching stop codes:
-        OSM name -> preferred
-        GTFS name -> fallback
+    stop_copy["stop_id"] = code
+    stop_copy["stop_code"] = code
 
-    The rest of the GTFS stop record remains unchanged.
+    bg = normalize(stop_copy.get("stop_name"))
+    en = normalize(stop_copy.get("stop_name_en")) or transliterate(bg)
+
+    stop_copy["names"] = {
+        "bg": bg,
+        "en": en,
+    }
+
+    if not normalize(stop_copy.get("stop_lat")) or not normalize(stop_copy.get("stop_lon")):
+        stop_copy["_coords"] = None
+    else:
+        stop_copy["_coords"] = [
+            round_coordinate(stop_copy.get("stop_lat")),
+            round_coordinate(stop_copy.get("stop_lon")),
+        ]
+
+    return stop_copy
+
+
+def merge_osm_stop_names(stops, osm_stops):
     """
+    Normalize stop metadata using the same OSM-first strategy as Dimitar.
+
+    OSM stops are canonical when a code matches. GTFS/SUMC is used as a
+    fallback for missing OSM stops and missing OSM names. Existing GTFS-only
+    fields are preserved so the current frontend stays compatible.
+    """
+
+    gtfs_by_code = {}
+    for raw_stop in stops:
+        stop = _gtfs_stop_to_canonical(raw_stop)
+        if stop is None:
+            continue
+        code = stop["stop_id"]
+        current = gtfs_by_code.get(code)
+        if current is None or stop_preference_score(stop) > stop_preference_score(current):
+            gtfs_by_code[code] = stop
 
     if not osm_stops:
-        return stops
+        return list(gtfs_by_code.values())
 
-    updated = []
-
+    merged = []
     matched = 0
+    osm_only = 0
 
-    for stop in stops:
-
-        stop_copy = dict(
-            stop
-        )
-
-        stop_id = normalize(
-            stop_copy.get(
-                "stop_id"
-            )
-        )
-
-        osm_stop = osm_stops.get(
-            stop_id
-        )
-
-        if osm_stop:
-
+    for code, osm_stop in osm_stops.items():
+        existing = gtfs_by_code.pop(code, None)
+        if existing is not None:
             matched += 1
+            combined = dict(existing)
+        else:
+            osm_only += 1
+            combined = {
+                "stop_id": code,
+                "stop_code": code,
+                "stop_desc": "",
+                "location_type": "1" if osm_stop.get("_osm_public_transport") == "station" else "0",
+                "parent_station": "",
+                "stop_timezone": "",
+                "level_id": "",
+            }
 
-            osm_name = normalize(
-                osm_stop.get(
-                    "name"
-                )
-            )
+        names = dict(osm_stop.get("names") or {})
+        gtfs_names = combined.get("names") or {}
+        if not names.get("bg"):
+            names["bg"] = normalize(gtfs_names.get("bg"))
+        if not names.get("en"):
+            names["en"] = transliterate(names.get("bg") or "")
 
-            if osm_name:
-                stop_copy[
-                    "stop_name"
-                ] = osm_name
+        combined["names"] = names
+        combined["stop_name"] = names.get("bg", "")
+        combined["stop_name_en"] = names.get("en", "")
 
-            osm_name_en = normalize(
-                osm_stop.get(
-                    "name_en"
-                )
-            )
+        coords = osm_stop.get("coords")
+        if coords and coords[0] is not None and coords[1] is not None:
+            combined["stop_lat"] = str(coords[0])
+            combined["stop_lon"] = str(coords[1])
+            combined["_coords"] = list(coords)
 
-            if osm_name_en:
+        for key in ("request_stop", "local_ref", "metro_ref"):
+            if key in osm_stop:
+                combined[key] = osm_stop[key]
 
-                stop_copy[
-                    "stop_name_en"
-                ] = osm_name_en
+        merged.append(combined)
 
-        updated.append(
-            stop_copy
-        )
+    # Preserve GTFS/SUMC-only stops that OSM does not know about.
+    merged.extend(gtfs_by_code.values())
 
-    print(
-        "GTFS stops matched with OSM: "
-        f"{matched}"
-    )
+    print(f"GTFS stops matched with OSM: {matched}")
+    print(f"OSM-only stops added: {osm_only}")
+    print(f"Canonical stops after merge: {len(merged)}")
 
-    return updated
+    return merged
 
 
 # ============================================================
@@ -832,46 +918,22 @@ def build_stop_index(stops):
 def build_stops(
     stops_data
 ):
-    """
-    Keep the existing stop structure and normalized IDs.
+    """Build one canonical GTFS/SUMC stop record per public stop code."""
 
-    Names are merged with OSM later. Duplicate stop_ids are retained in the
-    output, but the lookup index chooses the most useful public stop record.
-    """
-
-    result = []
+    result_by_code = {}
 
     for row in stops_data:
-
-        original_id = normalize(
-            row.get(
-                "stop_id"
-            )
-        )
-
-        normalized_id = normalize_stop_id(
-            original_id
-        )
-
-        if not normalized_id:
+        stop = _gtfs_stop_to_canonical(row)
+        if stop is None:
             continue
 
-        stop = dict(
-            row
-        )
+        code = stop["stop_id"]
+        current = result_by_code.get(code)
+        if current is None or stop_preference_score(stop) > stop_preference_score(current):
+            result_by_code[code] = stop
 
-        stop[
-            "stop_id"
-        ] = normalized_id
-
-        result.append(
-            stop
-        )
-
-    return (
-        result,
-        build_stop_index(result)
-    )
+    result = list(result_by_code.values())
+    return result, build_stop_index(result)
 
 
 # ============================================================
@@ -2453,6 +2515,208 @@ def load_shapes(
     return result
 
 
+def route_type_from_gtfs(route_type):
+    return {
+        "0": "tram",
+        "1": "metro",
+        "3": "bus",
+        "11": "trolley",
+    }.get(normalize(route_type), "other")
+
+
+def normalize_route_record(route, line_overrides=None):
+    """Create Dimitar-compatible route metadata while retaining raw GTFS."""
+
+    route_id = normalize(route.get("route_id"))
+    route_ref = normalize_route_ref(route.get("route_short_name"))
+    route_type = route_type_from_gtfs(route.get("route_type"))
+
+    override = None
+    for item in line_overrides or []:
+        if normalize(item.get("cgm_id")) == route_id:
+            override = item
+            break
+
+    if override and normalize(override.get("route_ref")):
+        route_ref = normalize_route_ref(override.get("route_ref"))
+
+    override_type = normalize(override.get("type")) if override else ""
+    if override_type in {"bus", "tram", "trolley", "metro"}:
+        route_type = override_type
+
+    if (
+        route_ref.endswith(("ТБ", "ТМ"))
+        or (route_ref.startswith("М") and route_type == "bus")
+    ):
+        route_type = "bus"
+
+    try:
+        sort_ref = int("".join(ch for ch in route_ref if ch.isdigit()))
+    except ValueError:
+        sort_ref = None
+
+    if sort_ref is not None and sort_ref >= 50 and route_type == "trolley":
+        route_type = "bus"
+
+    subtype = None
+    if route_ref.endswith(("ТБ", "ТМ")):
+        subtype = "temporary"
+    elif route_ref.startswith("N"):
+        subtype = "night"
+    elif route_ref.startswith("У"):
+        subtype = "school"
+
+    return {
+        "cgm_id": route_id,
+        "route_ref": route_ref,
+        "type": route_type,
+        **({"subtype": subtype} if subtype else {}),
+        **({
+            "text_color": normalize(route.get("route_text_color")),
+            "bg_color": normalize(route.get("route_color")),
+        } if route_type == "metro" else {}),
+    }
+
+
+def build_normalized_data(
+    routes_data,
+    output_stops,
+    directions,
+    logical_trips,
+    logical_stop_times,
+    directions_result,
+    line_overrides
+):
+    """Expose a compact normalized dataset alongside the legacy data model."""
+
+    normalized_routes = []
+    for route in routes_data:
+        route_id = normalize(route.get("route_id"))
+        if route_id not in directions_result:
+            continue
+        normalized_routes.append(
+            normalize_route_record(route, line_overrides)
+        )
+
+    normalized_stops = []
+    for stop in output_stops:
+        code = normalize_stop_code(
+            stop.get("stop_id"),
+            stop.get("stop_code"),
+        )
+        if not code:
+            continue
+
+        names = dict(stop.get("names") or {})
+        bg = normalize(names.get("bg")) or normalize(stop.get("stop_name"))
+        en = normalize(names.get("en")) or normalize(stop.get("stop_name_en")) or transliterate(bg)
+        names["bg"] = bg
+        names["en"] = en
+
+        item = {
+            "code": code,
+            "coords": stop.get("_coords") or [
+                round_coordinate(stop.get("stop_lat")),
+                round_coordinate(stop.get("stop_lon")),
+            ],
+            "names": names,
+        }
+
+        for key in ("request_stop", "local_ref", "metro_ref"):
+            if key in stop:
+                item[key] = stop[key]
+
+        normalized_stops.append(item)
+
+    normalized_directions = []
+    active_direction_codes = set()
+    for route_directions in directions_result.values():
+        for direction in route_directions.values():
+            code = direction.get("code")
+            if code is None:
+                continue
+            try:
+                numeric_code = int(code)
+            except (TypeError, ValueError):
+                numeric_code = code
+            active_direction_codes.add(str(code))
+            normalized_directions.append({
+                "code": numeric_code,
+                "stops": [
+                    normalize_stop_code(stop.get("stop_id"), stop.get("stop_id"))
+                    if isinstance(stop, dict)
+                    else normalize_stop_code(stop, stop)
+                    for stop in direction.get("stops", [])
+                ],
+            })
+
+    normalized_trips = []
+    normalized_trip_ids_by_key = {}
+    next_normalized_trip_id = 1
+
+    for trip in logical_trips:
+        if trip.get("is_deleted"):
+            continue
+
+        direction_code = str(trip.get("direction_code", ""))
+        if direction_code not in active_direction_codes:
+            continue
+
+        day_types = trip.get("day_types") or []
+        if not day_types:
+            day_types = [
+                "weekend"
+                if trip.get("is_weekend", False)
+                else "weekday"
+            ]
+
+        try:
+            direction_value = int(trip.get("direction_code"))
+        except (TypeError, ValueError):
+            direction_value = trip.get("direction_code")
+
+        for day_type in ("weekday", "weekend"):
+            if day_type not in day_types:
+                continue
+
+            key = (trip.get("id"), day_type)
+            normalized_id = normalized_trip_ids_by_key.get(key)
+            if normalized_id is None:
+                normalized_id = next_normalized_trip_id
+                next_normalized_trip_id += 1
+                normalized_trip_ids_by_key[key] = normalized_id
+
+                normalized_trips.append({
+                    "id": normalized_id,
+                    "cgm_id": normalize(trip.get("route_id")),
+                    "direction": direction_value,
+                    "is_weekend": day_type == "weekend",
+                })
+
+    normalized_stop_times = []
+    for item in logical_stop_times:
+        source_trip_id = item.get("trip")
+        for day_type in ("weekday", "weekend"):
+            normalized_trip_id = normalized_trip_ids_by_key.get(
+                (source_trip_id, day_type)
+            )
+            if normalized_trip_id is None:
+                continue
+            normalized_stop_times.append({
+                "trip": normalized_trip_id,
+                "times": list(item.get("times", [])),
+                "car": normalize(item.get("car")),
+            })
+
+    return {
+        "stops": normalized_stops,
+        "routes": normalized_routes,
+        "directions": normalized_directions,
+        "trips": normalized_trips,
+        "stop_times": normalized_stop_times,
+    }
+
+
 # ============================================================
 # Main
 # ============================================================
@@ -2533,15 +2797,11 @@ def main():
         )
 
         # --------------------------------------------------------
-        # OSM stop names
+        # OSM stop metadata
         #
-        # IMPORTANT:
-        # This ONLY enriches stop metadata.
-        # It does not affect:
-        #   - direction selection
-        #   - schedules
-        #   - partial courses
-        #   - shapes
+        # OSM is the canonical naming/metadata source, following the same
+        # strategy as Dimitar5555. GTFS/SUMC remains the fallback and also
+        # supplies stops that are absent from OSM.
         # --------------------------------------------------------
 
         print(
@@ -2714,6 +2974,16 @@ def main():
         # Final output
         # --------------------------------------------------------
 
+        normalized_result = build_normalized_data(
+            routes_data,
+            output_stops,
+            directions,
+            logical_trips,
+            logical_stop_times,
+            directions_result,
+            line_overrides,
+        )
+
         result = {
 
             "updatedAt":
@@ -2733,7 +3003,13 @@ def main():
 
             "routes":
                 [
-                    dict(row)
+                    {
+                        **dict(row),
+                        "normalized": normalize_route_record(
+                            row,
+                            line_overrides,
+                        ),
+                    }
                     for row in routes_data
                 ],
 
@@ -2753,7 +3029,19 @@ def main():
                 shapes_result,
 
             "schedules":
-                schedules_result
+                schedules_result,
+
+            # Compact Dimitar-compatible normalized representation.
+            # The legacy fields above remain available for the current UI.
+            "normalized":
+                normalized_result,
+
+            "normalization": {
+                "route": "Dimitar5555-compatible route_ref/type/subtype normalization",
+                "stops": "OSM-first names and stop metadata with GTFS/SUMC fallback",
+                "stop_times": "minutes from midnight",
+                "compatibility": "legacy transport.json fields are retained",
+            },
         }
 
         DATA_DIR.mkdir(
