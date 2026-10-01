@@ -77,6 +77,8 @@ class NormalizationTests(unittest.TestCase):
         self.assertEqual(by_id["0123"]["stop_name"], "ОСМ ИМЕ")
         self.assertEqual(by_id["0123"]["stop_name_en"], "OSM NAME")
         self.assertEqual(by_id["0123"]["names"]["bg_short"], "ОСМ")
+        self.assertEqual(by_id["0123"]["name_source"], "osm")
+        self.assertEqual(by_id["0999"]["name_source"], "gtfs")
         self.assertTrue(by_id["0123"]["request_stop"])
         self.assertEqual(by_id["0123"]["local_ref"], "L-123")
         self.assertEqual(by_id["0123"]["metro_ref"], "M-123")

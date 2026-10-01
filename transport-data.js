@@ -1,45 +1,95 @@
 let gtfsRoutes = [];
 let gtfsStops = [];
 
-async function loadTransportData() {
-    const response = await fetch(
-        './data/transport.json'
-    );
-
+async function fetchJsonPart(basePath, relativePath) {
+    const response = await fetch(`${basePath}${relativePath}`, {
+        cache: 'no-store'
+    });
     if (!response.ok) {
+        throw new Error(`Неуспешно зареждане на ${relativePath}: ${response.status}`);
+    }
+    return response.json();
+}
+
+async function loadTransportData() {
+    const manifestResponse = await fetch('./data/transport.json', {
+        cache: 'no-store'
+    });
+
+    if (!manifestResponse.ok) {
         throw new Error(
-            `Неуспешно зареждане на transport.json: ${response.status}`
+            `Неуспешно зареждане на transport.json: ${manifestResponse.status}`
         );
     }
 
-    const data =
-        await response.json();
+    const manifest = await manifestResponse.json();
+    if (!manifest?.files) {
+        // Keep old deployments readable during rollout.
+        gtfsRoutes = manifest.routes || [];
+        gtfsStops = manifest.stops || [];
+        window.transportData = manifest;
+        return manifest;
+    }
 
-    gtfsRoutes =
-        data.routes || [];
+    const basePath = './data/';
+    const files = manifest.files;
+    const [
+        calendar,
+        routes,
+        stops,
+        trips,
+        directions,
+        shapes,
+        schedules,
+        normalizedStops,
+        normalizedRoutes,
+        normalizedDirections,
+        normalizedTrips,
+        normalizedStopTimes,
+    ] = await Promise.all([
+        fetchJsonPart(basePath, files.calendar),
+        fetchJsonPart(basePath, files.routes),
+        fetchJsonPart(basePath, files.stops),
+        fetchJsonPart(basePath, files.trips),
+        fetchJsonPart(basePath, files.directions),
+        fetchJsonPart(basePath, files.shapes),
+        fetchJsonPart(basePath, files.schedules),
+        fetchJsonPart(basePath, files.normalized.stops),
+        fetchJsonPart(basePath, files.normalized.routes),
+        fetchJsonPart(basePath, files.normalized.directions),
+        fetchJsonPart(basePath, files.normalized.trips),
+        fetchJsonPart(basePath, files.normalized.stop_times),
+    ]);
 
-    gtfsStops =
-        data.stops || [];
+    const data = {
+        updatedAt: manifest.updatedAt,
+        source: manifest.source,
+        lineOverrides: manifest.lineOverrides || [],
+        normalization: manifest.normalization || {},
+        calendar,
+        routes,
+        stops,
+        trips,
+        directions,
+        shapes,
+        schedules,
+        normalized: {
+            stops: normalizedStops,
+            routes: normalizedRoutes,
+            directions: normalizedDirections,
+            trips: normalizedTrips,
+            stop_times: normalizedStopTimes,
+        },
+    };
 
-    window.transportData =
-        data;
+    gtfsRoutes = data.routes || [];
+    gtfsStops = data.stops || [];
+    window.transportData = data;
 
-    console.log(
-        'GTFS routes:',
-        gtfsRoutes.length
-    );
-
-    console.log(
-        'GTFS stops:',
-        gtfsStops.length
-    );
-
-    console.log(
-        'GTFS shapes:',
-        Object.keys(
-            data.shapes || {}
-        ).length
-    );
+    console.log('GTFS routes:', gtfsRoutes.length);
+    console.log('GTFS stops:', gtfsStops.length);
+    console.log('GTFS shapes:', Object.keys(data.shapes || {}).length);
+    console.log('Transport data parts loaded:', Object.keys(files));
 
     return data;
 }
