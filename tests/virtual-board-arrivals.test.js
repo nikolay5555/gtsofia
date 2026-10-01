@@ -27,7 +27,7 @@ function createStorage(initialEntries = []) {
 function loadInternals(storage) {
   const exportedSource = source.replace(
     /\n\}\)\(\);\s*$/,
-    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isSkippedStaticSchedule,\n    formatArrivalCountdown,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
+    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
   );
 
   const context = {
@@ -87,6 +87,35 @@ assert.equal(
   '3 мин.',
   '2 minutes 59 seconds remaining must display three minutes'
 );
+
+// A service that begins on Saturday must not be treated as active on Thursday
+// merely because the generated horizon contains later weekdays.
+internals.setTestState({
+  transportData: {
+    calendar: {
+      serviceIdsByDate: {
+        '2026-10-01': [],
+        '2026-10-03': ['FUTURE-SERVICE'],
+        '2026-10-04': ['FUTURE-SERVICE'],
+        '2026-10-05': ['FUTURE-SERVICE']
+      },
+      servicePatterns: [],
+      exceptions: []
+    }
+  },
+  trips: []
+});
+assert.equal(
+  internals.isServiceActiveOnDate('FUTURE-SERVICE', new Date('2026-10-01T18:00:00+03:00')),
+  false,
+  'a service starting on Saturday must not appear on Thursday'
+);
+assert.equal(
+  internals.isServiceActiveOnDate('FUTURE-SERVICE', new Date('2026-10-03T10:00:00+03:00')),
+  true,
+  'the same service must appear once its GTFS service date starts'
+);
+
 const nowSeconds = Date.now() / 1000;
 
 const stopId = '1017';

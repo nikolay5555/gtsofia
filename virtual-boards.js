@@ -408,15 +408,86 @@
       || /^M/i.test(String(stop?.stop_code || "").trim());
   }
 
-  function getSofiaDateParts() {
+  function getSofiaDateParts(date = new Date()) {
     const parts = new Intl.DateTimeFormat("en-CA", {
       timeZone: SOFIA_TIME_ZONE,
       year: "numeric",
       month: "2-digit",
       day: "2-digit"
-    }).formatToParts(new Date());
+    }).formatToParts(date);
     const get = type => parts.find(part => part.type === type)?.value || "";
     return { year: Number(get("year")), month: Number(get("month")), day: Number(get("day")) };
+  }
+
+  function getSofiaDateKey(date = new Date()) {
+    const parts = getSofiaDateParts(date);
+    if (![parts.year, parts.month, parts.day].every(Number.isFinite)) return "";
+    return `${String(parts.year).padStart(4, "0")}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+  }
+
+  function getSofiaWeekdayField(date = new Date()) {
+    const weekday = new Intl.DateTimeFormat("en-US", {
+      timeZone: SOFIA_TIME_ZONE,
+      weekday: "long"
+    }).format(date).toLowerCase();
+    return weekday;
+  }
+
+  function isServiceActiveOnDate(serviceId, date = new Date()) {
+    const id = String(serviceId ?? "").trim();
+    if (!id) return true;
+
+    const calendar = transportData?.calendar || {};
+    const dateKey = getSofiaDateKey(date);
+    if (!dateKey) return false;
+
+    // The generated date map is an exact GTFS evaluation of calendar.txt +
+    // calendar_dates.txt for the current data window. Prefer it whenever the
+    // requested date is covered because it already includes exceptions.
+    const byDate = calendar?.serviceIdsByDate;
+    if (byDate && Object.prototype.hasOwnProperty.call(byDate, dateKey)) {
+      return Array.isArray(byDate[dateKey])
+        && byDate[dateKey].some(value => String(value).trim() === id);
+    }
+
+    // Fall back to the raw GTFS calendar tables so a stale/older generated
+    // date window cannot accidentally turn a future-only service into today's
+    // service. This also preserves support for feeds that contain calendar.txt.
+    let active = false;
+    const weekdayField = getSofiaWeekdayField(date);
+    const pattern = (calendar?.servicePatterns || []).find(row =>
+      String(row?.service_id || "").trim() === id
+    );
+
+    if (pattern) {
+      const start = String(pattern.start_date || "").trim();
+      const end = String(pattern.end_date || "").trim();
+      const compactDate = dateKey.replaceAll("-", "");
+      active = compactDate >= start
+        && compactDate <= end
+        && String(pattern?.[weekdayField] || "") === "1";
+    }
+
+    for (const exception of (calendar?.exceptions || [])) {
+      if (String(exception?.service_id || "").trim() !== id) continue;
+      const exceptionDate = String(exception?.date || "").trim();
+      if (exceptionDate !== dateKey.replaceAll("-", "")) continue;
+      const type = String(exception?.exception_type || "").trim();
+      if (type === "1") active = true;
+      if (type === "2") active = false;
+    }
+
+    return active;
+  }
+
+  function isScheduleRowActiveToday(schedule) {
+    const serviceId = String(
+      schedule?.service_id
+      || findStaticTrip(schedule?.original_trip_id)?.service_id
+      || ""
+    ).trim();
+
+    return isServiceActiveOnDate(serviceId);
   }
 
   function getSofiaOffsetMs(date = new Date()) {
@@ -654,6 +725,7 @@
 
         const arrivals = [];
         for (const schedule of daySchedules) {
+          if (!isScheduleRowActiveToday(schedule)) continue;
           const rawTime = Array.isArray(schedule?.times) ? schedule.times[stopIndex] : null;
           const seconds = parseGtfsTime(rawTime);
           if (seconds == null) continue;
@@ -785,6 +857,7 @@
 
         const rowsByTerminal = new Map();
         for (const schedule of daySchedules) {
+          if (!isScheduleRowActiveToday(schedule)) continue;
           const times = Array.isArray(schedule?.times) ? schedule.times : [];
           const rawTime = times[stopIndex] ?? null;
           const seconds = parseGtfsTime(rawTime);
@@ -1971,4 +2044,11 @@
   }
 
   document.addEventListener("DOMContentLoaded", initializeVirtualBoards);
+
+  // Small test seam; production pages do not use this object.
+  globalThis.__gtsofiaVirtualBoardTestInternals = {
+    isServiceActiveOnDate,
+    isScheduleRowActiveToday,
+    getSofiaDateKey
+  };
 })();

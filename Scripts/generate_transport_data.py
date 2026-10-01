@@ -5,7 +5,6 @@ import io
 import json
 import shutil
 import urllib.request
-import urllib.parse
 import zipfile
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
@@ -22,26 +21,6 @@ OUTPUT_FILE = DATA_DIR / "transport.json"
 CALENDAR_CONFIG_FILE = ROOT / "config" / "calendar.json"
 LINE_OVERRIDES_CONFIG_FILE = ROOT / "config" / "line-overrides.json"
 
-OSM_NETWORK_NAME = "Градски транспорт София"
-
-OSM_STOPS_TYPES = [
-    {
-        "type": "subway",
-        "public_transport": "station",
-    },
-    {
-        "type": "tram",
-        "public_transport": "stop_position",
-    },
-    {
-        "type": "bus",
-        "public_transport": "platform",
-    },
-    {
-        "type": "trolleybus",
-        "public_transport": "platform",
-    },
-]
 
 
 def load_line_overrides():
@@ -153,320 +132,6 @@ def gtfs_date_string(current):
 
 def iso_date_string(current):
     return current.isoformat()
-
-
-# ============================================================
-# OSM helpers
-# ============================================================
-
-def round_coordinate(value):
-    try:
-        return round(
-            float(value),
-            5
-        )
-    except (
-        TypeError,
-        ValueError
-    ):
-        return None
-
-
-def transliterate(text):
-    """
-    Exact transliteration table from Dimitar5555's 02-stops.js.
-    """
-
-    cyrillic = (
-        "А,Б,В,Г,Д,Е,Ж,З,И,Й,К,Л,М,Н,О,П,Р,С,Т,У,Ф,Х,Ц,Ч,Ш,Щ,Ъ,Ь,Ю,Я"
-    ).split(",")
-
-    latin = (
-        "A,B,V,G,D,E,ZH,Z,I,Y,K,L,M,N,O,P,R,S,T,U,F,H,TS,CH,SH,SHT,A,A,YU,YA"
-    ).split(",")
-
-    if len(cyrillic) != len(latin):
-        raise RuntimeError(
-            "Cyrillic and Latin transliteration arrays differ."
-        )
-
-    result = []
-
-    for char in str(text or ""):
-
-        is_lower_case = (
-            char == char.lower()
-        )
-
-        try:
-            index = cyrillic.index(
-                char.upper()
-            )
-        except ValueError:
-            result.append(
-                char
-            )
-            continue
-
-        latin_char = latin[
-            index
-        ]
-
-        if is_lower_case:
-            latin_char = latin_char.lower()
-
-        result.append(
-            latin_char
-        )
-
-    return "".join(
-        result
-    )
-
-
-def fetch_osm_stops():
-    """
-    Python equivalent of Dimitar5555's fetch_osm_stops().
-
-    OSM is used only to improve/complete stop metadata.
-    It does NOT replace GTFS geometry or schedules.
-    """
-
-    elements = "".join(
-        (
-            f'node[{item["type"]}=yes]'
-            f'[public_transport={item["public_transport"]}]'
-            f'[ref]'
-            f'[network="{OSM_NETWORK_NAME}"];'
-        )
-        for item in OSM_STOPS_TYPES
-    )
-
-    query = (
-        "[out:json][timeout:25];"
-        f"({elements});"
-        "out geom;"
-    )
-
-    body = urllib.parse.urlencode(
-        {
-            "data": query
-        }
-    ).encode(
-        "utf-8"
-    )
-
-    request = urllib.request.Request(
-        "https://overpass-api.de/api/interpreter",
-        data=body,
-        method="POST",
-        headers={
-            "Referer":
-                "https://overpass-turbo.eu/",
-
-            "User-Agent":
-                "github/nikolay5555/gtsofia"
-        }
-    )
-
-    try:
-
-        with urllib.request.urlopen(
-            request,
-            timeout=90
-        ) as response:
-
-            payload = response.read()
-
-        data = json.loads(
-            payload.decode(
-                "utf-8"
-            )
-        )
-
-    except Exception as error:
-
-        print(
-            "WARNING: OSM stop fetch failed:"
-        )
-
-        print(
-            f"  {error}"
-        )
-
-        print(
-            "Continuing with GTFS stop names."
-        )
-
-        return {}
-
-    elements_data = data.get(
-        "elements",
-        []
-    )
-
-    result = {}
-
-    for element in elements_data:
-
-        tags = element.get(
-            "tags",
-            {}
-        )
-
-        ref = normalize(
-            tags.get(
-                "ref"
-            )
-        )
-
-        if not ref:
-            continue
-
-        if (
-            tags.get(
-                "subway"
-            )
-            == "yes"
-        ):
-
-            code = (
-                "M"
-                + ref
-            )
-
-        else:
-
-            code = ref.zfill(
-                4
-            )
-
-        name_bg = normalize(
-            tags.get(
-                "name"
-            )
-        )
-
-        name_en = normalize(
-            tags.get(
-                "name:en"
-            )
-        )
-
-        if not name_en:
-            name_en = transliterate(
-                name_bg
-            )
-
-        result[
-            code
-        ] = {
-            "code":
-                code,
-
-            "name":
-                name_bg,
-
-            "name_en":
-                name_en,
-
-            "lat":
-                round_coordinate(
-                    element.get(
-                        "lat"
-                    )
-                ),
-
-            "lon":
-                round_coordinate(
-                    element.get(
-                        "lon"
-                    )
-                ),
-        }
-
-    print(
-        "OSM stops fetched: "
-        f"{len(result)}"
-    )
-
-    return result
-
-
-def merge_osm_stop_names(
-    stops,
-    osm_stops
-):
-    """
-    Preserve the current transport.json structure.
-
-    For matching stop codes:
-        OSM name -> preferred
-        GTFS name -> fallback
-
-    The rest of the GTFS stop record remains unchanged.
-    """
-
-    if not osm_stops:
-        return stops
-
-    updated = []
-
-    matched = 0
-
-    for stop in stops:
-
-        stop_copy = dict(
-            stop
-        )
-
-        stop_id = normalize(
-            stop_copy.get(
-                "stop_id"
-            )
-        )
-
-        osm_stop = osm_stops.get(
-            stop_id
-        )
-
-        if osm_stop:
-
-            matched += 1
-
-            osm_name = normalize(
-                osm_stop.get(
-                    "name"
-                )
-            )
-
-            if osm_name:
-                stop_copy[
-                    "stop_name"
-                ] = osm_name
-
-            osm_name_en = normalize(
-                osm_stop.get(
-                    "name_en"
-                )
-            )
-
-            if osm_name_en:
-
-                stop_copy[
-                    "stop_name_en"
-                ] = osm_name_en
-
-        updated.append(
-            stop_copy
-        )
-
-    print(
-        "GTFS stops matched with OSM: "
-        f"{matched}"
-    )
-
-    return updated
 
 
 # ============================================================
@@ -835,8 +500,9 @@ def build_stops(
     """
     Keep the existing stop structure and normalized IDs.
 
-    Names are merged with OSM later. Duplicate stop_ids are retained in the
-    output, but the lookup index chooses the most useful public stop record.
+    Stop names and metadata come directly from the official GTFS feed.
+    Duplicate stop_ids are retained in the output, but the lookup index
+    chooses the most useful public stop record.
     """
 
     result = []
@@ -1335,6 +1001,16 @@ def build_reference_directions(
 
             "original_trip_id":
                 trip_id,
+
+            # Preserve the exact GTFS service_id of this original trip.
+            # Logical trip merging can combine multiple source trips, so the
+            # schedule row must retain its own service calendar identity for
+            # runtime checks against the actual service date.
+            "service_id":
+                trip.get(
+                    "service_id",
+                    ""
+                ),
         })
 
     return (
@@ -2240,6 +1916,14 @@ def build_schedules(
                                 )
                             ),
 
+                        "service_id":
+                            normalize(
+                                item.get(
+                                    "service_id",
+                                    ""
+                                )
+                            ),
+
                         "stop_sequences":
                             [
                                 sequence
@@ -2530,48 +2214,6 @@ def main():
             build_stops(
                 stops_data
             )
-        )
-
-        # --------------------------------------------------------
-        # OSM stop names
-        #
-        # IMPORTANT:
-        # This ONLY enriches stop metadata.
-        # It does not affect:
-        #   - direction selection
-        #   - schedules
-        #   - partial courses
-        #   - shapes
-        # --------------------------------------------------------
-
-        print(
-            ""
-        )
-
-        print(
-            "Fetching OSM stop names..."
-        )
-
-        osm_stops = (
-            fetch_osm_stops()
-        )
-
-        output_stops = (
-            merge_osm_stop_names(
-                output_stops,
-                osm_stops
-            )
-        )
-
-        # Rebuild the stop index after
-        # updating names.
-        stops_by_id = build_stop_index(
-            output_stops
-        )
-
-        print(
-            "Stops after OSM merge: "
-            f"{len(output_stops)}"
         )
 
         # --------------------------------------------------------
