@@ -481,10 +481,22 @@ function buildBoard(updates, stopCode, feedTimestamp) {
     });
   }
 
+  const realtimeRouteIds = [...new Set(
+    (updates || [])
+      .map(update => String(update?.trip?.routeId || '').trim())
+      .filter(Boolean)
+  )];
+
   return {
     status: routes.length ? 'ok' : 'empty',
     stop_code: String(stopCode),
     generated_at: feedTimestamp,
+    // Route IDs represented anywhere in the current GTFS-RT feed are
+    // considered realtime-supported. This is intentionally broader than
+    // active_trips: a route must not fall back to static GTFS merely because
+    // it has no arrival at this particular stop right now (or because a
+    // current trip is canceled/short-turned).
+    realtime_route_ids: realtimeRouteIds,
     active_trips: activeTrips,
     // SKIPPED is intentionally exposed as an explicit suppression signal for
     // the static fallback. It is kept per trip + stop so unrelated scheduled
