@@ -22,26 +22,6 @@
       .replaceAll("'", '&#039;');
   }
 
-  function loadSettings() {
-    try {
-      const settings = JSON.parse(localStorage.getItem(VIRTUAL_BOARD_SETTINGS_KEY) || '{}');
-      return {
-        show_condensed_view: settings.show_condensed_view !== false,
-        use_exact_times: settings.use_exact_times === true
-      };
-    } catch {
-      return { show_condensed_view: true, use_exact_times: false };
-    }
-  }
-
-  function saveSettings() {
-    const settings = {
-      show_condensed_view: document.getElementById('virtualBoardCondensed')?.checked !== false,
-      use_exact_times: document.getElementById('virtualBoardExactTime')?.checked === true
-    };
-    localStorage.setItem(VIRTUAL_BOARD_SETTINGS_KEY, JSON.stringify(settings));
-  }
-
   function formatTime(minutes) {
     const total = Math.max(0, Math.floor(Number(minutes)));
     const hour = Math.floor(total / 60) % 24;
@@ -86,19 +66,43 @@
     return formatTime(minutes);
   }
 
-  function renderTimeSpan(time) {
-    const relative = `${Number(time?.t ?? 0)} мин.`;
-    const exact = exactTimeForRelative(time?.t ?? 0);
-    const settings = loadSettings();
-    const span = document.createElement('span');
-    span.className = 'vb-time-value';
-    span.dataset.relativeTime = relative;
-    span.dataset.exactTime = exact;
-    span.textContent = settings.use_exact_times ? exact : relative;
-    return span;
+  function renderFirstArrival(time) {
+    const item = document.createElement('div');
+    item.className = 'vb-arrival';
+
+    const live = document.createElement('span');
+    live.className = 'vb-arrival-live';
+    live.setAttribute('aria-hidden', 'true');
+    item.appendChild(live);
+
+    const value = document.createElement('span');
+    value.className = 'vb-arrival-time';
+    value.dataset.arrivalMinutes = String(time?.t ?? 0);
+    value.textContent = exactTimeForRelative(time?.t ?? 0);
+    item.appendChild(value);
+
+    appendExtras(time?.extras, item);
+    return item;
   }
 
-  function renderRouteRow(route, generatedAt, verbose = false) {
+  function renderNextArrivals(times) {
+    const container = document.createElement('div');
+    container.className = 'vb-next-times';
+    for (const time of times) {
+      const value = Number(time?.t ?? 0);
+      const item = document.createElement('span');
+      item.className = 'vb-next-time';
+      item.dataset.arrivalMinutes = String(value);
+      item.dataset.tooltip = exactTimeForRelative(value);
+      item.textContent = `${Math.max(0, Math.round(value))} мин.`;
+      item.setAttribute('tabindex', '0');
+      appendExtras(time?.extras, item);
+      container.appendChild(item);
+    }
+    return container;
+  }
+
+  function renderRouteRow(route) {
     const row = document.createElement('div');
     row.className = 'vb-row';
 
@@ -106,12 +110,12 @@
     routeRow.className = 'vb-route-row';
 
     const identity = document.createElement('span');
-    identity.className = 'schedule-line-identity';
+    identity.className = 'icon-pill-destination';
     identity.innerHTML = linePillHtml(route);
     routeRow.appendChild(identity);
 
     const arrow = document.createElement('img');
-    arrow.className = 'vb-direction-arrow';
+    arrow.className = 'arrow-destination';
     arrow.src = 'Icons/destinationarrow.svg';
     arrow.alt = '';
     arrow.setAttribute('aria-hidden', 'true');
@@ -122,52 +126,22 @@
     destination.textContent = route.destination || '—';
     routeRow.appendChild(destination);
 
-    if (verbose) {
-      const times = document.createElement('div');
-      times.className = 'vb-verbose-times';
-      for (const time of route.times || []) {
-        const item = document.createElement('span');
-        item.className = 'vb-verbose-time';
-        item.appendChild(renderTimeSpan(time));
-        appendExtras(time.extras, item);
-        times.appendChild(item);
-      }
-      routeRow.appendChild(times);
-    }
-
     row.appendChild(routeRow);
 
-    if (!verbose) {
+    const times = Array.isArray(route.times) ? route.times.slice(0, 3) : [];
+    if (times.length) {
       const timeBlock = document.createElement('div');
       timeBlock.className = 'vb-time-block';
-      for (const time of (route.times || []).slice(0, 3)) {
-        const item = document.createElement('span');
-        item.className = 'vb-arrival-main';
-        const live = document.createElement('span');
-        live.className = 'vb-arrival-live';
-        live.setAttribute('aria-hidden', 'true');
-        item.appendChild(live);
-        const span = renderTimeSpan(time);
-        span.classList.add('vb-arrival-clock');
-        span.dataset.arrivalMinutes = String(time?.t ?? 0);
-        item.appendChild(span);
-        appendExtras(time.extras, item);
-        timeBlock.appendChild(item);
-      }
-      while (timeBlock.children.length < 3) {
-        const placeholder = document.createElement('span');
-        placeholder.textContent = '—';
-        placeholder.className = 'vb-arrival-main vb-arrival-placeholder';
-        timeBlock.appendChild(placeholder);
-      }
+      timeBlock.appendChild(renderFirstArrival(times[0]));
+      if (times.length > 1) timeBlock.appendChild(renderNextArrivals(times.slice(1)));
       row.appendChild(timeBlock);
     }
+
     return row;
   }
 
   function renderBoardRoutes(routes, generatedAt) {
     const body = document.getElementById('virtualBoardBody');
-    const settings = loadSettings();
     body.innerHTML = '';
 
     const header = document.createElement('div');
@@ -192,14 +166,8 @@
           <div class="virtual-board-empty-title">Няма текущи пристигащи превозни средства</div>
           <p>GTFS-Realtime не подава следващи пристигания за тази спирка в момента.</p>
         </div>`;
-    } else if (settings.show_condensed_view) {
-      routes.forEach(route => list.appendChild(renderRouteRow(route, generatedAt, false)));
     } else {
-      routes.forEach(route => {
-        for (const time of route.times || []) {
-          list.appendChild(renderRouteRow({ ...route, times: [time] }, generatedAt, true));
-        }
-      });
+      routes.forEach(route => list.appendChild(renderRouteRow(route)));
     }
 
     body.appendChild(list);
@@ -213,16 +181,27 @@
   }
 
   function updateRelativeTimes() {
-    const now = Date.now();
-    const currentMinute = new Date(now);
-    const settings = loadSettings();
-    document.querySelectorAll('.vb-time-value').forEach(span => {
-      const relativeMinutes = Number(span.dataset.relativeTime?.split(' ')[0]);
-      if (!Number.isFinite(relativeMinutes)) return;
-      const target = now + relativeMinutes * 60000;
-      const remaining = Math.max(0, Math.round((target - now) / 60000));
-      const exact = formatTime(currentMinute.getHours() * 60 + currentMinute.getMinutes() + relativeMinutes);
-      span.textContent = settings.use_exact_times ? exact : `${remaining} мин.`;
+    document.querySelectorAll('.vb-arrival-time').forEach(span => {
+      const relative = Number(span.dataset.arrivalMinutes);
+      if (!Number.isFinite(relative)) return;
+      span.textContent = exactTimeForRelative(relative);
+    });
+
+    document.querySelectorAll('.vb-next-time').forEach(span => {
+      const relative = Number(span.dataset.arrivalMinutes);
+      if (!Number.isFinite(relative)) return;
+      const now = new Date();
+      const nowMinutes = now.getHours() * 60 + now.getMinutes();
+      const exact = Number(relative) + nowMinutes;
+      let remaining = Math.round(relative);
+      if (relative > 0 && Number.isFinite(exact)) {
+        const exactTarget = new Date(now);
+        exactTarget.setSeconds(0, 0);
+        exactTarget.setMinutes(exactTarget.getMinutes() + relative);
+        remaining = Math.max(0, Math.ceil((exactTarget.getTime() - now.getTime()) / 60000));
+      }
+      span.textContent = `${remaining} мин.`;
+      span.dataset.tooltip = exactTimeForRelative(relative);
     });
   }
 
@@ -381,18 +360,6 @@
     });
   }
 
-  function setupSettings() {
-    const settings = loadSettings();
-    const condensed = document.getElementById('virtualBoardCondensed');
-    const exact = document.getElementById('virtualBoardExactTime');
-    if (condensed) condensed.checked = settings.show_condensed_view;
-    if (exact) exact.checked = settings.use_exact_times;
-    [condensed, exact].forEach(input => input?.addEventListener('change', () => {
-      saveSettings();
-      if (selectedStop && lastBoard) renderBoardRoutes(lastBoard.routes || [], lastBoard.generated_at);
-    }));
-  }
-
   function startTimers() {
     clearInterval(refreshTimer);
     clearInterval(countdownTimer);
@@ -405,7 +372,6 @@
   async function initialize() {
     try {
       transportData = await loadTransportData();
-      setupSettings();
       setupMap();
       setupSearch();
       setupGeolocation();

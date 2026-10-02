@@ -9,8 +9,6 @@ const SCHEDULE_TYPE_LABELS = {
   school: 'Училищни линии',
   night: 'Нощни линии'
 };
-const KEY_DIRECTION_STOPS = new Set(['1006', '1038', '2454', '6435', '6436']);
-
 let scheduleData = null;
 let routeByCgmId = new Map();
 let stopByCode = new Map();
@@ -96,12 +94,19 @@ function sortRoutes(routes) {
   });
 }
 
-function generateDirectionLabel(direction) {
-  if (!direction?.stops?.length) return 'Неизвестно направление';
-  const stops = direction.stops.filter(Boolean);
-  const selected = [stops[0], ...stops.filter(code => KEY_DIRECTION_STOPS.has(String(code))), stops.at(-1)];
-  const unique = [...new Set(selected)];
-  return unique.map(code => getStopName(code, 'bg', true)).join(' → ');
+function getDestinationName(direction) {
+  const code = direction?.stops?.filter(Boolean).at(-1);
+  if (!code) return 'Неизвестна дестинация';
+  const stop = stopByCode.get(String(code));
+  return stop?.names?.bg || getStopName(code, 'bg', true);
+}
+
+function destinationIdentityHtml(route, direction) {
+  const destination = getDestinationName(direction);
+  return `
+    <span class="icon-pill-destination">${lineIdentityHtml(route)}</span>
+    <img class="arrow-destination" src="Icons/destinationarrow.svg" alt="" aria-hidden="true">
+    <span class="schedule-summary-destination">${escapeHtml(destination)}</span>`;
 }
 
 function indexData(data) {
@@ -180,16 +185,7 @@ function isPartialCourse(course) {
   return Boolean(getCoursePartialKind(course));
 }
 
-function calculateTimeDifference(baseTime, otherTime) {
-  if (baseTime == null || otherTime == null) return false;
-  const diff = Number(baseTime) - Number(otherTime);
-  const day = 24 * 60;
-  const morning = 4 * 60;
-  const evening = 20 * 60;
-  if (baseTime < morning && otherTime > evening) return diff + day;
-  if (baseTime > evening && otherTime < morning) return diff - day;
-  return diff;
-}
+
 
 function renderLineDropdown() {
   const menu = document.getElementById('lineDropdownMenu');
@@ -281,7 +277,7 @@ function renderDirections() {
   }
 
   select.innerHTML = directions.length
-    ? directions.map(direction => `<option value="${escapeHtml(direction.code)}">${escapeHtml(generateDirectionLabel(direction))}</option>`).join('')
+    ? directions.map(direction => `<option value="${escapeHtml(direction.code)}">${escapeHtml(getDestinationName(direction))}</option>`).join('')
     : '<option value="">Няма разписание за избрания тип ден.</option>';
   select.disabled = !directions.length;
   if (selectedDirectionCode != null) select.value = selectedDirectionCode;
@@ -299,19 +295,7 @@ function renderStops() {
     : '<option value="">Няма налични спирки.</option>';
   select.disabled = !stops.length;
   if (stops.length) select.value = String(selectedStopIndex);
-  updateVirtualBoardLink();
 }
-
-function updateVirtualBoardLink() {
-  const link = document.getElementById('virtualBoardLink');
-  if (!link) return;
-  const code = getSelectedStopCode();
-  const enabled = Boolean(code);
-  link.href = enabled ? `virtual-boards.html?stop=${encodeURIComponent(code)}` : 'virtual-boards.html';
-  link.setAttribute('aria-disabled', String(!enabled));
-  link.classList.toggle('disabled', !enabled);
-}
-
 
 function renderSummary(courses) {
   const summary = document.getElementById('scheduleSummary');
@@ -324,24 +308,19 @@ function renderSummary(courses) {
   const valid = courses
     .map(course => Number(course.times?.[selectedStopIndex]))
     .filter(Number.isFinite);
-  const partial = courses.filter(isPartialCourse).length;
   const first = valid.length ? Math.min(...valid) : null;
   const last = valid.length ? Math.max(...valid) : null;
-  const stopCode = getSelectedStopCode();
-  const stop = stopByCode.get(stopCode);
 
   summary.innerHTML = `
-    <div class="schedule-summary-line">
-      ${lineIdentityHtml(selectedRoute)}
-      <span class="schedule-summary-arrow">›</span>
-      <strong>${escapeHtml(stop?.names?.bg || getStopName(stopCode, 'bg', true))}</strong>
-      <span class="schedule-summary-direction">${escapeHtml(generateDirectionLabel(direction))}</span>
+    <div class="schedule-summary-main">
+      <div class="schedule-summary-route-row">
+        ${destinationIdentityHtml(selectedRoute, direction)}
+      </div>
     </div>
-    <div class="schedule-summary-grid">
-      <div><span>Първо</span><strong>${escapeHtml(formatTime(first))}</strong></div>
-      <div><span>Последно</span><strong>${escapeHtml(formatTime(last))}</strong></div>
-      <div><span>Курсове</span><strong>${courses.length}</strong></div>
-      <div><span>Частични</span><strong>${partial}</strong></div>
+    <div class="schedule-summary-stats">
+      <div><span>Първи курс</span><strong>${escapeHtml(formatTime(first))}</strong></div>
+      <div><span>Последен курс</span><strong>${escapeHtml(formatTime(last))}</strong></div>
+      <div><span>Общо курсове</span><strong>${courses.length}</strong></div>
     </div>`;
   summary.hidden = false;
 }
@@ -423,27 +402,17 @@ function showCourse(course) {
   const section = document.getElementById('courseSection');
   const container = document.getElementById('courseStops');
   const direction = getSelectedDirection();
-  const selectedTime = Number(course.times?.[selectedStopIndex]);
   const stops = direction?.stops || [];
 
-  container.innerHTML = `
-    <div class="course-meta">
-      ${lineIdentityHtml(selectedRoute)}
-      <span>${escapeHtml(generateDirectionLabel(direction))}</span>
-      ${course.car ? `<span>№ ${escapeHtml(course.car)}</span>` : ''}
-    </div>` +
-    stops.map((code, index) => {
+  container.innerHTML = stops.map((code, index) => {
       const raw = course.times?.[index];
       const hasTime = raw != null && Number.isFinite(Number(raw));
-      const delta = hasTime ? calculateTimeDifference(Number(raw), selectedTime) : false;
-      let deltaText = '-';
-      if (typeof delta === 'number') deltaText = delta > 0 ? `+${delta}` : delta < 0 ? `(${Math.abs(delta)})` : '0';
       const selected = index === selectedStopIndex ? ' selected' : '';
       const partial = !hasTime ? ' partial' : '';
       return `<div class="course-stop${selected}${partial}">
         <div class="course-stop-marker"></div>
         <div class="course-stop-name"><span class="course-stop-name-text">${escapeHtml(getStopName(code, 'bg', true))}</span><span class="course-stop-code">[${escapeHtml(formatStopCode(code))}]</span></div>
-        <div class="course-stop-time">${escapeHtml(formatTimeWithDay(raw))}<span class="course-stop-delta">${escapeHtml(deltaText)}</span></div>
+        <div class="course-stop-time">${escapeHtml(formatTimeWithDay(raw))}</div>
       </div>`;
     }).join('');
 
@@ -464,9 +433,7 @@ function renderSchedule() {
   renderStops();
   currentCourses = getCourses(selectedRoute, selectedDirectionCode, selectedDayType);
   renderSummary(currentCourses);
-  const displayByCar = document.getElementById('displayByCar')?.checked;
-  if (displayByCar) renderCoursesByCar(currentCourses);
-  else renderTimetable(currentCourses);
+  renderTimetable(currentCourses);
   document.getElementById('courseSection').hidden = true;
 }
 
@@ -513,7 +480,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  document.getElementById('displayByCar')?.addEventListener('change', renderSchedule);
   document.getElementById('closeCourseButton').addEventListener('click', () => {
     document.getElementById('courseSection').hidden = true;
   });

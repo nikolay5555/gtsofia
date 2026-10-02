@@ -44,15 +44,9 @@
 
         <div class="schedule-control">
           <label for="stopSelect">Спирка</label>
-          <div class="schedule-stop-actions">
-            <select id="stopSelect" class="schedule-native-select" disabled>
-              <option value="">Първо изберете направление…</option>
-            </select>
-            <a id="virtualBoardLink" class="schedule-virtual-board-link" href="virtual-boards.html" aria-disabled="true">
-              <i class="bi bi-clock" aria-hidden="true"></i>
-              <span>Виртуално табло</span>
-            </a>
-          </div>
+          <select id="stopSelect" class="schedule-native-select" disabled>
+            <option value="">Първо изберете направление…</option>
+          </select>
         </div>
       </div>
 
@@ -61,10 +55,6 @@
         <button class="schedule-day-tab" data-day-type="weekend" type="button">Празник</button>
       </div>
 
-      <label class="schedule-car-toggle">
-        <input id="displayByCar" type="checkbox" />
-        <span>Показвай курсовете по коли</span>
-      </label>
     </section>
 
     <section id="scheduleSummary" class="schedule-summary" hidden></section>

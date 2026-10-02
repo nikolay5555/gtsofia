@@ -571,10 +571,26 @@ SCHEDULES PAGE
   display: flex;
   align-items: center;
   gap: 14px;
+  min-width: 0;
+}
+
+.icon-pill-destination {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.arrow-destination {
+  width: 11px;
+  height: 14px;
+  flex: 0 0 11px;
+  object-fit: contain;
 }
 
 .schedule-summary-destination {
+  min-width: 0;
   font-size: 25px;
+  line-height: 1.2;
 }
 
 .schedule-summary-stop {
@@ -1200,7 +1216,7 @@ VIRTUAL BOARDS
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 16px;
   margin-top: 8px;
   padding-left: 99px;
 }
@@ -1287,6 +1303,7 @@ VIRTUAL BOARDS
   position: relative;
   display: inline-flex;
   align-items: center;
+  gap: 6px;
   padding: 3px 6px;
   border-radius: 7px;
   background: #f3f4f6;
@@ -1473,8 +1490,8 @@ RESPONSIVE
     flex: 0 0 auto;
   }
 
-  .schedule-summary-route-row .direction-arrow {
-    flex: 0 0 auto;
+  .schedule-summary-route-row .arrow-destination {
+    flex: 0 0 11px;
   }
 
   .schedule-summary-destination {
@@ -1534,9 +1551,8 @@ RESPONSIVE
 
   .vb-time-block {
     padding-left: 0;
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 7px;
+    align-items: center;
+    gap: 9px;
   }
 
   .vb-arrival-time {
@@ -1729,202 +1745,23 @@ VIRTUAL BOARD FAVORITES
   }
 }
 
-/* Schedule / virtual-board controls matching the canonical data model. */
-.schedule-car-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 12px;
-  color: #4b5563;
-  font-size: 14px;
-  cursor: pointer;
-}
-
-.schedule-car-toggle input,
-.virtual-board-option input {
-  width: 16px;
-  height: 16px;
-  accent-color: #111827;
-}
-
-.schedule-by-car-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px;
-}
-
-.schedule-by-car-row {
-  display: grid;
-  grid-template-columns: 80px minmax(0, 1fr);
-  gap: 12px;
-  align-items: start;
-  padding: 11px 12px;
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
-  background: #fff;
-}
-
-.schedule-by-car-row > div {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-}
-
-.schedule-course-chip {
-  border: 1px solid #d1d5db;
-  border-radius: 9px;
-  background: #fff;
-  padding: 5px 8px;
-  color: #111827;
-  font-variant-numeric: tabular-nums;
-  cursor: pointer;
-}
-
-.schedule-course-chip:hover {
-  background: #f9fafb;
-}
-
-.schedule-minute.partial,
-.schedule-course-chip.partial {
+/* Schedule / virtual-board detail states. */
+.schedule-minute.partial {
   color: #fff;
 }
 
 .schedule-minute.partial-final,
-.schedule-minute.partial-both,
-.schedule-course-chip.partial-final,
-.schedule-course-chip.partial-both {
+.schedule-minute.partial-both {
   background: #dc3545;
   border-color: #dc3545;
 }
 
-.schedule-minute.partial-start,
-.schedule-course-chip.partial-start {
+.schedule-minute.partial-start {
   background: #ffc107;
   border-color: #ffc107;
   color: #111827;
 }
 
-.course-meta {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-bottom: 14px;
-  padding: 10px 12px;
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
-  background: #f9fafb;
-  color: #4b5563;
-}
-
-.course-meta > strong {
-  display: inline-flex;
-}
-
-.course-stop-delta {
-  display: inline-block;
-  min-width: 36px;
-  margin-left: 8px;
-  color: #6b7280;
-  font-size: 12px;
-  font-weight: 600;
-}
-
 .course-stop.partial .course-stop-time {
   color: #9ca3af;
-}
-
-.virtual-board-option {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  min-height: 42px;
-  padding: 0 9px;
-  border: 1px solid #d1d5db;
-  border-radius: 11px;
-  background: rgba(255,255,255,.96);
-  color: #111827;
-  font-size: 13px;
-  font-weight: 600;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.virtual-board-option:has(input:checked) {
-  background: #f3f4f6;
-}
-
-.vb-verbose-times {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-left: auto;
-  flex: 0 0 auto;
-  font-variant-numeric: tabular-nums;
-}
-
-.vb-verbose-time {
-  white-space: nowrap;
-}
-
-.vb-arrival-placeholder {
-  justify-content: center;
-  color: #9ca3af;
-}
-
-@media (max-width: 700px) {
-  .virtual-board-option {
-    padding: 0 7px;
-  }
-
-  .vb-verbose-times {
-    margin-left: 0;
-    width: 100%;
-    padding-left: 0;
-    overflow-x: auto;
-  }
-}
-
-
-.schedule-stop-actions {
-  display: flex;
-  gap: 8px;
-  align-items: stretch;
-}
-
-.schedule-stop-actions .schedule-native-select {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.schedule-virtual-board-link {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 0 11px;
-  border: 1px solid #d1d5db;
-  border-radius: 10px;
-  color: #111827;
-  background: #fff;
-  text-decoration: none;
-  white-space: nowrap;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.schedule-virtual-board-link:hover:not(.disabled) {
-  background: #f9fafb;
-}
-
-.schedule-virtual-board-link.disabled {
-  opacity: .55;
-  pointer-events: none;
-}
-
-@media (max-width: 700px) {
-  .schedule-stop-actions {
-    flex-direction: column;
-  }
 }
