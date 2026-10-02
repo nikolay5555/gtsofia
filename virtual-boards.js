@@ -982,9 +982,6 @@
       throw new Error(message);
     }
     const generatedAt = data?.generated_at || Date.now();
-    const apiNowTimestamp = Number.isFinite(Number(data?.now_timestamp))
-      ? Number(data.now_timestamp)
-      : Date.now() / 1000;
     const skippedTrips = Array.isArray(data?.skipped_trips) ? data.skipped_trips : [];
     const realtimeSupportedRouteIds = new Set(
       (Array.isArray(data?.realtime_route_ids) ? data.realtime_route_ids : [])
@@ -1045,21 +1042,16 @@
                 || staticDirection?.headsign
                 || '',
               times: route.times
-                .map(time => {
-                  const relative = Number(time?.t);
-                  if (!Number.isFinite(relative)) return null;
-                  const timestamp = apiNowTimestamp + relative * 60;
-                  return {
-                    timestamp,
-                    delay: null,
-                    scheduled: false,
-                    source: 'realtime',
-                    stop_schedule_relationship: 0,
-                    stop_schedule_relationship_name: 'SCHEDULED',
-                    scheduled_time: null
-                  };
-                })
-                .filter(time => time && Number.isFinite(time.timestamp))
+                .map(time => ({
+                  timestamp: Number(time?.timestamp),
+                  delay: Number.isFinite(Number(time?.delay)) ? Number(time.delay) : null,
+                  scheduled: false,
+                  source: 'realtime',
+                  stop_schedule_relationship: Number(time?.stop_schedule_relationship),
+                  stop_schedule_relationship_name: String(time?.stop_schedule_relationship_name || 'SCHEDULED'),
+                  scheduled_time: Number.isFinite(Number(time?.scheduled_time)) ? Number(time.scheduled_time) : null
+                }))
+                .filter(time => Number.isFinite(time.timestamp))
             };
           })
           .filter(route => route.times.length)
