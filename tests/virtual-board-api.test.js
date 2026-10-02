@@ -98,6 +98,11 @@ function makeResponse(status = 200, body = new ArrayBuffer(0)) {
   assert.ok(Array.isArray(response.payload.active_trips));
   assert.ok(Array.isArray(response.payload.skipped_trips));
   assert.ok(Array.isArray(response.payload.realtime_route_ids));
+  // A realtime arrival carries the selected stop position so the frontend can
+  // resolve the canonical direction even when GTFS-RT omits direction_id.
+  // The field is optional for an empty feed, but the API source must expose it
+  // on grouped route records.
+  assert.match(fs.readFileSync(path.join(root, 'api', 'virtual-board.js'), 'utf8'), /stop_sequence:\s*Number\.isFinite/);
 
   global.fetch = originalFetch;
   console.log('virtual-board-api: all tests passed');

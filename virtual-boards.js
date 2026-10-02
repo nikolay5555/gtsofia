@@ -677,7 +677,7 @@
     return terminalStopId || String(direction?.key || fallback || '').trim();
   }
 
-  function resolveDirectionForRealtimeRoute(routeId, stopId, staticTrip, destination = '', directionId = '', terminalStopId = '') {
+  function resolveDirectionForRealtimeRoute(routeId, stopId, staticTrip, destination = '', directionId = '', terminalStopId = '', stopSequence = '') {
     const staticDirection = getStaticDirectionForTrip(staticTrip);
     if (staticDirection) return staticDirection;
 
@@ -704,6 +704,28 @@
         return refs.includes(wantedDirectionId);
       });
       if (byKey) return byKey;
+    }
+
+    // GTFS-RT feeds can omit a stable direction_id and the realtime trip id
+    // can occasionally be outside the generated static snapshot. In that
+    // case, the selected stop's stop_sequence still identifies the logical
+    // direction when compared with the canonical direction pattern. Support
+    // both the usual 1-based GTFS convention and a 0-based producer.
+    const wantedStopSequence = Number(stopSequence);
+    if (Number.isFinite(wantedStopSequence)) {
+      const candidateIndexes = [];
+      const oneBasedIndex = Math.round(wantedStopSequence) - 1;
+      const zeroBasedIndex = Math.round(wantedStopSequence);
+      if (oneBasedIndex >= 0) candidateIndexes.push(oneBasedIndex);
+      if (zeroBasedIndex >= 0 && zeroBasedIndex !== oneBasedIndex) candidateIndexes.push(zeroBasedIndex);
+
+      for (const candidateIndex of candidateIndexes) {
+        const bySequence = directions.filter(direction => {
+          const pattern = Array.isArray(direction?.pattern) ? direction.pattern : [];
+          return stopIdsMatch(pattern[candidateIndex], stopId);
+        });
+        if (bySequence.length === 1) return bySequence[0];
+      }
     }
 
     // A terminal stop supplied by realtime is an even stronger direction
@@ -1058,7 +1080,8 @@
                 staticTrip,
                 route.destination || tripMapping?.trip_headsign || '',
                 realtimeDirectionRef,
-                route.destination_stop_id || ''
+                route.destination_stop_id || '',
+                route.stop_sequence || ''
               );
             const routeMeta = getLineMeta(routeId, route.route_ref || '');
 
@@ -1079,6 +1102,7 @@
                 || staticDirection?.destination
                 || staticDirection?.headsign
                 || tripMapping?.trip_headsign
+                || getStopById(route.destination_stop_id)?.stop_name
                 || '',
               times: route.times
                 .map(time => ({
@@ -1126,7 +1150,8 @@
           staticTrip,
           route.destination || tripMapping?.trip_headsign || '',
           realtimeDirectionRef,
-          route.destination_stop_id || ''
+          route.destination_stop_id || '',
+          route.stop_sequence || ''
         );
       const staticTerminalId = getDirectionTerminalStopId(staticDirection);
       const realtimeTerminalId = String(route.destination_stop_id || '').trim();
@@ -1146,6 +1171,7 @@
           || route.destination
           || staticTrip?.trip_headsign
           || tripMapping?.trip_headsign
+          || realtimeTerminal?.stop_name
           || '');
       // The board row is a displayed line + destination, not a raw GTFS
       // stop_id. The same physical terminal can have multiple GTFS stop IDs

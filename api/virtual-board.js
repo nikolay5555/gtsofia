@@ -392,7 +392,7 @@ function buildBoard(updates, stopCode, feedTimestamp) {
       ].join('|');
 
       if (!grouped.has(key)) {
-        const terminalUpdate = (tripUpdate.stopTimeUpdates || [])
+        const terminalCandidates = (tripUpdate.stopTimeUpdates || [])
           .filter(item => {
             if (!item?.stopId) return false;
             const relationship = Number.isFinite(Number(item.scheduleRelationship))
@@ -400,11 +400,17 @@ function buildBoard(updates, stopCode, feedTimestamp) {
               : STOP_RELATIONSHIP.SCHEDULED;
             return relationship !== STOP_RELATIONSHIP.SKIPPED
               && relationship !== STOP_RELATIONSHIP.NO_DATA;
-          })
+          });
+
+        const terminalWithSequence = terminalCandidates
+          .filter(item => Number.isFinite(Number(item?.stopSequence)))
+          .sort((a, b) => Number(b.stopSequence) - Number(a.stopSequence))[0] || null;
+
+        const terminalUpdate = terminalWithSequence || terminalCandidates
           .sort((a, b) => {
-            const sa = Number.isFinite(Number(a?.stopSequence)) ? Number(a.stopSequence) : -1;
-            const sb = Number.isFinite(Number(b?.stopSequence)) ? Number(b.stopSequence) : -1;
-            return sb - sa;
+            const at = eventTimestamp(a) ?? -Infinity;
+            const bt = eventTimestamp(b) ?? -Infinity;
+            return bt - at;
           })[0] || null;
 
         grouped.set(key, {
@@ -416,6 +422,9 @@ function buildBoard(updates, stopCode, feedTimestamp) {
           schedule_relationship: tripRelationship,
           schedule_relationship_name: TRIP_RELATIONSHIP_NAME[tripRelationship] || `UNKNOWN_${tripRelationship}`,
           destination_stop_id: terminalUpdate?.stopId || '',
+          stop_sequence: Number.isFinite(Number(stopUpdate.stopSequence))
+            ? Number(stopUpdate.stopSequence)
+            : null,
           times: []
         });
       }
