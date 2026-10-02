@@ -548,6 +548,34 @@
     return transportData?.realtimeTripMap?.[rawId] || null;
   }
 
+  function findDirectionForRealtimeStartTime(routeId, stopId, tripStartTime = '') {
+    const wantedSeconds = parseGtfsTime(tripStartTime);
+    if (wantedSeconds == null) return null;
+
+    const routeDirections = transportData?.directions?.[String(routeId)] || {};
+    const scheduleSet = transportData?.schedules?.[String(routeId)] || {};
+    const candidates = new Map();
+
+    for (const [directionKey, daySet] of Object.entries(scheduleSet)) {
+      const direction = routeDirections[directionKey];
+      if (!direction) continue;
+
+      const pattern = Array.isArray(direction?.pattern) ? direction.pattern : [];
+      if (stopId && !pattern.some(id => stopIdsMatch(id, stopId))) continue;
+
+      const matchingStart = Object.values(daySet || {}).some(schedules =>
+        Array.isArray(schedules)
+        && schedules.some(schedule => parseGtfsTime(schedule?.start_time) === wantedSeconds)
+      );
+
+      if (matchingStart) {
+        candidates.set(String(directionKey), { key: String(directionKey), ...direction });
+      }
+    }
+
+    return candidates.size === 1 ? [...candidates.values()][0] : null;
+  }
+
   function getStaticDirectionForTrip(staticTrip) {
     if (!staticTrip?.route_id) return null;
 
@@ -677,69 +705,7 @@
     return terminalStopId || String(direction?.key || fallback || '').trim();
   }
 
-  function cleanBoardDestination(value) {
-    const text = String(value ?? '').trim();
-    if (!text) return '';
-
-    // A dash is the UI placeholder for a missing destination, not a real
-    // passenger-facing destination. Treat the common dash-only variants as
-    // empty so the resolver can continue to the static/stop fallbacks.
-    if (/^(?:[-–—]+|\*+[-–—]+\*+)$/.test(text)) return '';
-    return text;
-  }
-
-  function resolveBoardDestination(route, stop) {
-    const tripMapping = getRealtimeTripMapping(route?.trip_id);
-    const staticTrip = findStaticTrip(route?.trip_id);
-    const routeId = String(route?.route_id || staticTrip?.route_id || '').trim();
-    const directionRef =
-      route?.direction_id
-      || route?.directionId
-      || tripMapping?.direction_id
-      || tripMapping?.direction_code
-      || tripMapping?.direction_key
-      || '';
-
-    const staticDirection = getStaticDirectionForTrip(staticTrip)
-      || resolveDirectionForRealtimeRoute(
-        routeId,
-        stop?.stop_id || stop?.stop_code || '',
-        staticTrip,
-        cleanBoardDestination(route?.destination || tripMapping?.trip_headsign || ''),
-        directionRef,
-        route?.destination_stop_id || '',
-        route?.stop_sequence || ''
-      );
-
-    const realtimeTerminal = getStopById(route?.destination_stop_id);
-    const staticTerminalId = getDirectionTerminalStopId(staticDirection);
-    const realtimeTerminalId = String(route?.destination_stop_id || '').trim();
-    const isPartialRealtime = !!realtimeTerminalId
-      && !!staticTerminalId
-      && !stopIdsMatch(realtimeTerminalId, staticTerminalId);
-
-    const candidates = isPartialRealtime
-      ? [
-          route?.destination,
-          realtimeTerminal?.stop_name,
-          staticTrip?.trip_headsign,
-          staticDirection?.destination,
-          staticDirection?.headsign,
-          tripMapping?.trip_headsign
-        ]
-      : [
-          route?.destination,
-          staticDirection?.destination,
-          staticDirection?.headsign,
-          staticTrip?.trip_headsign,
-          tripMapping?.trip_headsign,
-          realtimeTerminal?.stop_name
-        ];
-
-    return candidates.map(cleanBoardDestination).find(Boolean) || '';
-  }
-
-  function resolveDirectionForRealtimeRoute(routeId, stopId, staticTrip, destination = '', directionId = '', terminalStopId = '', stopSequence = '') {
+  function resolveDirectionForRealtimeRoute(routeId, stopId, staticTrip, destination = '', directionId = '', terminalStopId = '', stopSequence = '', tripStartTime = '') {
     const staticDirection = getStaticDirectionForTrip(staticTrip);
     if (staticDirection) return staticDirection;
 
@@ -767,6 +733,12 @@
       });
       if (byKey) return byKey;
     }
+
+    // Replacement/unscheduled realtime trips may not exist in the static
+    // trip map and may omit direction_id. The API still exposes trip_start_time;
+    // match it against the existing schedules without changing schedule data.
+    const byStartTime = findDirectionForRealtimeStartTime(routeId, stopId, tripStartTime);
+    if (byStartTime) return byStartTime;
 
     // GTFS-RT feeds can omit a stable direction_id and the realtime trip id
     // can occasionally be outside the generated static snapshot. In that
@@ -807,8 +779,59 @@
     return directions.length === 1 ? directions[0] : null;
   }
 
-  function shouldHideTerminalArrival(routeId, stopId, staticTrip, destination = '', directionId = '') {
-    const direction = resolveDirectionForRealtimeRoute(routeId, stopId, staticTrip, destination, directionId);
+  function cleanBoardDestination(value) {
+    const text = String(value ?? '').trim();
+    if (!text) return '';
+    if (/^(?:[-–—]+|\*+[-–—]+\*+)$/.test(text)) return '';
+    return text;
+  }
+
+  function resolveBoardDestination(route, stop) {
+    const tripMapping = getRealtimeTripMapping(route?.trip_id);
+    const staticTrip = findStaticTrip(route?.trip_id);
+    const routeId = String(route?.route_id || staticTrip?.route_id || '').trim();
+    const directionRef =
+      route?.direction_id
+      || route?.directionId
+      || tripMapping?.direction_id
+      || tripMapping?.direction_code
+      || tripMapping?.direction_key
+      || '';
+
+    const directionKey = String(route?.direction_key || '').trim();
+    const directionSet = transportData?.directions?.[routeId] || {};
+    const keyedDirection = directionKey && directionSet[directionKey]
+      ? { key: directionKey, ...directionSet[directionKey] }
+      : null;
+
+    const staticDirection = getStaticDirectionForTrip(staticTrip)
+      || keyedDirection
+      || resolveDirectionForRealtimeRoute(
+        routeId,
+        stop?.stop_id || stop?.stop_code || '',
+        staticTrip,
+        cleanBoardDestination(route?.destination) || cleanBoardDestination(tripMapping?.trip_headsign),
+        directionRef,
+        route?.destination_stop_id || '',
+        route?.stop_sequence || '',
+        route?.trip_start_time || ''
+      );
+
+    const realtimeTerminal = getStopById(route?.destination_stop_id);
+    const terminalName = cleanBoardDestination(realtimeTerminal?.stop_name || realtimeTerminal?.name);
+
+    return [
+      route?.destination,
+      terminalName,
+      staticDirection?.destination,
+      staticDirection?.headsign,
+      staticTrip?.trip_headsign,
+      tripMapping?.trip_headsign
+    ].map(cleanBoardDestination).find(Boolean) || '';
+  }
+
+  function shouldHideTerminalArrival(routeId, stopId, staticTrip, destination = '', directionId = '', terminalStopId = '', stopSequence = '', tripStartTime = '') {
+    const direction = resolveDirectionForRealtimeRoute(routeId, stopId, staticTrip, destination, directionId, terminalStopId, stopSequence, tripStartTime);
     if (direction?.pattern?.length && isTerminalDirectionForStop(routeId, stopId, direction)) return true;
 
     // The same physical terminal can be represented by different GTFS stop IDs
@@ -1113,16 +1136,22 @@
               routeId,
               route.destination_stop_id,
               staticTrip,
-              route.destination || '',
-              route.direction_id || route.directionId || ''
+              cleanBoardDestination(route.destination),
+              route.direction_id || route.directionId || '',
+              route.destination_stop_id || '',
+              route.stop_sequence || '',
+              route.trip_start_time || ''
             )) return false;
 
             return !shouldHideTerminalArrival(
               routeId,
               stop.stop_id,
               staticTrip,
-              route.destination || '',
-              route.direction_id || route.directionId || ''
+              cleanBoardDestination(route.destination),
+              route.direction_id || route.directionId || '',
+              route.destination_stop_id || '',
+              route.stop_sequence || '',
+              route.trip_start_time || ''
             );
           })
           .map(route => {
@@ -1143,7 +1172,8 @@
                 cleanBoardDestination(route.destination || tripMapping?.trip_headsign || ''),
                 realtimeDirectionRef,
                 route.destination_stop_id || '',
-                route.stop_sequence || ''
+                route.stop_sequence || '',
+                route.trip_start_time || ''
               );
             const destination = resolveBoardDestination(route, stop);
             const routeMeta = getLineMeta(routeId, route.route_ref || '');
@@ -1200,16 +1230,6 @@
         || tripMapping?.direction_code
         || tripMapping?.direction_key
         || '';
-      const staticDirection = getStaticDirectionForTrip(staticTrip)
-        || resolveDirectionForRealtimeRoute(
-          realtimeRouteId,
-          stop.stop_id,
-          staticTrip,
-          cleanBoardDestination(route.destination || tripMapping?.trip_headsign || ''),
-          realtimeDirectionRef,
-          route.destination_stop_id || '',
-          route.stop_sequence || ''
-        );
       const destination = resolveBoardDestination(route, stop);
       // The board row is a displayed line + destination, not a raw GTFS
       // stop_id. The same physical terminal can have multiple GTFS stop IDs
@@ -2167,6 +2187,7 @@
     isScheduleRowActiveToday,
     getSofiaDateKey,
     normalizeDirectionReference,
+    findDirectionForRealtimeStartTime,
     cleanBoardDestination,
     resolveBoardDestination,
     resolveDirectionForRealtimeRoute,
