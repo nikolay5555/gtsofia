@@ -68,6 +68,14 @@ function makeResponse(status = 200, body = new ArrayBuffer(0)) {
   assert.equal(context.window.getTransportIcon('bus', 'X43'), 'Icons/Active icons/torist-bus.svg');
   assert.equal(context.window.getLineColor(legacyX43, 'bus'), '#006838');
 
+  const legacyN1 = {
+    route_id: 'A224',
+    route_short_name: 'N1',
+    route_type: '3'
+  };
+  assert.equal(context.window.getTransportIcon('night', 'N1'), 'Icons/Active icons/night-bus.svg');
+  assert.equal(context.window.getLineColor(legacyN1, 'night'), '#000000');
+
   const sampleStop = JSON.parse(fs.readFileSync(path.join(root, 'data', 'stops.json'), 'utf8'))[0].code;
   const feed = makeEmptyFeed();
   global.fetch = async () => makeResponse(200, feed.buffer);

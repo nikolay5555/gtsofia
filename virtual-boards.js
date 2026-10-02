@@ -287,7 +287,7 @@
         number,
         type: /^N/i.test(number) ? "night" : "bus",
         icon: "",
-        color: "#BE1E2D",
+        color: /^N/i.test(number) ? "#000000" : "#BE1E2D",
         textColor: "#FFFFFF"
       };
     }
@@ -534,6 +534,20 @@
       .trim();
   }
 
+  function normalizeDirectionReference(value) {
+    const raw = String(value ?? '').trim().toUpperCase();
+    if (!raw) return '';
+    if (/^D\d+$/.test(raw)) return raw;
+    if (/^\d+$/.test(raw)) return `D${raw}`;
+    return raw;
+  }
+
+  function getRealtimeTripMapping(tripId) {
+    const rawId = String(tripId ?? '').trim();
+    if (!rawId) return null;
+    return transportData?.realtimeTripMap?.[rawId] || null;
+  }
+
   function getStaticDirectionForTrip(staticTrip) {
     if (!staticTrip?.route_id) return null;
 
@@ -663,7 +677,7 @@
     return terminalStopId || String(direction?.key || fallback || '').trim();
   }
 
-  function resolveDirectionForRealtimeRoute(routeId, stopId, staticTrip, destination = '', directionId = '') {
+  function resolveDirectionForRealtimeRoute(routeId, stopId, staticTrip, destination = '', directionId = '', terminalStopId = '') {
     const staticDirection = getStaticDirectionForTrip(staticTrip);
     if (staticDirection) return staticDirection;
 
@@ -678,12 +692,28 @@
       if (byDestination) return byDestination;
     }
 
-    const wantedDirectionId = String(directionId ?? '').trim();
+    // GTFS-RT direction_id is commonly numeric (e.g. "54"), while the
+    // application data model uses direction keys such as D54. Compare all
+    // equivalent forms instead of requiring one spelling.
+    const wantedDirectionId = normalizeDirectionReference(directionId);
     if (wantedDirectionId) {
-      const byKey = directions.find(direction =>
-        String(direction?.direction_id ?? direction?.key ?? '').trim() === wantedDirectionId
-      );
+      const byKey = directions.find(direction => {
+        const refs = [direction?.key, direction?.code, direction?.direction_id]
+          .map(normalizeDirectionReference)
+          .filter(Boolean);
+        return refs.includes(wantedDirectionId);
+      });
       if (byKey) return byKey;
+    }
+
+    // A terminal stop supplied by realtime is an even stronger direction
+    // signal when trip_id/direction_id are incomplete.
+    const wantedTerminalId = String(terminalStopId ?? '').trim();
+    if (wantedTerminalId) {
+      const byTerminal = directions.find(direction =>
+        stopIdsMatch(getDirectionTerminalStopId(direction), wantedTerminalId)
+      );
+      if (byTerminal) return byTerminal;
     }
 
     // Sofia's realtime feed often leaves direction_id empty. If this stop
@@ -1014,13 +1044,21 @@
           .map(route => {
             const staticTrip = findStaticTrip(route.trip_id);
             const routeId = route.route_id || staticTrip?.route_id || '';
+            const tripMapping = getRealtimeTripMapping(route.trip_id);
+            const realtimeDirectionRef = route.direction_id
+              || route.directionId
+              || tripMapping?.direction_id
+              || tripMapping?.direction_code
+              || tripMapping?.direction_key
+              || '';
             const staticDirection = getStaticDirectionForTrip(staticTrip)
               || resolveDirectionForRealtimeRoute(
                 routeId,
                 stop.stop_id,
                 staticTrip,
-                route.destination || '',
-                route.direction_id || route.directionId || ''
+                route.destination || tripMapping?.trip_headsign || '',
+                realtimeDirectionRef,
+                route.destination_stop_id || ''
               );
             const routeMeta = getLineMeta(routeId, route.route_ref || '');
 
@@ -1040,6 +1078,7 @@
                 || staticTrip?.trip_headsign
                 || staticDirection?.destination
                 || staticDirection?.headsign
+                || tripMapping?.trip_headsign
                 || '',
               times: route.times
                 .map(time => ({
@@ -1072,14 +1111,22 @@
     const mergedRealtime = new Map();
     for (const route of realtime.routes) {
       const staticTrip = findStaticTrip(route.trip_id);
+      const tripMapping = getRealtimeTripMapping(route.trip_id);
       const realtimeRouteId = String(route.route_id || staticTrip?.route_id || '').trim();
+      const realtimeDirectionRef = route.direction_id
+        || route.directionId
+        || tripMapping?.direction_id
+        || tripMapping?.direction_code
+        || tripMapping?.direction_key
+        || '';
       const staticDirection = getStaticDirectionForTrip(staticTrip)
         || resolveDirectionForRealtimeRoute(
           realtimeRouteId,
           stop.stop_id,
           staticTrip,
-          route.destination || '',
-          route.direction_id || route.directionId || ''
+          route.destination || tripMapping?.trip_headsign || '',
+          realtimeDirectionRef,
+          route.destination_stop_id || ''
         );
       const staticTerminalId = getDirectionTerminalStopId(staticDirection);
       const realtimeTerminalId = String(route.destination_stop_id || '').trim();
@@ -1092,11 +1139,13 @@
           || staticTrip?.trip_headsign
           || staticDirection?.destination
           || staticDirection?.headsign
+          || tripMapping?.trip_headsign
           || '')
         : (staticDirection?.destination
           || staticDirection?.headsign
           || route.destination
           || staticTrip?.trip_headsign
+          || tripMapping?.trip_headsign
           || '');
       // The board row is a displayed line + destination, not a raw GTFS
       // stop_id. The same physical terminal can have multiple GTFS stop IDs
@@ -2050,6 +2099,17 @@
   globalThis.__gtsofiaVirtualBoardTestInternals = {
     isServiceActiveOnDate,
     isScheduleRowActiveToday,
-    getSofiaDateKey
+    getSofiaDateKey,
+    normalizeDirectionReference,
+    resolveDirectionForRealtimeRoute,
+    setTestTransportData(testData = {}) {
+      transportData = testData;
+      routeById = new Map(
+        (testData.routes || []).map(route => [String(route.route_id), route])
+      );
+      tripById = new Map(
+        (testData.trips || []).map(trip => [String(trip.trip_id), trip])
+      );
+    }
   };
 })();

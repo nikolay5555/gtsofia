@@ -409,7 +409,7 @@ function getLineColor(route, type) {
 
   switch (type) {
     case 'bus': return '#BE1E2D';
-    case 'night': return '#BE1E2D';
+    case 'night': return '#000000';
     case 'tram': return '#F7941D';
     case 'trolleybus':
     case 'trolley': return '#27AAE1';
