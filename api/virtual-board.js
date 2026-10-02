@@ -1,24 +1,15 @@
-const path = require('node:path');
-const fs = require('node:fs');
-
 const FEED_URL = 'https://gtfs.sofiatraffic.bg/api/v1/trip-updates';
 const FEED_TIMEOUT_MS = 15000;
 const MAX_RESULTS_PER_ROUTE = 4;
 const LOOK_AHEAD_SECONDS = 3 * 60 * 60;
 
-const DATA_DIR = path.join(__dirname, '..', 'data');
-const routes = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'routes.json'), 'utf8'));
-const stops = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'stops.json'), 'utf8'));
-const directions = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'directions.json'), 'utf8'));
-const realtimeTripMap = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'realtime-trip-map.json'), 'utf8'));
-
-const routeByCgmId = new Map(routes.map(route => [String(route.cgm_id), route]));
-const stopByCode = new Map(stops.map(stop => [String(stop.code), stop]));
-const directionByCode = new Map(directions.map(direction => [String(direction.code), direction]));
-
+// GTFS-Realtime TripDescriptor.schedule_relationship.
+// Keep these values here instead of scattering magic numbers through the
+// parser/business logic because TripDescriptor and StopTimeUpdate use
+// different enums. See https://gtfs.org/documentation/realtime/reference/.
 const TRIP_RELATIONSHIP = Object.freeze({
   SCHEDULED: 0,
-  ADDED: 1,
+  ADDED: 1,          // deprecated; keep for backwards-compatible producers
   UNSCHEDULED: 2,
   CANCELED: 3,
   REPLACEMENT: 5,
@@ -34,9 +25,18 @@ const STOP_RELATIONSHIP = Object.freeze({
   UNSCHEDULED: 3
 });
 
+const TRIP_RELATIONSHIP_NAME = Object.freeze(
+  Object.fromEntries(Object.entries(TRIP_RELATIONSHIP).map(([name, value]) => [value, name]))
+);
+
+const STOP_RELATIONSHIP_NAME = Object.freeze(
+  Object.fromEntries(Object.entries(STOP_RELATIONSHIP).map(([name, value]) => [value, name]))
+);
+
 function readVarint(bytes, state) {
   let value = 0n;
   let shift = 0n;
+
   while (state.index < bytes.length) {
     const byte = bytes[state.index++];
     value |= BigInt(byte & 0x7f) << shift;
@@ -44,6 +44,7 @@ function readVarint(bytes, state) {
     shift += 7n;
     if (shift > 70n) throw new Error('Invalid protobuf varint.');
   }
+
   throw new Error('Truncated protobuf varint.');
 }
 
@@ -51,9 +52,13 @@ function readField(bytes, state) {
   const tag = Number(readVarint(bytes, state));
   const fieldNumber = tag >>> 3;
   const wireType = tag & 7;
+
   if (!fieldNumber) throw new Error('Invalid protobuf field number.');
 
-  if (wireType === 0) return { fieldNumber, wireType, value: readVarint(bytes, state) };
+  if (wireType === 0) {
+    return { fieldNumber, wireType, value: readVarint(bytes, state) };
+  }
+
   if (wireType === 1) {
     const end = state.index + 8;
     if (end > bytes.length) throw new Error('Truncated fixed64 field.');
@@ -61,15 +66,19 @@ function readField(bytes, state) {
     state.index = end;
     return { fieldNumber, wireType, value };
   }
+
   if (wireType === 2) {
     const length = Number(readVarint(bytes, state));
-    if (!Number.isSafeInteger(length) || length < 0) throw new Error('Invalid protobuf length.');
+    if (!Number.isSafeInteger(length) || length < 0) {
+      throw new Error('Invalid protobuf length.');
+    }
     const end = state.index + length;
     if (end > bytes.length) throw new Error('Truncated length-delimited field.');
     const value = bytes.subarray(state.index, end);
     state.index = end;
     return { fieldNumber, wireType, value };
   }
+
   if (wireType === 5) {
     const end = state.index + 4;
     if (end > bytes.length) throw new Error('Truncated fixed32 field.');
@@ -77,6 +86,7 @@ function readField(bytes, state) {
     state.index = end;
     return { fieldNumber, wireType, value };
   }
+
   throw new Error(`Unsupported protobuf wire type: ${wireType}`);
 }
 
@@ -89,85 +99,150 @@ function toSignedInt32(value) {
   return n >= 0x80000000 ? n - 0x100000000 : n;
 }
 
-function safeTimestamp(value) {
-  return value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : null;
-}
-
 function decodeTripDescriptor(bytes) {
   const state = { index: 0 };
-  const trip = { tripId: '', routeId: '', directionId: '', startTime: '', startDate: '', scheduleRelationship: 0 };
+  const trip = {
+    tripId: '',
+    routeId: '',
+    directionId: '',
+    startTime: '',
+    startDate: '',
+    scheduleRelationship: TRIP_RELATIONSHIP.SCHEDULED
+  };
+
   while (state.index < bytes.length) {
     const field = readField(bytes, state);
-    if (field.fieldNumber === 1 && field.wireType === 2) trip.tripId = decodeString(field.value);
-    else if (field.fieldNumber === 2 && field.wireType === 2) trip.startTime = decodeString(field.value);
-    else if (field.fieldNumber === 3 && field.wireType === 2) trip.startDate = decodeString(field.value);
-    else if (field.fieldNumber === 4 && field.wireType === 0) trip.scheduleRelationship = Number(field.value);
-    else if (field.fieldNumber === 5 && field.wireType === 2) trip.routeId = decodeString(field.value);
-    else if (field.fieldNumber === 6 && field.wireType === 0) trip.directionId = String(Number(field.value));
+
+    if (field.fieldNumber === 1 && field.wireType === 2) {
+      trip.tripId = decodeString(field.value);
+    } else if (field.fieldNumber === 2 && field.wireType === 2) {
+      trip.startTime = decodeString(field.value);
+    } else if (field.fieldNumber === 3 && field.wireType === 2) {
+      trip.startDate = decodeString(field.value);
+    } else if (field.fieldNumber === 4 && field.wireType === 0) {
+      trip.scheduleRelationship = Number(field.value);
+    } else if (field.fieldNumber === 5 && field.wireType === 2) {
+      trip.routeId = decodeString(field.value);
+    } else if (field.fieldNumber === 6 && field.wireType === 0) {
+      trip.directionId = String(Number(field.value));
+    }
   }
+
   return trip;
 }
 
 function decodeStopTimeEvent(bytes) {
   const state = { index: 0 };
-  const event = { delay: null, time: null, scheduledTime: null };
+  const event = { delay: null, time: null };
+
   while (state.index < bytes.length) {
     const field = readField(bytes, state);
-    if (field.fieldNumber === 1 && field.wireType === 0) event.delay = toSignedInt32(field.value);
-    else if (field.fieldNumber === 2 && field.wireType === 0) event.time = safeTimestamp(field.value);
-    else if (field.fieldNumber === 3 && field.wireType === 0) event.scheduledTime = safeTimestamp(field.value);
+
+    if (field.fieldNumber === 1 && field.wireType === 0) {
+      event.delay = toSignedInt32(field.value);
+    } else if (field.fieldNumber === 2 && field.wireType === 0) {
+      const raw = field.value;
+      if (raw > BigInt(Number.MAX_SAFE_INTEGER)) {
+        throw new Error('GTFS-RT timestamp exceeds JavaScript safe integer range.');
+      }
+      event.time = Number(raw);
+    } else if (field.fieldNumber === 3 && field.wireType === 0) {
+      const raw = field.value;
+      if (raw > BigInt(Number.MAX_SAFE_INTEGER)) {
+        throw new Error('GTFS-RT scheduled timestamp exceeds JavaScript safe integer range.');
+      }
+      event.scheduledTime = Number(raw);
+    }
   }
+
   return event;
 }
 
 function decodeStopTimeUpdate(bytes) {
   const state = { index: 0 };
-  const update = { stopSequence: null, stopId: '', arrival: null, departure: null, scheduleRelationship: 0 };
+  const update = {
+    stopSequence: null,
+    stopId: '',
+    arrival: null,
+    departure: null,
+    scheduleRelationship: STOP_RELATIONSHIP.SCHEDULED
+  };
+
   while (state.index < bytes.length) {
     const field = readField(bytes, state);
-    if (field.fieldNumber === 1 && field.wireType === 0) update.stopSequence = Number(field.value);
-    else if (field.fieldNumber === 2 && field.wireType === 2) update.arrival = decodeStopTimeEvent(field.value);
-    else if (field.fieldNumber === 3 && field.wireType === 2) update.departure = decodeStopTimeEvent(field.value);
-    else if (field.fieldNumber === 4 && field.wireType === 2) update.stopId = decodeString(field.value);
-    else if (field.fieldNumber === 5 && field.wireType === 0) update.scheduleRelationship = Number(field.value);
+
+    if (field.fieldNumber === 1 && field.wireType === 0) {
+      update.stopSequence = Number(field.value);
+    } else if (field.fieldNumber === 2 && field.wireType === 2) {
+      update.arrival = decodeStopTimeEvent(field.value);
+    } else if (field.fieldNumber === 3 && field.wireType === 2) {
+      update.departure = decodeStopTimeEvent(field.value);
+    } else if (field.fieldNumber === 4 && field.wireType === 2) {
+      update.stopId = decodeString(field.value);
+    } else if (field.fieldNumber === 5 && field.wireType === 0) {
+      update.scheduleRelationship = Number(field.value);
+    }
   }
+
   return update;
 }
 
 function decodeTripProperties(bytes) {
   const state = { index: 0 };
   const result = { tripId: '', startDate: '', startTime: '' };
+
   while (state.index < bytes.length) {
     const field = readField(bytes, state);
-    if (field.fieldNumber === 1 && field.wireType === 2) result.tripId = decodeString(field.value);
-    else if (field.fieldNumber === 2 && field.wireType === 2) result.startDate = decodeString(field.value);
-    else if (field.fieldNumber === 3 && field.wireType === 2) result.startTime = decodeString(field.value);
+    if (field.fieldNumber === 1 && field.wireType === 2) {
+      result.tripId = decodeString(field.value);
+    } else if (field.fieldNumber === 2 && field.wireType === 2) {
+      result.startDate = decodeString(field.value);
+    } else if (field.fieldNumber === 3 && field.wireType === 2) {
+      result.startTime = decodeString(field.value);
+    }
   }
+
   return result;
 }
 
 function decodeTripUpdate(bytes) {
   const state = { index: 0 };
   const result = { trip: null, stopTimeUpdates: [], timestamp: null, tripProperties: null };
+
   while (state.index < bytes.length) {
     const field = readField(bytes, state);
-    if (field.fieldNumber === 1 && field.wireType === 2) result.trip = decodeTripDescriptor(field.value);
-    else if (field.fieldNumber === 2 && field.wireType === 2) result.stopTimeUpdates.push(decodeStopTimeUpdate(field.value));
-    else if (field.fieldNumber === 4 && field.wireType === 0) result.timestamp = safeTimestamp(field.value);
-    else if (field.fieldNumber === 6 && field.wireType === 2) result.tripProperties = decodeTripProperties(field.value);
+
+    if (field.fieldNumber === 1 && field.wireType === 2) {
+      result.trip = decodeTripDescriptor(field.value);
+    } else if (field.fieldNumber === 2 && field.wireType === 2) {
+      result.stopTimeUpdates.push(decodeStopTimeUpdate(field.value));
+    } else if (field.fieldNumber === 4 && field.wireType === 0) {
+      const raw = field.value;
+      if (raw <= BigInt(Number.MAX_SAFE_INTEGER)) result.timestamp = Number(raw);
+    } else if (field.fieldNumber === 6 && field.wireType === 2) {
+      result.tripProperties = decodeTripProperties(field.value);
+    }
   }
+
   return result;
 }
 
 function decodeFeedEntity(bytes) {
   const state = { index: 0 };
   const entity = { id: '', tripUpdate: null };
+
   while (state.index < bytes.length) {
     const field = readField(bytes, state);
-    if (field.fieldNumber === 1 && field.wireType === 2) entity.id = decodeString(field.value);
-    else if (field.fieldNumber === 2 && field.wireType === 0) entity.isDeleted = Boolean(field.value);
-    else if (field.fieldNumber === 3 && field.wireType === 2) entity.tripUpdate = decodeTripUpdate(field.value);
+
+    if (field.fieldNumber === 1 && field.wireType === 2) {
+      entity.id = decodeString(field.value);
+    } else if (field.fieldNumber === 2 && field.wireType === 0) {
+      entity.isDeleted = Boolean(field.value);
+    } else if (field.fieldNumber === 3 && field.wireType === 2) {
+      entity.tripUpdate = decodeTripUpdate(field.value);
+    }
   }
+
   return entity;
 }
 
@@ -176,241 +251,330 @@ function decodeGtfsRealtimeFeed(buffer) {
   const state = { index: 0 };
   const updates = [];
   let feedTimestamp = null;
+
   while (state.index < bytes.length) {
     const field = readField(bytes, state);
+
     if (field.fieldNumber === 1 && field.wireType === 2) {
       const headerState = { index: 0 };
+
       while (headerState.index < field.value.length) {
         const headerField = readField(field.value, headerState);
-        if (headerField.fieldNumber === 3 && headerField.wireType === 0) feedTimestamp = safeTimestamp(headerField.value);
+        if (headerField.fieldNumber === 3 && headerField.wireType === 0) {
+          const raw = headerField.value;
+          if (raw <= BigInt(Number.MAX_SAFE_INTEGER)) feedTimestamp = Number(raw);
+        }
       }
     } else if (field.fieldNumber === 2 && field.wireType === 2) {
       const entity = decodeFeedEntity(field.value);
       if (entity.tripUpdate?.trip) updates.push(entity.tripUpdate);
     }
   }
-  return { updates, feedTimestamp: feedTimestamp || Math.floor(Date.now() / 1000) };
+
+  return {
+    updates,
+    feedTimestamp: feedTimestamp || Math.floor(Date.now() / 1000)
+  };
 }
 
-function canonicalStopCode(value) {
+function normalizeStopKey(value) {
   const raw = String(value ?? '').trim();
   if (!raw) return '';
-  if (/^M/i.test(raw)) return `M${raw.slice(1)}`;
-  const digits = raw.replace(/\D/g, '');
-  return digits ? digits.padStart(4, '0') : raw;
+
+  const withoutMetroPrefix = raw.replace(/^M/i, '');
+  const digits = withoutMetroPrefix.replace(/\D/g, '');
+  if (digits) return String(Number(digits));
+
+  return withoutMetroPrefix.toLowerCase();
 }
 
-function routeSubtype(route) {
-  const ref = String(route?.route_ref || '').trim().toUpperCase();
-  if (ref.startsWith('N')) return 'night';
-  if (ref.startsWith('У')) return 'school';
-  if ((ref.endsWith('ТБ') || ref.endsWith('ТМ') || ref.startsWith('M')) && route?.type === 'bus') return 'temporary';
+function stopIdsMatch(left, right) {
+  return normalizeStopKey(left) === normalizeStopKey(right);
+}
+
+function eventTimestamp(update) {
+  if (Number.isFinite(update?.arrival?.time)) return update.arrival.time;
+  if (Number.isFinite(update?.departure?.time)) return update.departure.time;
   return null;
 }
 
-function getTimestamp(stopUpdate) {
-  if (Number.isFinite(stopUpdate?.arrival?.time)) return stopUpdate.arrival.time;
-  if (Number.isFinite(stopUpdate?.departure?.time)) return stopUpdate.departure.time;
+function eventDelay(update) {
+  if (Number.isFinite(update?.arrival?.delay)) return update.arrival.delay;
+  if (Number.isFinite(update?.departure?.delay)) return update.departure.delay;
   return null;
 }
 
-function getScheduledTimestamp(stopUpdate) {
-  if (Number.isFinite(stopUpdate?.arrival?.scheduledTime)) return stopUpdate.arrival.scheduledTime;
-  if (Number.isFinite(stopUpdate?.departure?.scheduledTime)) return stopUpdate.departure.scheduledTime;
-  return null;
-}
-
-function getDestination(routeInfo, trip, tripUpdate) {
-  const directionCode = routeInfo?.direction_code ?? trip?.directionId ?? '';
-  const direction = directionByCode.get(String(directionCode));
-  const terminalCode = direction?.stops?.at(-1);
-  const staticStop = terminalCode ? stopByCode.get(String(terminalCode)) : null;
-  const staticName = staticStop?.names?.bg;
-  if (staticName) return staticName;
-  const terminalUpdate = (tripUpdate?.stopTimeUpdates || [])
-    .filter(update => canonicalStopCode(update?.stopId))
-    .sort((a, b) => Number(b?.stopSequence ?? -1) - Number(a?.stopSequence ?? -1))[0];
-  const fallbackStop = terminalUpdate ? stopByCode.get(canonicalStopCode(terminalUpdate.stopId)) : null;
-  return fallbackStop?.names?.bg || trip?.tripHeadsign || routeInfo?.trip_headsign || '—';
-}
-
-function makeExtras(routeInfo) {
-  const wheelchair = routeInfo?.wheelchair_accessible === '1' ? '1' : '0';
-  const bike = routeInfo?.bikes_allowed === '1' ? '1' : '0';
-  return `0${wheelchair}${bike}`;
-}
-
-function routeForTrip(trip) {
-  return realtimeTripMap[String(trip?.tripId || '')] || null;
-}
-
-function buildBoard(updates, stopCode, feedTimestamp, nowSeconds = Math.floor(Date.now() / 1000)) {
-  const target = canonicalStopCode(stopCode);
+function buildBoard(updates, stopCode, feedTimestamp) {
+  const now = Math.floor(Date.now() / 1000);
+  const target = normalizeStopKey(stopCode);
   const grouped = new Map();
+  const skippedTrips = new Map();
 
-  for (const tripUpdate of updates || []) {
+  for (const tripUpdate of updates) {
     const trip = tripUpdate?.trip;
     if (!trip) continue;
-    const relationship = Number(trip.scheduleRelationship ?? TRIP_RELATIONSHIP.SCHEDULED);
-    if (relationship === TRIP_RELATIONSHIP.CANCELED || relationship === TRIP_RELATIONSHIP.DELETED) continue;
 
-    const routeInfo = routeForTrip(trip) || {
-      route_id: String(trip.routeId || '').trim(),
-      direction_code: trip.directionId || '',
-      trip_headsign: ''
-    };
-    const route = routeByCgmId.get(String(routeInfo.route_id || trip.routeId || '').trim());
-    if (!route) continue;
+    const tripRelationship = Number.isFinite(Number(trip.scheduleRelationship))
+      ? Number(trip.scheduleRelationship)
+      : TRIP_RELATIONSHIP.SCHEDULED;
+
+    // CANCELED/DELETED are terminal states for the whole trip. Everything
+    // else can carry useful arrival information. In particular, UNSCHEDULED,
+    // REPLACEMENT, DUPLICATED and NEW must not be thrown away merely because
+    // they are not a plain scheduled trip.
+    if (tripRelationship === TRIP_RELATIONSHIP.CANCELED
+      || tripRelationship === TRIP_RELATIONSHIP.DELETED) {
+      continue;
+    }
 
     for (const stopUpdate of tripUpdate.stopTimeUpdates || []) {
-      const stopRelationship = Number(stopUpdate.scheduleRelationship ?? STOP_RELATIONSHIP.SCHEDULED);
-      if (stopRelationship === STOP_RELATIONSHIP.SKIPPED || stopRelationship === STOP_RELATIONSHIP.NO_DATA) continue;
-      if (canonicalStopCode(stopUpdate.stopId) !== target) continue;
+      const stopRelationship = Number.isFinite(Number(stopUpdate.scheduleRelationship))
+        ? Number(stopUpdate.scheduleRelationship)
+        : STOP_RELATIONSHIP.SCHEDULED;
 
-      const timestamp = getTimestamp(stopUpdate);
+      // SKIPPED is useful even when the producer identifies the stop only by
+      // stop_sequence (GTFS-RT permits either stop_id or stop_sequence). Keep
+      // sequence-only SKIPPED records so the frontend can resolve them against
+      // the generated static pattern. When stop_id is present, only keep
+      // records relevant to the requested board stop.
+      if (stopRelationship === STOP_RELATIONSHIP.SKIPPED) {
+        if (stopUpdate?.stopId && !stopIdsMatch(stopUpdate.stopId, target)) continue;
+
+        const skippedKey = [
+          trip.tripId || '',
+          trip.startDate || tripUpdate.tripProperties?.startDate || '',
+          trip.startTime || tripUpdate.tripProperties?.startTime || '',
+          trip.routeId || '',
+          trip.directionId || '',
+          stopUpdate.stopId ? normalizeStopKey(stopUpdate.stopId) : `seq:${Number.isFinite(Number(stopUpdate.stopSequence)) ? Number(stopUpdate.stopSequence) : ''}`
+        ].join('|');
+
+        if (!skippedTrips.has(skippedKey)) {
+          skippedTrips.set(skippedKey, {
+            trip_id: trip.tripId || '',
+            start_date: trip.startDate || tripUpdate.tripProperties?.startDate || '',
+            start_time: trip.startTime || tripUpdate.tripProperties?.startTime || '',
+            route_id: trip.routeId || '',
+            direction_id: trip.directionId || '',
+            stop_id: stopUpdate.stopId || '',
+            stop_sequence: Number.isFinite(Number(stopUpdate.stopSequence))
+              ? Number(stopUpdate.stopSequence)
+              : null,
+            stop_schedule_relationship: stopRelationship,
+            stop_schedule_relationship_name: STOP_RELATIONSHIP_NAME[stopRelationship]
+              || `UNKNOWN_${stopRelationship}`
+          });
+        }
+        continue;
+      }
+
+      // A normal arrival must still be for the requested stop. A sequence-only
+      // SKIPPED record was handled above and is deliberately not treated as an
+      // arrival.
+      if (!stopUpdate?.stopId || !stopIdsMatch(stopUpdate.stopId, target)) continue;
+
+      // NO_DATA explicitly says that no realtime timing is available here.
+      // It must NOT suppress the static fallback.
+      if (stopRelationship === STOP_RELATIONSHIP.NO_DATA) continue;
+
+      const timestamp = eventTimestamp(stopUpdate);
       if (!Number.isFinite(timestamp)) continue;
-      if (timestamp < nowSeconds - 60 || timestamp > nowSeconds + LOOK_AHEAD_SECONDS) continue;
+      if (timestamp < now - 60) continue;
+      if (timestamp > now + LOOK_AHEAD_SECONDS) continue;
 
-      const destination = getDestination(routeInfo, trip, tripUpdate);
-      const key = `${route.cgm_id}|${destination}`;
+      const delay = eventDelay(stopUpdate);
+      const key = [
+        trip.tripId || '',
+        trip.startDate || tripUpdate.tripProperties?.startDate || '',
+        trip.startTime || tripUpdate.tripProperties?.startTime || '',
+        trip.routeId || '',
+        trip.directionId || ''
+      ].join('|');
+
       if (!grouped.has(key)) {
+        const terminalUpdate = (tripUpdate.stopTimeUpdates || [])
+          .filter(item => {
+            if (!item?.stopId) return false;
+            const relationship = Number.isFinite(Number(item.scheduleRelationship))
+              ? Number(item.scheduleRelationship)
+              : STOP_RELATIONSHIP.SCHEDULED;
+            return relationship !== STOP_RELATIONSHIP.SKIPPED
+              && relationship !== STOP_RELATIONSHIP.NO_DATA;
+          })
+          .sort((a, b) => {
+            const sa = Number.isFinite(Number(a?.stopSequence)) ? Number(a.stopSequence) : -1;
+            const sb = Number.isFinite(Number(b?.stopSequence)) ? Number(b.stopSequence) : -1;
+            return sb - sa;
+          })[0] || null;
+
         grouped.set(key, {
-          route_id: route.cgm_id,
-          direction_id: routeInfo.direction_code || '',
-          destination_stop_id: directionByCode.get(String(routeInfo.direction_code || ''))?.stops?.at(-1) || '',
-          route_ref: route.route_ref,
-          type: route.type,
-          subtype: routeSubtype(route),
-          bg_color: route.bg_color || null,
-          text_color: route.text_color || null,
-          destination,
-          times: [],
-          _route_sort: String(route.route_ref),
-          _logical_key: key
+          trip_id: trip.tripId || '',
+          trip_start_date: trip.startDate || tripUpdate.tripProperties?.startDate || '',
+          trip_start_time: trip.startTime || tripUpdate.tripProperties?.startTime || '',
+          route_id: trip.routeId || '',
+          direction_id: trip.directionId || '',
+          schedule_relationship: tripRelationship,
+          schedule_relationship_name: TRIP_RELATIONSHIP_NAME[tripRelationship] || `UNKNOWN_${tripRelationship}`,
+          destination_stop_id: terminalUpdate?.stopId || '',
+          times: []
         });
       }
+
       grouped.get(key).times.push({
-        t: Math.max(0, Math.round((timestamp - nowSeconds) / 60)),
-        extras: makeExtras(routeInfo),
-        _timestamp: timestamp,
-        _scheduled_time: getScheduledTimestamp(stopUpdate)
+        timestamp,
+        delay: Number.isFinite(delay) ? delay : null,
+        stop_schedule_relationship: stopRelationship,
+        stop_schedule_relationship_name: STOP_RELATIONSHIP_NAME[stopRelationship]
+          || `UNKNOWN_${stopRelationship}`,
+        scheduled_time: Number.isFinite(Number(stopUpdate?.arrival?.scheduledTime))
+          ? Number(stopUpdate.arrival.scheduledTime)
+          : Number.isFinite(Number(stopUpdate?.departure?.scheduledTime))
+            ? Number(stopUpdate.departure.scheduledTime)
+            : null
       });
     }
   }
 
-  return [...grouped.values()]
-    .map(route => ({
-      route_id: route.route_id,
-      direction_id: route.direction_id,
-      destination_stop_id: route.destination_stop_id,
-      route_ref: route.route_ref,
-      type: route.type,
-      subtype: route.subtype,
-      destination: route.destination,
-      times: route.times
-        .sort((a, b) => a._timestamp - b._timestamp)
+  const routes = [...grouped.values()]
+    .map(row => ({
+      ...row,
+      times: row.times
+        .sort((a, b) => a.timestamp - b.timestamp)
         .slice(0, MAX_RESULTS_PER_ROUTE)
-        .map(item => ({ t: item.t, extras: item.extras }))
     }))
-    .filter(route => route.times.length)
-    .sort((a, b) => (a.times[0]?.t ?? Infinity) - (b.times[0]?.t ?? Infinity));
+    .filter(row => row.times.length)
+    .sort((a, b) => a.times[0].timestamp - b.times[0].timestamp);
+
+  // Only non-canceled/non-deleted realtime trips are considered operationally
+  // active by the frontend. Keeping these statuses out is important because a
+  // canceled trip must never suppress the static fallback for its direction.
+  const activeTrips = [];
+  const seenActive = new Set();
+  for (const update of updates || []) {
+    const trip = update?.trip;
+    if (!trip) continue;
+
+    const relationship = Number.isFinite(Number(trip.scheduleRelationship))
+      ? Number(trip.scheduleRelationship)
+      : TRIP_RELATIONSHIP.SCHEDULED;
+    if (relationship === TRIP_RELATIONSHIP.CANCELED
+      || relationship === TRIP_RELATIONSHIP.DELETED) continue;
+
+    const tripKey = [
+      String(trip.tripId || ''),
+      String(trip.startDate || update.tripProperties?.startDate || ''),
+      String(trip.startTime || update.tripProperties?.startTime || ''),
+      String(trip.routeId || ''),
+      String(trip.directionId || '')
+    ].join('|');
+    if (seenActive.has(tripKey)) continue;
+    seenActive.add(tripKey);
+
+    activeTrips.push({
+      trip_id: String(trip.tripId || ''),
+      start_date: String(trip.startDate || update.tripProperties?.startDate || ''),
+      start_time: String(trip.startTime || update.tripProperties?.startTime || ''),
+      route_id: String(trip.routeId || ''),
+      direction_id: String(trip.directionId || ''),
+      schedule_relationship: relationship,
+      schedule_relationship_name: TRIP_RELATIONSHIP_NAME[relationship] || `UNKNOWN_${relationship}`
+    });
+  }
+
+  const realtimeRouteIds = [...new Set(
+    (updates || [])
+      .map(update => String(update?.trip?.routeId || '').trim())
+      .filter(Boolean)
+  )];
+
+  return {
+    status: routes.length ? 'ok' : 'empty',
+    stop_code: String(stopCode),
+    generated_at: feedTimestamp,
+    // Route IDs represented anywhere in the current GTFS-RT feed are
+    // considered realtime-supported. This is intentionally broader than
+    // active_trips: a route must not fall back to static GTFS merely because
+    // it has no arrival at this particular stop right now (or because a
+    // current trip is canceled/short-turned).
+    realtime_route_ids: realtimeRouteIds,
+    active_trips: activeTrips,
+    // SKIPPED is intentionally exposed as an explicit suppression signal for
+    // the static fallback. It is kept per trip + stop so unrelated scheduled
+    // courses on the same line/direction are not hidden.
+    skipped_trips: [...skippedTrips.values()],
+    // Keep this field for compatibility with the current frontend while the
+    // richer active_trips representation is adopted.
+    active_trip_ids: activeTrips.map(item => item.trip_id).filter(Boolean),
+    routes
+  };
 }
 
-async function fetchRealtimeFeed(signal) {
-  const upstream = await fetch(FEED_URL, {
-    signal,
-    headers: {
-      Accept: 'application/x-protobuf, application/octet-stream',
-      'User-Agent': 'GTSofia virtual boards'
-    }
-  });
-  if (!upstream.ok) throw new Error(`Sofia Traffic GTFS-RT returned ${upstream.status}.`);
-  const body = await upstream.arrayBuffer();
-  if (!body.byteLength) throw new Error('Sofia Traffic GTFS-RT feed is empty.');
-  return decodeGtfsRealtimeFeed(body);
-}
-
-function jsonResponse(res, status, payload) {
-  res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  res.setHeader('Cache-Control', 'no-store, max-age=0');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  return res.status(status).json(payload);
-}
-
-async function handler(req, res) {
+module.exports = async function handler(req, res) {
   if (req.method !== 'GET') {
     res.setHeader('Allow', 'GET');
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
   const stopCode = String(req.query?.stop_code || '').trim();
-  if (!stopCode) return res.status(400).json({ error: 'Missing stop_code.' });
-  const canonical = canonicalStopCode(stopCode);
-  if (!stopByCode.has(canonical)) return res.status(404).json({ error: 'Unknown stop_code.' });
+  const requestedRouteIds = new Set(
+    String(req.query?.route_ids || '')
+      .split(',')
+      .map(value => value.trim())
+      .filter(Boolean)
+  );
+  if (!stopCode) {
+    return res.status(400).json({ error: 'Missing stop_code.' });
+  }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FEED_TIMEOUT_MS);
+
   try {
-    const feed = await fetchRealtimeFeed(controller.signal);
-    const nowSeconds = Math.floor(Date.now() / 1000);
-    const routes = buildBoard(feed.updates, canonical, feed.feedTimestamp, nowSeconds);
-    const realtimeRouteIds = [...new Set(
-      (feed.updates || [])
-        .filter(update => {
-          const relationship = Number(update?.trip?.scheduleRelationship ?? TRIP_RELATIONSHIP.SCHEDULED);
-          return relationship !== TRIP_RELATIONSHIP.CANCELED && relationship !== TRIP_RELATIONSHIP.DELETED;
-        })
-        .map(update => String(update?.trip?.routeId || '').trim())
-        .filter(Boolean)
-    )];
-    const activeTrips = (feed.updates || [])
-      .filter(update => {
-        const relationship = Number(update?.trip?.scheduleRelationship ?? TRIP_RELATIONSHIP.SCHEDULED);
-        return Boolean(update?.trip?.tripId) && relationship !== TRIP_RELATIONSHIP.CANCELED && relationship !== TRIP_RELATIONSHIP.DELETED;
-      })
-      .map(update => ({
-        trip_id: String(update.trip.tripId),
-        route_id: String(update.trip.routeId || ''),
-        direction_id: String(update.trip.directionId || ''),
-        schedule_relationship_name: relationshipName(update.trip.scheduleRelationship)
-      }));
-    const skippedTrips = [];
-    for (const update of feed.updates || []) {
-      if (!update?.trip?.tripId) continue;
-      for (const stopUpdate of update.stopTimeUpdates || []) {
-        const relationship = Number(stopUpdate?.scheduleRelationship);
-        if (relationship !== STOP_RELATIONSHIP.SKIPPED) continue;
-        skippedTrips.push({
-          trip_id: String(update.trip.tripId),
-          route_id: String(update.trip.routeId || ''),
-          direction_id: String(update.trip.directionId || ''),
-          stop_id: String(stopUpdate.stopId || ''),
-          stop_sequence: Number.isFinite(Number(stopUpdate.stopSequence)) ? Number(stopUpdate.stopSequence) : null,
-          start_time: String(update.tripProperties?.startTime || ''),
-          schedule_relationship_name: relationshipName(relationship)
-        });
+    const upstream = await fetch(FEED_URL, {
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/x-protobuf, application/octet-stream',
+        'User-Agent': 'GTSofia virtual boards'
       }
+    });
+
+    if (!upstream.ok) {
+      return res.status(502).json({
+        error: `Sofia Traffic GTFS-RT returned ${upstream.status}.`
+      });
     }
 
-    return jsonResponse(res, 200, {
-      status: routes.length ? 'ok' : 'empty',
-      stop_code: canonical,
-      generated_at: new Date(feed.feedTimestamp * 1000).toISOString(),
-      now_timestamp: nowSeconds,
-      realtime_route_ids: realtimeRouteIds,
-      active_trips: activeTrips,
-      skipped_trips: skippedTrips,
-      routes
-    });
+    const body = await upstream.arrayBuffer();
+    if (!body.byteLength) {
+      return res.status(502).json({ error: 'Sofia Traffic GTFS-RT feed is empty.' });
+    }
+
+    const feed = decodeGtfsRealtimeFeed(body);
+    const board = buildBoard(feed.updates, stopCode, feed.feedTimestamp);
+    if (requestedRouteIds.size) {
+      const tripRouteById = new Map(
+        feed.updates.map(item => [
+          String(item?.trip?.tripId || '').trim(),
+          String(item?.trip?.routeId || '').trim()
+        ])
+      );
+      board.active_trips = (board.active_trips || []).filter(item =>
+        requestedRouteIds.has(String(item?.route_id || '').trim())
+      );
+      board.active_trip_ids = board.active_trips.map(item => String(item.trip_id || '').trim()).filter(Boolean);
+    }
+
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    return res.status(200).json(board);
   } catch (error) {
     const message = error?.name === 'AbortError'
       ? 'Sofia Traffic GTFS-RT request timed out.'
       : (error?.message || 'Unable to fetch/decode GTFS-RT.');
-    return jsonResponse(res, 502, { error: message });
+
+    return res.status(502).json({ error: message });
   } finally {
     clearTimeout(timeout);
   }
-}
-
-handler.__test = { canonicalStopCode, routeSubtype, buildBoard, decodeGtfsRealtimeFeed };
-module.exports = handler;
+};

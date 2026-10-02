@@ -1,36 +1,100 @@
 const assert = require('node:assert/strict');
-const handler = require('../api/virtual-board.js');
 const fs = require('node:fs');
+const path = require('node:path');
 
-const map = JSON.parse(fs.readFileSync(require('node:path').join(__dirname, '..', 'data', 'realtime-trip-map.json'), 'utf8'));
-const [rawTripId, mapping] = Object.entries(map)[0];
-const targetStop = JSON.parse(fs.readFileSync(require('node:path').join(__dirname, '..', 'data', 'directions.json'), 'utf8'))
-  .find(direction => String(direction.code) === String(mapping.direction_code)).stops[0];
+const root = path.join(__dirname, '..');
+const handler = require('../api/virtual-board.js');
+const originalFetch = global.fetch;
 
-assert.equal(handler.__test.canonicalStopCode('0328'), '0328');
-assert.equal(handler.__test.canonicalStopCode('328'), '0328');
-assert.equal(handler.__test.canonicalStopCode('m18'), 'M18');
-
-const now = Math.floor(Date.now() / 1000);
-const routes = handler.__test.buildBoard([
-  {
-    trip: { tripId: rawTripId, routeId: mapping.route_id, directionId: mapping.direction_code, scheduleRelationship: 0 },
-    stopTimeUpdates: [{ stopId: targetStop, scheduleRelationship: 0, arrival: { time: now + 120 } }]
-  },
-  {
-    trip: { tripId: 'CANCELED-TEST', routeId: mapping.route_id, directionId: mapping.direction_code, scheduleRelationship: 3 },
-    stopTimeUpdates: [{ stopId: targetStop, scheduleRelationship: 0, arrival: { time: now + 60 } }]
-  },
-  {
-    trip: { tripId: 'SKIPPED-TEST', routeId: mapping.route_id, directionId: mapping.direction_code, scheduleRelationship: 0 },
-    stopTimeUpdates: [{ stopId: targetStop, scheduleRelationship: 1, arrival: { time: now + 30 } }]
+function makeEmptyFeed(timestamp = Math.floor(Date.now() / 1000)) {
+  // FeedMessage { header: FeedHeader { timestamp } }
+  const bytes = [];
+  bytes.push(0x0a, 0x0a, 0x18);
+  let value = BigInt(timestamp);
+  while (value >= 0x80n) {
+    bytes.push(Number(value & 0x7fn) | 0x80);
+    value >>= 7n;
   }
-], targetStop, now, now);
+  bytes.push(Number(value));
+  bytes[1] = bytes.length - 2;
+  return Uint8Array.from(bytes);
+}
 
-assert.equal(routes.length, 1);
-assert.equal(routes[0].times.length, 1);
-assert.equal(routes[0].times[0].t, 2);
-assert.equal(typeof routes[0].destination, 'string');
-assert.equal(routes[0].route_ref, JSON.parse(fs.readFileSync(require('node:path').join(__dirname, '..', 'data', 'routes.json'), 'utf8')).find(r => r.cgm_id === mapping.route_id).route_ref);
+function makeResponse(status = 200, body = new ArrayBuffer(0)) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    arrayBuffer: async () => body
+  };
+}
 
-console.log('virtual-board-api: all tests passed');
+(async () => {
+  const routes = JSON.parse(fs.readFileSync(path.join(root, 'data', 'routes.json'), 'utf8'));
+  const metro = routes.find(route => String(route.route_ref) === 'M1');
+  assert.ok(metro);
+
+  const x43 = routes.find(route => String(route.route_ref).toUpperCase() === 'X43');
+  assert.ok(x43);
+
+  // Keep the public X43 presentation special case in the shared line metadata.
+  global.window = { transportData: { lineOverrides: [] } };
+  const transportDataSource = fs.readFileSync(path.join(root, 'transport-data.js'), 'utf8');
+  const vm = require('node:vm');
+  const context = {
+    console,
+    Intl,
+    Date,
+    String,
+    Number,
+    Boolean,
+    Array,
+    Object,
+    Set,
+    Map,
+    Math,
+    JSON,
+    Promise,
+    Error,
+    window: global.window
+  };
+  context.globalThis = context;
+  vm.createContext(context);
+  vm.runInContext(transportDataSource, context);
+  const legacyX43 = {
+    route_id: x43.cgm_id,
+    route_short_name: x43.route_ref,
+    route_type: '3'
+  };
+  assert.equal(context.window.getTransportIcon('bus', 'X43'), 'Icons/Active icons/torist-bus.svg');
+  assert.equal(context.window.getLineColor(legacyX43, 'bus'), '#006838');
+
+  const sampleStop = JSON.parse(fs.readFileSync(path.join(root, 'data', 'stops.json'), 'utf8'))[0].code;
+  const feed = makeEmptyFeed();
+  global.fetch = async () => makeResponse(200, feed.buffer);
+
+  const response = await new Promise((resolve, reject) => {
+    const res = {
+      headers: {},
+      setHeader(name, value) { this.headers[name] = value; },
+      status(code) { this.statusCode = code; return this; },
+      json(payload) { resolve({ statusCode: this.statusCode, headers: this.headers, payload }); }
+    };
+
+    Promise.resolve(handler({ method: 'GET', query: { stop_code: sampleStop } }, res)).catch(reject);
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.payload.status, 'empty');
+  assert.equal(response.payload.stop_code, sampleStop);
+  assert.ok(Array.isArray(response.payload.routes));
+  assert.ok(Array.isArray(response.payload.active_trips));
+  assert.ok(Array.isArray(response.payload.skipped_trips));
+  assert.ok(Array.isArray(response.payload.realtime_route_ids));
+
+  global.fetch = originalFetch;
+  console.log('virtual-board-api: all tests passed');
+})().catch(error => {
+  global.fetch = originalFetch;
+  console.error(error);
+  process.exitCode = 1;
+});

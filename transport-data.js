@@ -399,6 +399,12 @@ function getLineColor(route, type) {
   if (override?.color) {
     return String(override.color).startsWith('#') ? String(override.color) : `#${override.color}`;
   }
+
+  // X43 keeps the tourist-bus icon, so its line colour must also remain the
+  // tourist green instead of inheriting the generic CGM bus colour.
+  const lineNumber = String(route?.route_short_name || route?.route_ref || '').trim().toUpperCase();
+  if (lineNumber === 'X43') return '#006838';
+
   if (!override?.type && route?.route_color) return `#${route.route_color}`;
 
   switch (type) {
