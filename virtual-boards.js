@@ -677,6 +677,68 @@
     return terminalStopId || String(direction?.key || fallback || '').trim();
   }
 
+  function cleanBoardDestination(value) {
+    const text = String(value ?? '').trim();
+    if (!text) return '';
+
+    // A dash is the UI placeholder for a missing destination, not a real
+    // passenger-facing destination. Treat the common dash-only variants as
+    // empty so the resolver can continue to the static/stop fallbacks.
+    if (/^(?:[-–—]+|\*+[-–—]+\*+)$/.test(text)) return '';
+    return text;
+  }
+
+  function resolveBoardDestination(route, stop) {
+    const tripMapping = getRealtimeTripMapping(route?.trip_id);
+    const staticTrip = findStaticTrip(route?.trip_id);
+    const routeId = String(route?.route_id || staticTrip?.route_id || '').trim();
+    const directionRef =
+      route?.direction_id
+      || route?.directionId
+      || tripMapping?.direction_id
+      || tripMapping?.direction_code
+      || tripMapping?.direction_key
+      || '';
+
+    const staticDirection = getStaticDirectionForTrip(staticTrip)
+      || resolveDirectionForRealtimeRoute(
+        routeId,
+        stop?.stop_id || stop?.stop_code || '',
+        staticTrip,
+        cleanBoardDestination(route?.destination || tripMapping?.trip_headsign || ''),
+        directionRef,
+        route?.destination_stop_id || '',
+        route?.stop_sequence || ''
+      );
+
+    const realtimeTerminal = getStopById(route?.destination_stop_id);
+    const staticTerminalId = getDirectionTerminalStopId(staticDirection);
+    const realtimeTerminalId = String(route?.destination_stop_id || '').trim();
+    const isPartialRealtime = !!realtimeTerminalId
+      && !!staticTerminalId
+      && !stopIdsMatch(realtimeTerminalId, staticTerminalId);
+
+    const candidates = isPartialRealtime
+      ? [
+          route?.destination,
+          realtimeTerminal?.stop_name,
+          staticTrip?.trip_headsign,
+          staticDirection?.destination,
+          staticDirection?.headsign,
+          tripMapping?.trip_headsign
+        ]
+      : [
+          route?.destination,
+          staticDirection?.destination,
+          staticDirection?.headsign,
+          staticTrip?.trip_headsign,
+          tripMapping?.trip_headsign,
+          realtimeTerminal?.stop_name
+        ];
+
+    return candidates.map(cleanBoardDestination).find(Boolean) || '';
+  }
+
   function resolveDirectionForRealtimeRoute(routeId, stopId, staticTrip, destination = '', directionId = '', terminalStopId = '', stopSequence = '') {
     const staticDirection = getStaticDirectionForTrip(staticTrip);
     if (staticDirection) return staticDirection;
@@ -1078,11 +1140,12 @@
                 routeId,
                 stop.stop_id,
                 staticTrip,
-                route.destination || tripMapping?.trip_headsign || '',
+                cleanBoardDestination(route.destination || tripMapping?.trip_headsign || ''),
                 realtimeDirectionRef,
                 route.destination_stop_id || '',
                 route.stop_sequence || ''
               );
+            const destination = resolveBoardDestination(route, stop);
             const routeMeta = getLineMeta(routeId, route.route_ref || '');
 
             return {
@@ -1097,13 +1160,7 @@
                 route.direction_id ? `D${String(route.direction_id)}` : ''
               ),
               destination_stop_id: route.destination_stop_id || '',
-              destination: route.destination
-                || staticTrip?.trip_headsign
-                || staticDirection?.destination
-                || staticDirection?.headsign
-                || tripMapping?.trip_headsign
-                || getStopById(route.destination_stop_id)?.stop_name
-                || '',
+              destination,
               times: route.times
                 .map(time => ({
                   timestamp: Number(time?.timestamp),
@@ -1148,31 +1205,12 @@
           realtimeRouteId,
           stop.stop_id,
           staticTrip,
-          route.destination || tripMapping?.trip_headsign || '',
+          cleanBoardDestination(route.destination || tripMapping?.trip_headsign || ''),
           realtimeDirectionRef,
           route.destination_stop_id || '',
           route.stop_sequence || ''
         );
-      const staticTerminalId = getDirectionTerminalStopId(staticDirection);
-      const realtimeTerminalId = String(route.destination_stop_id || '').trim();
-      const isPartialRealtime = !!realtimeTerminalId
-        && !stopIdsMatch(realtimeTerminalId, staticTerminalId);
-      const realtimeTerminal = isPartialRealtime ? getStopById(realtimeTerminalId) : null;
-      const destination = isPartialRealtime
-        ? (realtimeTerminal?.stop_name
-          || route.destination
-          || staticTrip?.trip_headsign
-          || staticDirection?.destination
-          || staticDirection?.headsign
-          || tripMapping?.trip_headsign
-          || '')
-        : (staticDirection?.destination
-          || staticDirection?.headsign
-          || route.destination
-          || staticTrip?.trip_headsign
-          || tripMapping?.trip_headsign
-          || realtimeTerminal?.stop_name
-          || '');
+      const destination = resolveBoardDestination(route, stop);
       // The board row is a displayed line + destination, not a raw GTFS
       // stop_id. The same physical terminal can have multiple GTFS stop IDs
       // (platforms / approaches), which previously split one direction into
@@ -1594,6 +1632,8 @@
 
       list.innerHTML = rows.map((row, index) => {
         const meta = getLineMeta(row.route_id || row.routeId, row.route_ref);
+        const destination = cleanBoardDestination(row.destination || row.headsign)
+          || (row.realtime ? resolveBoardDestination(row, stop) : '');
         const arrivals = row.arrivals;
         const nextTimes = arrivals.slice(1, 4).map(time => {
           const tooltip = formatArrivalCountdown(time.timestamp);
@@ -1604,7 +1644,7 @@
           <article class="vb-row">
             <div class="schedule-summary-route-row vb-route-row">
               ${lineIdentityHtml(meta)}
-              ${destinationHtml(row.destination || row.headsign || "")}
+              ${destinationHtml(destination)}
             </div>
             <div class="vb-time-block">
               ${countdownHtml(arrivals[0], !arrivals[0]?.scheduled)}
@@ -2127,6 +2167,8 @@
     isScheduleRowActiveToday,
     getSofiaDateKey,
     normalizeDirectionReference,
+    cleanBoardDestination,
+    resolveBoardDestination,
     resolveDirectionForRealtimeRoute,
     setTestTransportData(testData = {}) {
       transportData = testData;

@@ -104,6 +104,41 @@ assert.ok(resolved404);
 assert.equal(resolved404.key, 'D54');
 assert.equal(resolved404.destination, 'Централна гара');
 
+// Destination rendering regression: a realtime producer can surface the UI
+// placeholder dash instead of a destination. That placeholder must not block
+// the static direction/trip mapping fallback.
+assert.equal(seam.cleanBoardDestination('—'), '');
+assert.equal(seam.cleanBoardDestination('**—**'), '');
+const mappedRealtimeRoute = {
+  route_id: 'A100',
+  trip_id: 'A100-A4514-3-4-32901802591',
+  destination: '—',
+  destination_stop_id: '6220',
+  stop_sequence: 20
+};
+const resolvedBoardDestination = seam.resolveBoardDestination(
+  mappedRealtimeRoute,
+  { stop_id: '1311', stop_code: '1311' }
+);
+assert.equal(resolvedBoardDestination, 'Централна гара');
+
+// The direction-id fallback also works when no static trip mapping is
+// available, so a missing/placeholder destination still resolves from the
+// canonical direction.
+const noTripMappingDestination = seam.resolveBoardDestination(
+  {
+    route_id: 'A100',
+    trip_id: '',
+    destination: '—',
+    destination_stop_id: '6220',
+    direction_id: '54',
+    stop_sequence: 20
+  },
+  { stop_id: '1311', stop_code: '1311' }
+);
+assert.equal(noTripMappingDestination, 'Централна гара');
+
+console.log('virtual-board-ui: destination placeholder fallback passed');
 console.log('virtual-board-ui: 404 destination direction fallback passed');
 
 
