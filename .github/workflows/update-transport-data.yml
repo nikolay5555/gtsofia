@@ -4,8 +4,7 @@ on:
   schedule:
     # GitHub schedules are delayed occasionally under load. Use a non-round
     # minute and pin the schedule to Sofia time so DST is handled for us.
-    - cron: "17 7 * * *"
-      timezone: "Europe/Sofia"
+    - cron: '30 2,5 */1 * *'
 
   workflow_dispatch:
 
