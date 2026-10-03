@@ -37,6 +37,18 @@ assert.equal(
 );
 
 assert.equal(
+  source.includes('static_course_key: getStaticCourseKey(staticRoute, staticTime)'),
+  true,
+  'realtime course state must retain the concrete static course it replaced'
+);
+
+assert.equal(
+  source.includes('function isStaticCourseConsumed'),
+  true,
+  'static fallback must be able to detect a consumed course after realtime disappears'
+);
+
+assert.equal(
   source.includes("existing.times.push({ timestamp, trip_id })"),
   false,
   'static course metadata must not be lost for later departures in the same direction'
@@ -552,6 +564,16 @@ assert.equal(
       ),
       true,
       'the passed realtime course must consume its anchored static time even after the feed disappears'
+    );
+
+    assert.equal(
+      internals.isStaticCourseConsumed(
+        '0687',
+        lifecycleStaticRoute,
+        lifecycleStaticTime
+      ),
+      true,
+      'the passed realtime course must suppress its concrete static fallback after the feed disappears'
     );
 
     assert.equal(
