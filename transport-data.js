@@ -674,9 +674,6 @@ function getTransportIcon(
         case 'bus':
             return 'Icons/Active icons/bus.svg';
 
-        case 'night':
-            return 'Icons/Active icons/night-bus.svg';
-
         case 'trolley':
         case 'trolleybus':
             return 'Icons/Active icons/trolley.svg';
@@ -722,9 +719,6 @@ function getLineColor(
 
     switch (type) {
         case 'bus':
-            return '#BE1E2D';
-
-        case 'night':
             return '#BE1E2D';
 
         case 'tram':
