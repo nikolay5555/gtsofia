@@ -39,7 +39,7 @@ function createStorage(initialEntries = []) {
 function loadInternals(storage) {
   const exportedSource = source.replace(
     /\n\}\)\(\);\s*$/,
-    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    normalizeArrivalExtras,\n    getDimitarArrivalExtras,\n    dimitarExtrasIconHtml,\n    enrichFirstArrivalExtras,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
+    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
   );
 
   const context = {
@@ -100,63 +100,7 @@ assert.equal(
   '2 minutes 59 seconds remaining must display two minutes'
 );
 
-assert.equal(
-  JSON.stringify(internals.normalizeArrivalExtras([1, "1", 0])),
-  JSON.stringify(["1", "1", "0"]),
-  'vehicle extras must normalize numeric and string flags'
-);
-assert.equal(
-  internals.getDimitarArrivalExtras(
-    { times: [{ t: 2, extras: ["1", "0", "1"] }] },
-    2
-  ).join(""),
-  "101",
-  'matching relative arrival time must preserve Dimitar extras'
-);
-assert.equal(
-  internals.getDimitarArrivalExtras(
-    { times: [{ t: 8, extras: ["1", "1", "1"] }] },
-    2
-  ).join(""),
-  "000",
-  'extras outside the matching time window must be ignored'
-);
-assert.equal(
-  internals.dimitarExtrasIconHtml(["1", "0", "1"]).includes("bi-snow")
-    && internals.dimitarExtrasIconHtml(["1", "0", "1"]).includes("bi-bicycle")
-    && !internals.dimitarExtrasIconHtml(["1", "0", "1"]).includes("person-wheelchair"),
-  true,
-  'only active vehicle extras must render their icons'
-);
 
-const extrasNow = Date.now() / 1000;
-const enrichedRoutes = internals.enrichFirstArrivalExtras([
-  {
-    route_ref: "10",
-    destination: "Тест",
-    times: [
-      { timestamp: extrasNow + 120 },
-      { timestamp: extrasNow + 420 }
-    ]
-  }
-], [{
-  route_ref: "10",
-  destination: "Тест",
-  times: [
-    { t: 2, extras: ["1", "1", "0"] },
-    { t: 7, extras: ["0", "0", "1"] }
-  ]
-}]);
-assert.equal(
-  JSON.stringify(enrichedRoutes[0].times[0].extras),
-  JSON.stringify(["1", "1", "0"]),
-  'vehicle extras must be attached to the first arrival'
-);
-assert.equal(
-  Object.prototype.hasOwnProperty.call(enrichedRoutes[0].times[1], "extras"),
-  false,
-  'vehicle extras must not be attached to later arrivals'
-);
 
 // A service that begins on Saturday must not be treated as active on Thursday
 // merely because the generated horizon contains later weekdays.
