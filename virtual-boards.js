@@ -1045,10 +1045,11 @@
               route_ref: route.route_ref || routeMeta.number || '—',
               direction_key: staticDirection?.key || '',
               destination_stop_id: route.destination_stop_id || '',
-              destination: route.destination
-                || staticTrip?.trip_headsign
+              destination: getStopById(route.destination_stop_id)?.stop_name
                 || staticDirection?.destination
                 || staticDirection?.headsign
+                || route.destination
+                || staticTrip?.trip_headsign
                 || '',
               times: route.times
                 .map(time => ({
@@ -1096,12 +1097,13 @@
       const realtimeTerminal = isPartialRealtime ? getStopById(realtimeTerminalId) : null;
       const destination = isPartialRealtime
         ? (realtimeTerminal?.stop_name
-          || route.destination
-          || staticTrip?.trip_headsign
           || staticDirection?.destination
           || staticDirection?.headsign
+          || route.destination
+          || staticTrip?.trip_headsign
           || '')
-        : (staticDirection?.destination
+        : (getStopById(realtimeTerminalId)?.stop_name
+          || staticDirection?.destination
           || staticDirection?.headsign
           || route.destination
           || staticTrip?.trip_headsign
