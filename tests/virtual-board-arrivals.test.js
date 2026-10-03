@@ -321,6 +321,19 @@ assert.equal(
 
   assert.equal(
     internals.findRealtimeStaticMatchIndex(
+      { trip_id: 'GTFS-ORIGINAL-A', trip_start_time: '12:00:00' },
+      { trip_id: 'GTFS-ORIGINAL-A', timestamp: 1_000_420, scheduled_time: null, delay: null },
+      [
+        { timestamp: 1_000_480, trip_id: '12345', original_trip_id: 'GTFS-ORIGINAL-A', start_time: '12:00:00' }
+      ],
+      new Set()
+    ),
+    0,
+    'realtime trip_id must also match the static original_trip_id namespace'
+  );
+
+  assert.equal(
+    internals.findRealtimeStaticMatchIndex(
       { trip_id: 'RT-B', trip_start_time: '12:10:00' },
       { trip_id: 'RT-B', timestamp: 1_000_690, scheduled_time: 1_000_600, delay: 90 },
       staticTimes,
