@@ -109,13 +109,16 @@
       const destination = String(route?.destination || "").trim();
       for (const time of route?.times || []) {
         const actualTimestamp = Number(time?.timestamp);
-        const scheduledTimestamp = Number(time?.scheduled_time);
+        const scheduledTimestamp = Number(
+          time?.matched_scheduled_timestamp
+          ?? time?.scheduled_time
+        );
         if (!Number.isFinite(actualTimestamp) || !Number.isFinite(scheduledTimestamp)) continue;
 
         // The upstream API intentionally keeps a passed stop update visible
-        // for about 60 seconds. Remember its scheduled course while the
-        // realtime arrival is already at/past the current time, so a transient
-        // feed gap does not resurrect the static scheduled time.
+        // for about 60 seconds. Remember the exact static course it replaced
+        // while the realtime arrival is already at/past the current time, so
+        // a transient feed gap does not resurrect the timetable time.
         if (actualTimestamp > nowSeconds) continue;
 
         const key = getConsumedRealtimeArrivalKey(
@@ -1306,6 +1309,12 @@ const realtimeRoutes = Array.isArray(data?.routes)
 
           if (matchIndex >= 0) {
             matchedStaticIndexes.add(matchIndex);
+
+            // Keep the exact static schedule timestamp attached to the
+            // realtime arrival. This is the course anchor that survives a
+            // short realtime feed gap after the vehicle has passed the stop.
+            realtimeTime.matched_scheduled_timestamp =
+              Number(staticTimes[matchIndex]?.timestamp);
           }
         }
 
