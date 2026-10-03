@@ -173,6 +173,25 @@ assert.equal(
   'the next scheduled course must remain eligible'
 );
 
+// A realtime course keeps the exact static schedule timestamp as its anchor.
+// Once the vehicle has passed the stop, that anchor must suppress the static
+// timetable fallback even when GTFS-RT did not provide scheduled_time.
+const anchoredScheduledTime = scheduledTime + 30;
+internals.rememberConsumedRealtimeArrivals({ stop_id: stopId }, [{
+  route_id: routeId,
+  destination,
+  times: [{
+    timestamp: nowSeconds - 10,
+    scheduled_time: null,
+    matched_scheduled_timestamp: anchoredScheduledTime
+  }]
+}]);
+assert.equal(
+  internals.isConsumedRealtimeScheduledArrival(stopId, routeId, destination, anchoredScheduledTime),
+  true,
+  'a passed realtime arrival must consume its explicitly matched static schedule anchor'
+);
+
 // The consumed state survives a second script load in the same browser tab.
 const reloadedInternals = loadInternals(storage);
 assert.equal(
