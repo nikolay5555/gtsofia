@@ -2461,6 +2461,18 @@ def build_model_schedule_data(
             "times": list(
                 item.get("times", [])
             ),
+            "stop_sequences": [
+                sequence
+                if sequence is None
+                else int(sequence)
+                for sequence in item.get("stop_sequences", [])
+            ],
+            "original_trip_id": normalize(
+                item.get("original_trip_id", "")
+            ),
+            "service_id": normalize(
+                item.get("service_id", "")
+            ),
         })
 
     return {
@@ -2492,7 +2504,56 @@ def write_model_json(path, data):
         file.write("\n")
 
 
-def write_canonical_data_model(model):
+def build_model_realtime_trips(logical_trips, trips_by_id):
+    direction_by_source_trip = {}
+
+    for logical_trip in logical_trips:
+        if logical_trip.get("is_deleted", False):
+            continue
+
+        direction_code = int(
+            logical_trip["direction_code"]
+        )
+
+        for source_trip_id in logical_trip.get(
+            "original_trip_ids",
+            []
+        ):
+            direction_by_source_trip[
+                source_trip_id
+            ] = direction_code
+
+    result = []
+
+    for trip_id, trip in trips_by_id.items():
+        direction_code = direction_by_source_trip.get(
+            trip_id
+        )
+
+        if direction_code is None:
+            continue
+
+        result.append({
+            "trip_id": normalize(trip_id),
+            "route_id": normalize(trip.get("route_id")),
+            "service_id": normalize(trip.get("service_id")),
+            "trip_headsign": normalize(trip.get("trip_headsign")),
+            "direction_id": normalize(trip.get("direction_id")),
+            "shape_id": normalize(trip.get("shape_id")),
+            "direction_code": direction_code,
+        })
+
+    return result
+
+
+def write_canonical_data_model(
+    model,
+    calendar_result,
+    line_overrides,
+    shapes_result,
+    realtime_trips,
+    updated_at,
+):
     files = {
         "routes": model["routes"],
         "stops": model["stops"],
@@ -2500,6 +2561,10 @@ def write_canonical_data_model(model):
         "directions": model["directions"],
         "stop_times": model["stop_times"],
         "active_service_ids": model["active_service_ids"],
+        "shapes": shapes_result,
+        "realtime-trips": realtime_trips,
+        "calendar": calendar_result,
+        "line-overrides": line_overrides,
     }
 
     written = []
@@ -2510,8 +2575,15 @@ def write_canonical_data_model(model):
         written.append(path)
 
     metadata = {
-        "app_version": "gtsofia-data-model-v1",
+        "app_version": "gtsofia-data-model-v2",
+        "model_version": 2,
         "retrieval_date": get_today().isoformat(),
+        "updatedAt": updated_at,
+        "source": "CGM Sofia official GTFS",
+        "files": [
+            path.name
+            for path in written
+        ],
         "hashes": {},
     }
 
@@ -2526,7 +2598,20 @@ def write_canonical_data_model(model):
         metadata
     )
 
+    manifest = {
+        "version": 2,
+        "metadata": "metadata.json",
+        "files": metadata["files"],
+    }
+
+    write_model_json(
+        DATA_DIR / "manifest.json",
+        manifest
+    )
+
     return metadata
+
+
 
 
 # ============================================================
@@ -2758,8 +2843,18 @@ def main():
             calendar_result,
         )
 
+        realtime_trips = build_model_realtime_trips(
+            logical_trips,
+            trips_by_id
+        )
+
         canonical_metadata = write_canonical_data_model(
-            canonical_model
+            canonical_model,
+            calendar_result,
+            line_overrides,
+            shapes_result,
+            realtime_trips,
+            today.isoformat(),
         )
 
         result = {
@@ -2872,6 +2967,16 @@ def main():
         print(
             "Canonical metadata hashes: "
             f"{len(canonical_metadata['hashes'])}"
+        )
+
+        print(
+            "Canonical split data files: "
+            f"{len(canonical_metadata['files'])}"
+        )
+
+        print(
+            "Realtime trip mappings: "
+            f"{len(realtime_trips)}"
         )
 
         # --------------------------------------------------------
