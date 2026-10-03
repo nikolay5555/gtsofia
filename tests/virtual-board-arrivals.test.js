@@ -428,6 +428,27 @@ assert.equal(
   );
 
   assert.equal(
+    internals.findRealtimeStaticMatchIndex(
+      {
+        trip_id: 'RT-REPLACEMENT',
+        trip_start_time: '12:10:00',
+        schedule_relationship: 5
+      },
+      {
+        trip_id: 'RT-REPLACEMENT',
+        timestamp: 1_000_690,
+        scheduled_time: 1_000_600,
+        delay: 90,
+        trip_schedule_relationship: 5
+      },
+      staticTimes,
+      new Set()
+    ),
+    -1,
+    'REPLACEMENT trips must never use static GTFS timing as their replacement schedule'
+  );
+
+  assert.equal(
     internals.getRealtimeScheduledTimestamp({
       timestamp: 1_000_410,
       scheduled_time: null,
