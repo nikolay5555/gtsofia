@@ -1,7 +1,6 @@
 (() => {
   const SOFIA_TIME_ZONE = "Europe/Sofia";
   const REFRESH_MS = 15000;
-  const EXPIRED_PRIMARY_HOLD_MS = 10000;
   const SOFIA_CENTER = [42.6977, 23.3219];
 
   let map = null;
@@ -10,7 +9,6 @@
   let countdownTimer = null;
   let refreshInFlight = false;
   let lastExpiredPrimaryArrival = null;
-  let expiredPrimaryRefreshTimer = null;
   let boardRenderToken = 0;
   let clockTimer = null;
   let stopMarkers = null;
@@ -1430,26 +1428,7 @@
     return fetchVirtualBoardViaServer(stop);
   }
 
-  function clearExpiredPrimaryRefreshTimer() {
-    if (expiredPrimaryRefreshTimer !== null) {
-      clearTimeout(expiredPrimaryRefreshTimer);
-      expiredPrimaryRefreshTimer = null;
-    }
-  }
-
-  function scheduleExpiredPrimaryRefresh(expiredTimestamp) {
-    if (expiredPrimaryRefreshTimer !== null || !selectedStopId) return;
-
-    const scheduledStopId = String(selectedStopId);
-    expiredPrimaryRefreshTimer = setTimeout(() => {
-      expiredPrimaryRefreshTimer = null;
-      if (selectedStopId !== scheduledStopId || lastExpiredPrimaryArrival !== expiredTimestamp) return;
-      refreshSelectedBoard();
-    }, EXPIRED_PRIMARY_HOLD_MS);
-  }
-
   async function renderStopBoard(stop, boardData = null) {
-    clearExpiredPrimaryRefreshTimer();
     const renderToken = ++boardRenderToken;
     selectedStopId = String(stop.stop_id);
     const panel = boardPanel();
@@ -1474,8 +1453,7 @@
       ++boardRenderToken;
       selectedStopId = null;
       lastExpiredPrimaryArrival = null;
-      clearExpiredPrimaryRefreshTimer();
-      if (selectedStopMarker) {
+        if (selectedStopMarker) {
         selectedStopMarker.setStyle({
           fillColor: "#111827",
           color: "#ffffff",
@@ -1897,7 +1875,7 @@
       && !refreshInFlight
     ) {
       lastExpiredPrimaryArrival = primaryArrivalExpired;
-      scheduleExpiredPrimaryRefresh(primaryArrivalExpired);
+      refreshSelectedBoard();
     }
   }
 
@@ -1915,10 +1893,6 @@
 
   async function refreshSelectedBoard(force = false) {
     if (!selectedStopId || refreshInFlight) return;
-    // Do not let the regular 15s refresh interrupt the guaranteed 10s hold
-    // after the primary arrival reaches zero. A manual refresh may override it.
-    if (!force && expiredPrimaryRefreshTimer !== null) return;
-
     const requestedStopId = String(selectedStopId);
     const requestToken = boardRenderToken;
     const stop = findStopById(requestedStopId);
@@ -1933,14 +1907,6 @@
       const data = await fetchVirtualBoard(stop);
       if (requestToken !== boardRenderToken || selectedStopId !== requestedStopId) return;
 
-      // If an automatic refresh finishes after the currently displayed primary
-      // arrival has already expired, keep the existing "Сега" state until the
-      // 10s hold expires instead of replacing it prematurely.
-      if (!force && expiredPrimaryRefreshTimer !== null) return;
-
-      const displayedPrimaryArrival = Number(
-        boardPanel()?.querySelector(".vb-arrival-minutes")?.dataset.arrivalTimestamp
-      );
       if (
         !force
         && Number.isFinite(displayedPrimaryArrival)
