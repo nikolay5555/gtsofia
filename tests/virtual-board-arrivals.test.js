@@ -94,6 +94,64 @@ assert.equal(
   '2 minutes 59 seconds remaining must display two minutes'
 );
 
+assert.deepEqual(
+  internals.normalizeArrivalExtras([1, "1", 0]),
+  ["1", "1", "0"],
+  'vehicle extras must normalize numeric and string flags'
+);
+assert.equal(
+  internals.getDimitarArrivalExtras(
+    { times: [{ t: 2, extras: ["1", "0", "1"] }] },
+    2
+  ).join(""),
+  "101",
+  'matching relative arrival time must preserve Dimitar extras'
+);
+assert.equal(
+  internals.getDimitarArrivalExtras(
+    { times: [{ t: 8, extras: ["1", "1", "1"] }] },
+    2
+  ).join(""),
+  "000",
+  'extras outside the matching time window must be ignored'
+);
+assert.equal(
+  internals.dimitarExtrasIconHtml(["1", "0", "1"]).includes("bi-snow")
+    && internals.dimitarExtrasIconHtml(["1", "0", "1"]).includes("bi-bicycle")
+    && !internals.dimitarExtrasIconHtml(["1", "0", "1"]).includes("person-wheelchair"),
+  true,
+  'only active vehicle extras must render their icons'
+);
+
+const extrasNow = Date.now() / 1000;
+const enrichedRoutes = internals.enrichFirstArrivalExtras([
+  {
+    route_ref: "10",
+    destination: "Тест",
+    times: [
+      { timestamp: extrasNow + 120 },
+      { timestamp: extrasNow + 420 }
+    ]
+  }
+], [{
+  route_ref: "10",
+  destination: "Тест",
+  times: [
+    { t: 2, extras: ["1", "1", "0"] },
+    { t: 7, extras: ["0", "0", "1"] }
+  ]
+}]);
+assert.deepEqual(
+  enrichedRoutes[0].times[0].extras,
+  ["1", "1", "0"],
+  'vehicle extras must be attached to the first arrival'
+);
+assert.equal(
+  Object.prototype.hasOwnProperty.call(enrichedRoutes[0].times[1], "extras"),
+  false,
+  'vehicle extras must not be attached to later arrivals'
+);
+
 // A service that begins on Saturday must not be treated as active on Thursday
 // merely because the generated horizon contains later weekdays.
 internals.setTestState({
