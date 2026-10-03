@@ -292,6 +292,23 @@ function getRealtimeScheduledTimestamp(time) {
   return null;
 }
 
+function getStaticCourseKey(staticRoute, staticTime) {
+  const routeId = String(staticRoute?.route_id || '').trim();
+  const routeRef = String(staticRoute?.route_ref || '').trim();
+  const directionKey = String(staticRoute?.direction_key || '').trim();
+  const destinationKey = normalizeDirectionText(staticRoute?.destination || '');
+  const timestamp = Number(staticTime?.timestamp);
+
+  if (!routeId || !Number.isFinite(timestamp)) return '';
+
+  return [
+    routeId,
+    routeRef,
+    directionKey || destinationKey,
+    Math.floor(timestamp)
+  ].join('|');
+}
+
 function findRealtimeStaticMatchIndex(realtimeRoute, realtimeTime, staticTimes, matchedStaticIndexes) {
   const realtimeTripId = String(realtimeTime?.trip_id || realtimeRoute?.trip_id || '').trim();
 
@@ -1297,6 +1314,8 @@ const realtimeRoutes = Array.isArray(data?.routes)
       );
     }
 
+    const matchedStaticCourseKeys = new Set();
+
     const mergedSurfaceRoutes = [...mergedRealtime.values()]
       .map(route => {
         const routeId = String(route?.route_id || '').trim();
@@ -1327,9 +1346,11 @@ const realtimeRoutes = Array.isArray(data?.routes)
         });
 
         const realtimeTimes = Array.isArray(route?.times) ? route.times : [];
-        const staticTimes = staticCandidates.flatMap(staticRoute =>
-          Array.isArray(staticRoute?.times) ? staticRoute.times : []
+        const staticEntries = staticCandidates.flatMap(staticRoute =>
+          (Array.isArray(staticRoute?.times) ? staticRoute.times : [])
+            .map(time => ({ staticRoute, time }))
         );
+        const staticTimes = staticEntries.map(entry => entry.time);
 
         const combinedTimes = [...realtimeTimes];
         const matchedStaticIndexes = new Set();
@@ -1354,6 +1375,14 @@ const realtimeRoutes = Array.isArray(data?.routes)
             // short realtime feed gap after the vehicle has passed the stop.
             realtimeTime.matched_scheduled_timestamp =
               Number(staticTimes[matchIndex]?.timestamp);
+
+            const matchedEntry = staticEntries[matchIndex];
+            const matchedCourseKey = matchedEntry
+              ? getStaticCourseKey(matchedEntry.staticRoute, matchedEntry.time)
+              : '';
+            if (matchedCourseKey) {
+              matchedStaticCourseKeys.add(matchedCourseKey);
+            }
           }
         }
 
@@ -1597,24 +1626,40 @@ const realtimeRoutes = Array.isArray(data?.routes)
       });
     }
 
-    const surfaceFallbackRoutes = scheduledSurfaceRoutes.filter(route => {
-      if (realtimeLogicalRoutes.some(realtimeRoute =>
-        realtimeOverridesScheduledDirection(realtimeRoute, route, stop.stop_id)
-      )) {
-        return false;
-      }
+    const surfaceFallbackRoutes = scheduledSurfaceRoutes
+      .map(route => {
+        if (realtimeLogicalRoutes.some(realtimeRoute =>
+          realtimeOverridesScheduledDirection(realtimeRoute, route, stop.stop_id)
+        )) {
+          return null;
+        }
 
-      if (activeShortDirectionOverridesScheduledDirection(route, activeDirections)) {
-        return false;
-      }
+        if (activeShortDirectionOverridesScheduledDirection(route, activeDirections)) {
+          return null;
+        }
 
-      // Passenger-facing merge for equivalent named terminals (e.g. 94 /
-      // stop 1699 vs 1700).
-      const routeId = String(route.route_id || '');
-const destinationKey = normalizeDirectionText(route.destination || '');
-      const displayedKey = `${routeId}|${destinationKey}|${String(route.route_ref || '')}`;
-      return !realtimeDirectionKeys.has(displayedKey);
-    });
+        // A static course that was explicitly matched to a realtime arrival
+        // must never be reintroduced by the later fallback path.
+        const remainingTimes = (Array.isArray(route?.times) ? route.times : [])
+          .filter(time => !matchedStaticCourseKeys.has(getStaticCourseKey(route, time)));
+
+        if (!remainingTimes.length) return null;
+
+        const routeWithRemainingTimes = {
+          ...route,
+          times: remainingTimes
+        };
+
+        // Passenger-facing merge for equivalent named terminals (e.g. 94 /
+        // stop 1699 vs 1700).
+        const routeId = String(route.route_id || '');
+        const destinationKey = normalizeDirectionText(route.destination || '');
+        const displayedKey = `${routeId}|${destinationKey}|${String(route.route_ref || '')}`;
+        if (realtimeDirectionKeys.has(displayedKey)) return null;
+
+        return routeWithRemainingTimes;
+      })
+      .filter(Boolean);
 
     // Some GTFS exports contain duplicate static directions with the same
     // destination/pattern. Keep only the earliest fallback row for a given
