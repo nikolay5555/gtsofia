@@ -73,6 +73,7 @@ def build_calendar_context(
     date_types = {}
     service_ids_by_date = {}
     service_day_types = defaultdict(set)
+    generation_service_day_types = defaultdict(set)
 
     current = start_date
     while current <= end_date:
@@ -97,15 +98,20 @@ def build_calendar_context(
         service_ids_by_date[date_key] = sorted(effective_service_ids)
 
         for service_id in effective_service_ids:
-            service_day_types[service_id].add(day_type)
+            generation_service_day_types[service_id].add(day_type)
+            if current >= today:
+                service_day_types[service_id].add(day_type)
 
         current += timedelta(days=1)
 
     if not calendar:
         service_day_types.clear()
+        generation_service_day_types.clear()
         for date_key, day_type in date_types.items():
             for service_id in service_ids_by_date[date_key]:
-                service_day_types[service_id].add(day_type)
+                generation_service_day_types[service_id].add(day_type)
+                if date_key >= today.isoformat():
+                    service_day_types[service_id].add(day_type)
 
     result = {
         service_id: sorted(
@@ -125,6 +131,13 @@ def build_calendar_context(
         "serviceIdsByDate": service_ids_by_date,
         "dateTypes": date_types,
         "serviceDayTypes": result,
+        "generationServiceDayTypes": {
+            service_id: sorted(
+                day_types,
+                key=lambda value: 0 if value == "weekday" else 1,
+            )
+            for service_id, day_types in generation_service_day_types.items()
+        },
         "config": calendar_config,
     }
 
