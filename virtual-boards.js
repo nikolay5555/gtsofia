@@ -264,7 +264,9 @@ function getRealtimeScheduledTimestamp(time) {
   )
     ? Number(scheduledRaw)
     : NaN;
-  if (Number.isFinite(scheduledTimestamp)) return scheduledTimestamp;
+  if (Number.isFinite(scheduledTimestamp) && scheduledTimestamp > 0) {
+    return scheduledTimestamp;
+  }
 
   const actualRaw = time?.timestamp;
   const delayRaw = time?.delay;
@@ -1201,12 +1203,26 @@ const realtimeRoutes = Array.isArray(data?.routes)
                 .map(time => ({
                   timestamp: Number(time?.timestamp),
                   trip_id: String(time?.trip_id || route.trip_id || '').trim(),
-                  delay: Number.isFinite(Number(time?.delay)) ? Number(time?.delay) : null,
+                  delay: (
+                    time?.delay !== null
+                    && time?.delay !== undefined
+                    && String(time?.delay).trim() !== ''
+                    && Number.isFinite(Number(time?.delay))
+                  )
+                    ? Number(time.delay)
+                    : null,
                   scheduled: false,
                   source: 'realtime',
                   stop_schedule_relationship: Number(time?.stop_schedule_relationship),
                   stop_schedule_relationship_name: String(time?.stop_schedule_relationship_name || 'SCHEDULED'),
-                  scheduled_time: Number.isFinite(Number(time?.scheduled_time)) ? Number(time.scheduled_time) : null
+                  scheduled_time: (
+                    time?.scheduled_time !== null
+                    && time?.scheduled_time !== undefined
+                    && String(time?.scheduled_time).trim() !== ''
+                    && Number.isFinite(Number(time?.scheduled_time))
+                  )
+                    ? Number(time.scheduled_time)
+                    : null
                 }))
                 .filter(time => Number.isFinite(time.timestamp))
             };
