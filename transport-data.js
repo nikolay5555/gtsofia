@@ -305,10 +305,22 @@ function buildRuntimeSchedules(
                 ? item.times.map(formatScheduleMinute)
                 : []
         );
+        const arrivalTimes = (
+            Array.isArray(item?.arrival_times)
+                ? item.arrival_times.map(formatScheduleMinute)
+                : []
+        );
+        const departureTimes = (
+            Array.isArray(item?.departure_times)
+                ? item.departure_times.map(formatScheduleMinute)
+                : []
+        );
 
-        if (!times.some(Boolean)) continue;
+        if (!times.some(Boolean) && !arrivalTimes.some(Boolean) && !departureTimes.some(Boolean)) continue;
 
-        const first = times.find(Boolean);
+        const first = times.find(Boolean)
+            || departureTimes.find(Boolean)
+            || arrivalTimes.find(Boolean);
         if (!first) continue;
 
         const row = {
@@ -328,8 +340,11 @@ function buildRuntimeSchedules(
                         : Number(value)
                 )
                 : [],
+            direction_id: String(direction?.direction_id || '').trim(),
             start_time: first,
-            times
+            times,
+            arrival_times: arrivalTimes,
+            departure_times: departureTimes
         };
 
         schedules[routeId] ??= {};
