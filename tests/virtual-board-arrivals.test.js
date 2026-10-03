@@ -39,7 +39,7 @@ function createStorage(initialEntries = []) {
 function loadInternals(storage) {
   const exportedSource = source.replace(
     /\n\}\)\(\);\s*$/,
-    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
+    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    getRealtimeScheduledTimestamp,\n    findRealtimeStaticMatchIndex,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
   );
 
   const context = {
@@ -297,5 +297,74 @@ assert.equal(
   false,
   'sequence-only SKIPPED must not suppress a different stop in the same trip'
 );
+
+
+// Realtime and static must represent one course even when the vehicle is
+// running early/late and the feed uses a different trip_id namespace.
+{
+  const staticTimes = [
+    { timestamp: 1_000_480, trip_id: 'STATIC-A', start_time: '12:00:00' },
+    { timestamp: 1_000_600, trip_id: 'STATIC-B', start_time: '12:10:00' },
+    { timestamp: 1_000_720, trip_id: 'STATIC-C', start_time: '12:20:00' }
+  ];
+
+  assert.equal(
+    internals.findRealtimeStaticMatchIndex(
+      { trip_id: 'RT-A', trip_start_time: '12:00:00' },
+      { trip_id: 'RT-A', timestamp: 1_000_420, scheduled_time: null, delay: null },
+      staticTimes,
+      new Set()
+    ),
+    0,
+    'realtime early arrival must replace the static course with the same start time'
+  );
+
+  assert.equal(
+    internals.findRealtimeStaticMatchIndex(
+      { trip_id: 'RT-B', trip_start_time: '12:10:00' },
+      { trip_id: 'RT-B', timestamp: 1_000_690, scheduled_time: 1_000_600, delay: 90 },
+      staticTimes,
+      new Set([0])
+    ),
+    1,
+    'realtime late arrival must replace the static course using scheduled_time'
+  );
+
+  assert.equal(
+    internals.getRealtimeScheduledTimestamp({
+      timestamp: 1_000_410,
+      scheduled_time: null,
+      delay: -70
+    }),
+    1_000_480,
+    'negative realtime delay must reconstruct the scheduled timestamp'
+  );
+
+  assert.equal(
+    internals.findRealtimeStaticMatchIndex(
+      { trip_id: '', trip_start_time: '' },
+      { trip_id: '', timestamp: 1_000_480 + 60, scheduled_time: null, delay: null },
+      staticTimes,
+      new Set()
+    ),
+    0,
+    'a one-minute early/late realtime record without identity must replace the nearby scheduled course'
+  );
+
+  const closeStaticTimes = [
+    { timestamp: 2_000_480, trip_id: 'STATIC-X', start_time: '13:00:00' },
+    { timestamp: 2_000_540, trip_id: 'STATIC-Y', start_time: '13:01:00' }
+  ];
+  assert.equal(
+    internals.findRealtimeStaticMatchIndex(
+      { trip_id: '', trip_start_time: '' },
+      { trip_id: '', timestamp: 2_000_510, scheduled_time: null, delay: null },
+      closeStaticTimes,
+      new Set()
+    ),
+    -1,
+    'ambiguous nearby realtime arrivals must not hide a genuinely separate course'
+  );
+}
 
 console.log('virtual-board-arrivals: all tests passed');
