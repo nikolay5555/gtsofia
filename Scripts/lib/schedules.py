@@ -420,26 +420,39 @@ def build_reference_directions(
         )
 
         times = []
+        arrival_times = []
+        departure_times = []
 
         for stop_time in trip_stop_times:
 
-            parsed = parse_time(
-                stop_time.get(
-                    "departure_time"
-                )
-                or stop_time.get(
-                    "arrival_time"
-                )
+            arrival = parse_time(
+                stop_time.get("arrival_time")
+            )
+            departure = parse_time(
+                stop_time.get("departure_time")
             )
 
-            if parsed is None:
-                times.append(
-                    None
-                )
-            else:
-                times.append(
-                    parsed // 60
-                )
+            effective = (
+                departure
+                if departure is not None
+                else arrival
+            )
+
+            times.append(
+                None
+                if effective is None
+                else effective // 60
+            )
+            arrival_times.append(
+                None
+                if arrival is None
+                else arrival // 60
+            )
+            departure_times.append(
+                None
+                if departure is None
+                else departure // 60
+            )
 
         logical_stop_times.append({
 
@@ -448,8 +461,18 @@ def build_reference_directions(
                     "id"
                 ],
 
+            # Keep the historical compact field for existing timetable pages.
             "times":
                 times,
+
+            # Keep arrival and departure separately for consumers such as
+            # the virtual arrival board. GTFS stop_times.txt defines them as
+            # distinct fields; when one is missing the other may be used.
+            "arrival_times":
+                arrival_times,
+
+            "departure_times":
+                departure_times,
 
             # Preserve the GTFS stop_sequence alongside the padded timetable.
             # GTFS-Realtime StopTimeUpdate may identify a stop by sequence
@@ -687,6 +710,18 @@ def merge_partial_directions(
                         + [None]
                         * end_padding
                     )
+
+                    for field in (
+                        "arrival_times",
+                        "departure_times",
+                    ):
+                        item[field] = (
+                            [None]
+                            * begin_padding
+                            + item.get(field, [])
+                            + [None]
+                            * end_padding
+                        )
 
                 logical_trip[
                     "direction_code"
@@ -989,6 +1024,8 @@ def build_compact_schedule_model(
         model_stop_times.append({
             "trip": model_trip_id,
             "times": list(item.get("times", [])),
+            "arrival_times": list(item.get("arrival_times", [])),
+            "departure_times": list(item.get("departure_times", [])),
             "stop_sequences": [
                 sequence if sequence is None else int(sequence)
                 for sequence in item.get("stop_sequences", [])

@@ -296,20 +296,32 @@ function buildRuntimeSchedules(
 
         if (!routeId || !directionKey) continue;
 
-        const dayType = logicalTrip?.is_weekend
-            ? 'weekend'
-            : 'weekday';
-
         const times = (
             Array.isArray(item?.times)
                 ? item.times.map(formatScheduleMinute)
                 : []
         );
+        const arrivalTimes = (
+            Array.isArray(item?.arrival_times)
+                ? item.arrival_times.map(formatScheduleMinute)
+                : []
+        );
+        const departureTimes = (
+            Array.isArray(item?.departure_times)
+                ? item.departure_times.map(formatScheduleMinute)
+                : []
+        );
 
-        if (!times.some(Boolean)) continue;
+        if (!times.some(Boolean) && !arrivalTimes.some(Boolean) && !departureTimes.some(Boolean)) continue;
 
-        const first = times.find(Boolean);
+        // The first stop's departure_time is the authoritative GTFS trip
+        // start_time. Keep the old effective-time fallback for incomplete data.
+        const first = departureTimes.find(Boolean)
+            || times.find(Boolean)
+            || arrivalTimes.find(Boolean);
         if (!first) continue;
+
+        const direction = runtimeDirections?.[routeId]?.[directionKey] || {};
 
         const row = {
             trip_id: Number.isFinite(Number(logicalTrip?.id))
@@ -328,8 +340,11 @@ function buildRuntimeSchedules(
                         : Number(value)
                 )
                 : [],
+            direction_id: String(direction?.direction_id || '').trim(),
             start_time: first,
-            times
+            times,
+            arrival_times: arrivalTimes,
+            departure_times: departureTimes
         };
 
         schedules[routeId] ??= {};
@@ -338,7 +353,16 @@ function buildRuntimeSchedules(
             weekend: []
         };
 
-        schedules[routeId][directionKey][dayType].push(row);
+        // Keep each concrete source trip available in both buckets. The exact
+        // service_id on the row is authoritative and the virtual board evaluates
+        // calendar.txt + calendar_dates.txt for the requested service date. This
+        // allows date exceptions to move a normal weekday trip to a weekend
+        // holiday (and vice versa) without losing the row at generation time.
+        for (const dayType of ['weekday', 'weekend']) {
+            schedules[routeId][directionKey][dayType].push({
+                ...row
+            });
+        }
     }
 
     for (const routeDirections of Object.values(schedules)) {

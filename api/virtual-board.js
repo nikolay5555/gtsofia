@@ -207,7 +207,13 @@ function decodeTripProperties(bytes) {
 
 function decodeTripUpdate(bytes) {
   const state = { index: 0 };
-  const result = { trip: null, stopTimeUpdates: [], timestamp: null, tripProperties: null };
+  const result = {
+    trip: null,
+    stopTimeUpdates: [],
+    timestamp: null,
+    delay: null,
+    tripProperties: null
+  };
 
   while (state.index < bytes.length) {
     const field = readField(bytes, state);
@@ -219,6 +225,8 @@ function decodeTripUpdate(bytes) {
     } else if (field.fieldNumber === 4 && field.wireType === 0) {
       const raw = field.value;
       if (raw <= BigInt(Number.MAX_SAFE_INTEGER)) result.timestamp = Number(raw);
+    } else if (field.fieldNumber === 5 && field.wireType === 0) {
+      result.delay = toSignedInt32(field.value);
     } else if (field.fieldNumber === 6 && field.wireType === 2) {
       result.tripProperties = decodeTripProperties(field.value);
     }
@@ -309,21 +317,64 @@ function buildBoard(updates, stopCode, feedTimestamp) {
   const target = normalizeStopKey(stopCode);
   const grouped = new Map();
   const skippedTrips = new Map();
+  const suppressedTrips = new Map();
 
-  for (const tripUpdate of updates) {
+  const getTripRelationship = trip => {
+    const value = Number(trip?.scheduleRelationship);
+    return Number.isFinite(value) ? value : TRIP_RELATIONSHIP.SCHEDULED;
+  };
+
+  const getTripInstanceId = (trip, tripUpdate) => {
+    const relationship = getTripRelationship(trip);
+    if (relationship === TRIP_RELATIONSHIP.DUPLICATED) {
+      return String(tripUpdate?.tripProperties?.tripId || "").trim();
+    }
+    return String(trip?.tripId || "").trim();
+  };
+
+  for (const tripUpdate of updates || []) {
     const trip = tripUpdate?.trip;
     if (!trip) continue;
 
-    const tripRelationship = Number.isFinite(Number(trip.scheduleRelationship))
-      ? Number(trip.scheduleRelationship)
-      : TRIP_RELATIONSHIP.SCHEDULED;
+    const tripRelationship = getTripRelationship(trip);
+    const tripId = getTripInstanceId(trip, tripUpdate);
+    const sourceTripId = String(trip.tripId || "").trim();
+    const tripStartDate = String(
+      trip.startDate || tripUpdate.tripProperties?.startDate || ""
+    ).trim();
+    const tripStartTime = String(
+      trip.startTime || tripUpdate.tripProperties?.startTime || ""
+    ).trim();
+    const tripRouteId = String(trip.routeId || "").trim();
+    const tripDirectionId = String(trip.directionId || "").trim();
 
-    // CANCELED/DELETED are terminal states for the whole trip. Everything
-    // else can carry useful arrival information. In particular, UNSCHEDULED,
-    // REPLACEMENT, DUPLICATED and NEW must not be thrown away merely because
-    // they are not a plain scheduled trip.
-    if (tripRelationship === TRIP_RELATIONSHIP.CANCELED
-      || tripRelationship === TRIP_RELATIONSHIP.DELETED) {
+    // CANCELED/DELETED are explicit static-trip suppression signals. They do
+    // not need StopTimeUpdates and take precedence over any stop update.
+    if (
+      tripRelationship === TRIP_RELATIONSHIP.CANCELED
+      || tripRelationship === TRIP_RELATIONSHIP.DELETED
+    ) {
+      if (sourceTripId || tripId) {
+        const key = [
+          sourceTripId || tripId,
+          tripStartDate,
+          tripStartTime,
+          tripRouteId,
+          tripDirectionId
+        ].join("|");
+
+        suppressedTrips.set(key, {
+          trip_id: sourceTripId || tripId,
+          trip_instance_id: tripId || sourceTripId,
+          start_date: tripStartDate,
+          start_time: tripStartTime,
+          route_id: tripRouteId,
+          direction_id: tripDirectionId,
+          schedule_relationship: tripRelationship,
+          schedule_relationship_name: TRIP_RELATIONSHIP_NAME[tripRelationship]
+            || `UNKNOWN_${tripRelationship}`
+        });
+      }
       continue;
     }
 
@@ -332,34 +383,36 @@ function buildBoard(updates, stopCode, feedTimestamp) {
         ? Number(stopUpdate.scheduleRelationship)
         : STOP_RELATIONSHIP.SCHEDULED;
 
+      const stopSequence = Number.isFinite(Number(stopUpdate.stopSequence))
+        ? Number(stopUpdate.stopSequence)
+        : null;
+
       // SKIPPED is useful even when the producer identifies the stop only by
-      // stop_sequence (GTFS-RT permits either stop_id or stop_sequence). Keep
-      // sequence-only SKIPPED records so the frontend can resolve them against
-      // the generated static pattern. When stop_id is present, only keep
-      // records relevant to the requested board stop.
+      // stop_sequence. Keep it as an exact suppression signal for the frontend.
       if (stopRelationship === STOP_RELATIONSHIP.SKIPPED) {
         if (stopUpdate?.stopId && !stopIdsMatch(stopUpdate.stopId, target)) continue;
 
         const skippedKey = [
-          trip.tripId || '',
-          trip.startDate || tripUpdate.tripProperties?.startDate || '',
-          trip.startTime || tripUpdate.tripProperties?.startTime || '',
-          trip.routeId || '',
-          trip.directionId || '',
-          stopUpdate.stopId ? normalizeStopKey(stopUpdate.stopId) : `seq:${Number.isFinite(Number(stopUpdate.stopSequence)) ? Number(stopUpdate.stopSequence) : ''}`
-        ].join('|');
+          tripId,
+          tripStartDate,
+          tripStartTime,
+          tripRouteId,
+          tripDirectionId,
+          stopUpdate.stopId
+            ? normalizeStopKey(stopUpdate.stopId)
+            : `seq:${stopSequence ?? ''}`
+        ].join("|");
 
         if (!skippedTrips.has(skippedKey)) {
           skippedTrips.set(skippedKey, {
-            trip_id: trip.tripId || '',
-            start_date: trip.startDate || tripUpdate.tripProperties?.startDate || '',
-            start_time: trip.startTime || tripUpdate.tripProperties?.startTime || '',
-            route_id: trip.routeId || '',
-            direction_id: trip.directionId || '',
-            stop_id: stopUpdate.stopId || '',
-            stop_sequence: Number.isFinite(Number(stopUpdate.stopSequence))
-              ? Number(stopUpdate.stopSequence)
-              : null,
+            trip_id: tripId,
+            source_trip_id: sourceTripId,
+            start_date: tripStartDate,
+            start_time: tripStartTime,
+            route_id: tripRouteId,
+            direction_id: tripDirectionId,
+            stop_id: stopUpdate.stopId || "",
+            stop_sequence: stopSequence,
             stop_schedule_relationship: stopRelationship,
             stop_schedule_relationship_name: STOP_RELATIONSHIP_NAME[stopRelationship]
               || `UNKNOWN_${stopRelationship}`
@@ -368,28 +421,50 @@ function buildBoard(updates, stopCode, feedTimestamp) {
         continue;
       }
 
-      // A normal arrival must still be for the requested stop. A sequence-only
-      // SKIPPED record was handled above and is deliberately not treated as an
-      // arrival.
-      if (!stopUpdate?.stopId || !stopIdsMatch(stopUpdate.stopId, target)) continue;
-
-      // NO_DATA explicitly says that no realtime timing is available here.
-      // It must NOT suppress the static fallback.
       if (stopRelationship === STOP_RELATIONSHIP.NO_DATA) continue;
 
-      const timestamp = eventTimestamp(stopUpdate);
-      if (!Number.isFinite(timestamp)) continue;
-      if (timestamp < now - 60) continue;
-      if (timestamp > now + LOOK_AHEAD_SECONDS) continue;
+      // A normal update can identify the stop by stop_id OR stop_sequence.
+      // When only stop_sequence is supplied, keep it for the frontend, which
+      // has the static stop_times mapping needed to resolve the selected stop.
+      const hasTargetStopId =
+        !!stopUpdate?.stopId && stopIdsMatch(stopUpdate.stopId, target);
+      const sequenceOnly =
+        !stopUpdate?.stopId && Number.isFinite(stopSequence);
 
-      const delay = eventDelay(stopUpdate);
+      if (!hasTargetStopId && !sequenceOnly) continue;
+      if (tripRelationship !== TRIP_RELATIONSHIP.NEW
+        && tripRelationship !== TRIP_RELATIONSHIP.REPLACEMENT
+        && stopUpdate?.stopId
+        && !hasTargetStopId) {
+        continue;
+      }
+
+      const timestamp = eventTimestamp(stopUpdate);
+      const stopDelay = eventDelay(stopUpdate);
+      const delay = Number.isFinite(stopDelay)
+        ? stopDelay
+        : (
+          Number.isFinite(Number(tripUpdate?.delay))
+            ? Number(tripUpdate.delay)
+            : null
+        );
+
+      // For SCHEDULED trips delay-only StopTimeEvents are valid and the
+      // frontend can resolve the absolute timestamp using static GTFS.
+      if (!Number.isFinite(timestamp) && !Number.isFinite(Number(delay))) continue;
+
+      if (Number.isFinite(timestamp)) {
+        if (timestamp < now - 60) continue;
+        if (timestamp > now + LOOK_AHEAD_SECONDS) continue;
+      }
+
       const key = [
-        trip.tripId || '',
-        trip.startDate || tripUpdate.tripProperties?.startDate || '',
-        trip.startTime || tripUpdate.tripProperties?.startTime || '',
-        trip.routeId || '',
-        trip.directionId || ''
-      ].join('|');
+        tripId,
+        tripStartDate,
+        tripStartTime,
+        tripRouteId,
+        tripDirectionId
+      ].join("|");
 
       if (!grouped.has(key)) {
         const terminalUpdate = (tripUpdate.stopTimeUpdates || [])
@@ -408,21 +483,29 @@ function buildBoard(updates, stopCode, feedTimestamp) {
           })[0] || null;
 
         grouped.set(key, {
-          trip_id: trip.tripId || '',
-          trip_start_date: trip.startDate || tripUpdate.tripProperties?.startDate || '',
-          trip_start_time: trip.startTime || tripUpdate.tripProperties?.startTime || '',
-          route_id: trip.routeId || '',
-          direction_id: trip.directionId || '',
+          trip_id: tripId,
+          source_trip_id: sourceTripId,
+          trip_instance_id: tripId,
+          trip_start_date: tripStartDate,
+          trip_start_time: tripStartTime,
+          route_id: tripRouteId,
+          direction_id: tripDirectionId,
           schedule_relationship: tripRelationship,
-          schedule_relationship_name: TRIP_RELATIONSHIP_NAME[tripRelationship] || `UNKNOWN_${tripRelationship}`,
-          destination_stop_id: terminalUpdate?.stopId || '',
+          schedule_relationship_name: TRIP_RELATIONSHIP_NAME[tripRelationship]
+            || `UNKNOWN_${tripRelationship}`,
+          destination_stop_id: terminalUpdate?.stopId || "",
+          trip_delay: Number.isFinite(Number(tripUpdate?.delay))
+            ? Number(tripUpdate.delay)
+            : null,
           times: []
         });
       }
 
       grouped.get(key).times.push({
-        timestamp,
-        delay: Number.isFinite(delay) ? delay : null,
+        timestamp: Number.isFinite(timestamp) ? timestamp : null,
+        delay,
+        stop_id: stopUpdate.stopId || "",
+        stop_sequence: stopSequence,
         stop_schedule_relationship: stopRelationship,
         stop_schedule_relationship_name: STOP_RELATIONSHIP_NAME[stopRelationship]
           || `UNKNOWN_${stopRelationship}`,
@@ -439,88 +522,85 @@ function buildBoard(updates, stopCode, feedTimestamp) {
     .map(row => ({
       ...row,
       times: row.times
-        .sort((a, b) => a.timestamp - b.timestamp)
+        .sort((a, b) => {
+          const aTime = Number.isFinite(Number(a.timestamp)) ? Number(a.timestamp) : Infinity;
+          const bTime = Number.isFinite(Number(b.timestamp)) ? Number(b.timestamp) : Infinity;
+          return aTime - bTime;
+        })
         .slice(0, MAX_RESULTS_PER_ROUTE)
     }))
     .filter(row => row.times.length)
-    .sort((a, b) => a.times[0].timestamp - b.times[0].timestamp);
+    .sort((a, b) => {
+      const aTime = Number.isFinite(Number(a.times[0]?.timestamp))
+        ? Number(a.times[0].timestamp)
+        : Infinity;
+      const bTime = Number.isFinite(Number(b.times[0]?.timestamp))
+        ? Number(b.times[0].timestamp)
+        : Infinity;
+      return aTime - bTime;
+    });
 
-  // Only non-canceled/non-deleted realtime trips are considered operationally
-  // active by the frontend. Keeping these statuses out is important because a
-  // canceled trip must never suppress the static fallback for its direction.
   const activeTrips = [];
   const seenActive = new Set();
   for (const update of updates || []) {
     const trip = update?.trip;
     if (!trip) continue;
 
-    const relationship = Number.isFinite(Number(trip.scheduleRelationship))
-      ? Number(trip.scheduleRelationship)
-      : TRIP_RELATIONSHIP.SCHEDULED;
-    if (relationship === TRIP_RELATIONSHIP.CANCELED
-      || relationship === TRIP_RELATIONSHIP.DELETED) continue;
+    const relationship = getTripRelationship(trip);
+    if (
+      relationship === TRIP_RELATIONSHIP.CANCELED
+      || relationship === TRIP_RELATIONSHIP.DELETED
+    ) continue;
+
+    const tripId = getTripInstanceId(trip, update);
+    if (!tripId) continue;
 
     const tripKey = [
-      String(trip.tripId || ''),
-      String(trip.startDate || update.tripProperties?.startDate || ''),
-      String(trip.startTime || update.tripProperties?.startTime || ''),
-      String(trip.routeId || ''),
-      String(trip.directionId || '')
-    ].join('|');
+      tripId,
+      String(trip.startDate || update.tripProperties?.startDate || ""),
+      String(trip.startTime || update.tripProperties?.startTime || ""),
+      String(trip.routeId || ""),
+      String(trip.directionId || "")
+    ].join("|");
     if (seenActive.has(tripKey)) continue;
     seenActive.add(tripKey);
 
     activeTrips.push({
-      trip_id: String(trip.tripId || ''),
-      start_date: String(trip.startDate || update.tripProperties?.startDate || ''),
-      start_time: String(trip.startTime || update.tripProperties?.startTime || ''),
-      route_id: String(trip.routeId || ''),
-      direction_id: String(trip.directionId || ''),
+      trip_id: tripId,
+      source_trip_id: String(trip.tripId || "").trim(),
+      start_date: String(trip.startDate || update.tripProperties?.startDate || ""),
+      start_time: String(trip.startTime || update.tripProperties?.startTime || ""),
+      route_id: String(trip.routeId || ""),
+      direction_id: String(trip.directionId || ""),
       schedule_relationship: relationship,
-      schedule_relationship_name: TRIP_RELATIONSHIP_NAME[relationship] || `UNKNOWN_${relationship}`
+      schedule_relationship_name: TRIP_RELATIONSHIP_NAME[relationship]
+        || `UNKNOWN_${relationship}`
     });
   }
 
-  // A route is considered realtime-supported only while it has at least
-  // one operational trip in the current feed. CANCELED/DELETED trip updates
-  // must not disable the static timetable fallback for an otherwise inactive
-  // line.
   const realtimeRouteIds = [...new Set(
     (updates || [])
       .filter(update => {
-        const relationship = Number.isFinite(Number(update?.trip?.scheduleRelationship))
-          ? Number(update.trip.scheduleRelationship)
-          : TRIP_RELATIONSHIP.SCHEDULED;
-
+        const relationship = getTripRelationship(update?.trip);
         return relationship !== TRIP_RELATIONSHIP.CANCELED
           && relationship !== TRIP_RELATIONSHIP.DELETED;
       })
-      .map(update => String(update?.trip?.routeId || '').trim())
+      .map(update => String(update?.trip?.routeId || "").trim())
       .filter(Boolean)
   )];
 
   return {
-    status: routes.length ? 'ok' : 'empty',
+    status: routes.length ? "ok" : "empty",
     stop_code: String(stopCode),
     generated_at: feedTimestamp,
-    // Route IDs represented anywhere in the current GTFS-RT feed are
-    // considered realtime-supported. This is intentionally broader than
-    // active_trips: a route must not fall back to static GTFS merely because
-    // it has no arrival at this particular stop right now (or because a
-    // current trip is canceled/short-turned).
     realtime_route_ids: realtimeRouteIds,
     active_trips: activeTrips,
-    // SKIPPED is intentionally exposed as an explicit suppression signal for
-    // the static fallback. It is kept per trip + stop so unrelated scheduled
-    // courses on the same line/direction are not hidden.
-    skipped_trips: [...skippedTrips.values()],
-    // Keep this field for compatibility with the current frontend while the
-    // richer active_trips representation is adopted.
     active_trip_ids: activeTrips.map(item => item.trip_id).filter(Boolean),
+    skipped_trips: [...skippedTrips.values()],
+    suppressed_trips: [...suppressedTrips.values()],
     routes
   };
 }
-
 module.exports = async function handler(req, res) {
   if (req.method !== 'GET') {
     res.setHeader('Allow', 'GET');
