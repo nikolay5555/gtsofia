@@ -6,6 +6,12 @@ const path = require('node:path');
 const sourcePath = path.join(__dirname, '..', 'virtual-boards.js');
 const source = fs.readFileSync(sourcePath, 'utf8');
 
+assert.equal(
+  source.includes('displayedPrimaryArrival'),
+  false,
+  'automatic refresh must not reference the removed displayedPrimaryArrival state'
+);
+
 function createStorage(initialEntries = []) {
   const store = new Map(initialEntries);
   return {
