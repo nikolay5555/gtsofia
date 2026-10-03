@@ -2,7 +2,7 @@
 
 import json
 
-from lib.common import DATA_DIR, normalize, write_json
+from lib.common import DATA_DIR, load_line_overrides, normalize, write_json
 from lib.gtfs import read_csv
 from lib.routes import build_model_routes
 
@@ -22,7 +22,11 @@ def main():
         if normalize(trip.get("service_id")) in active_service_ids
     }
 
-    result = build_model_routes(routes, active_route_ids)
+    result = build_model_routes(
+        routes,
+        active_route_ids,
+        load_line_overrides(),
+    )
     write_json(DATA_DIR / "routes.json", result)
     print(f"Normalized active routes: {len(result)}")
 
