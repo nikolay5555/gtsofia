@@ -2164,7 +2164,46 @@ function findRealtimeStaticMatchEntryAcrossDirections(
       ? []
       : getSurfaceScheduledArrivals(stop, skippedTrips, suppressedTrips);
 
-    const realtimeRoutesForSelectedStop = realtimeRoutes
+    const syntheticRealtimeRoutes = isMetroStop(stop)
+      ? []
+      : buildSyntheticRealtimeRoutes(
+          data?.active_trips || [],
+          scheduledSurfaceRoutes,
+          stop
+        );
+
+    const explicitRealtimeTripIds = new Set(
+      realtimeRoutes.flatMap(route =>
+        (route.times || []).map(time =>
+          String(
+            time?.trip_instance_id
+            || time?.trip_id
+            || route?.trip_instance_id
+            || route?.trip_id
+            || ''
+          ).trim()
+        )
+      ).filter(Boolean)
+    );
+
+    const realtimeRoutesWithSparsePredictions = [
+      ...realtimeRoutes,
+      ...syntheticRealtimeRoutes.filter(route =>
+        !(route.times || []).some(time =>
+          explicitRealtimeTripIds.has(
+            String(
+              time?.trip_instance_id
+              || time?.trip_id
+              || route?.trip_instance_id
+              || route?.trip_id
+              || ''
+            ).trim()
+          )
+        )
+      )
+    ];
+
+    const realtimeRoutesForSelectedStop = realtimeRoutesWithSparsePredictions
       .map(route => ({
         ...route,
         times: (route.times || []).filter(time => {
