@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 from lib.calendar import build_active_service_ids, build_calendar_context
-from lib.common import get_today, load_calendar_config, write_json, DATA_DIR
+from lib.common import DATA_DIR, get_today, load_calendar_config, load_line_overrides, write_json
 from lib.gtfs import read_csv
 
 
@@ -26,7 +26,6 @@ def main():
 
     # Copy the presentation config into the generated data set so the
     # browser does not need to load configuration files independently.
-    from lib.common import load_line_overrides
     write_json(
         DATA_DIR / "line-overrides.json",
         load_line_overrides(),
