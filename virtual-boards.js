@@ -2145,7 +2145,9 @@ function findRealtimeStaticMatchEntryAcrossDirections(
       if (!tripId) continue;
 
       for (const staticRoute of scheduledSurfaceRoutes || []) {
-        if (String(staticRoute?.route_id || "").trim() !== String(activeTrip?.route_id || "").trim()) continue;
+        const staticRouteId = String(staticRoute?.route_id || "").trim();
+        const activeRouteId = String(activeTrip?.route_id || "").trim();
+        if (activeRouteId && staticRouteId !== activeRouteId) continue;
 
         const routeDirectionId = String(
           staticRoute?.direction_id
