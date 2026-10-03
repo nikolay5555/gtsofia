@@ -188,6 +188,28 @@ const delayOnlyTrip = encodeTripUpdate({
   }]
 });
 
+const duplicatedDelayOnlyTrip = encodeTripUpdate({
+  trip: {
+    tripId: 'REALTIME-DUPLICATED-SOURCE',
+    startTime: '08:50:00',
+    routeId: 'TB2',
+    scheduleRelationship: 6
+  },
+  delay: 120,
+  tripProperties: {
+    tripId: 'REALTIME-DUPLICATED-NEW',
+    startDate: '20260930',
+    startTime: '08:50:00'
+  },
+  stopUpdates: [{
+    stopId: '0605',
+    relationship: 0,
+    timestamp: null,
+    scheduledTime: null,
+    delay: null
+  }]
+});
+
 const replacementDelayOnlyTrip = encodeTripUpdate({
   trip: {
     tripId: 'REALTIME-REPLACEMENT-DELAY',
@@ -213,7 +235,8 @@ const feed = Buffer.concat([
   field(2, 2, encodeEntity('deleted', deletedTrip)),
   field(2, 2, encodeEntity('normal', normalTrip)),
   field(2, 2, encodeEntity('delay-only', delayOnlyTrip)),
-  field(2, 2, encodeEntity('replacement-delay-only', replacementDelayOnlyTrip))
+  field(2, 2, encodeEntity('replacement-delay-only', replacementDelayOnlyTrip)),
+  field(2, 2, encodeEntity('duplicated-delay-only', duplicatedDelayOnlyTrip))
 ]);
 
 global.fetch = async () => ({
@@ -262,6 +285,19 @@ const res = {
     'canceled/deleted trip ids must be retained for exact static suppression'
   );
 
+  const duplicatedDelayOnly = payload.routes.find(
+    route => route.trip_id === 'REALTIME-DUPLICATED-NEW'
+  );
+  assert.ok(
+    duplicatedDelayOnly,
+    'DUPLICATED trips may use delay relative to their calculated schedule'
+  );
+  assert.equal(
+    duplicatedDelayOnly.times[0].timestamp,
+    null,
+    'a duplicated delay-only update without a static match must preserve unknown absolute time'
+  );
+
   const replacementDelayOnly = payload.routes.find(
     route => route.trip_id === 'REALTIME-REPLACEMENT-DELAY'
   );
@@ -302,6 +338,16 @@ const res = {
     normalActiveTrip?.delay_updates?.[0]?.stop_sequence,
     null,
     'an omitted StopTimeUpdate.stop_sequence must remain unknown'
+  );
+
+  const duplicatedActiveTrip = payload.active_trips.find(
+    item => item.trip_id === 'REALTIME-DUPLICATED-NEW'
+  );
+  assert.ok(duplicatedActiveTrip, 'DUPLICATED trip properties must define the active trip identity');
+  assert.equal(
+    duplicatedActiveTrip.trip_delay,
+    120,
+    'DUPLICATED trips must retain TripUpdate.delay as delay against the calculated duplicate schedule'
   );
 
   const replacementDelayOnlyActiveTrip = payload.active_trips.find(
