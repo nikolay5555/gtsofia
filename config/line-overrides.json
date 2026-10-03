@@ -10,31 +10,42 @@
   },
   {
     "type": "bus",
-    "cgm_id": "TB43"
+    "cgm_id": "TB43",
+    "subtype": null
   },
   {
     "type": "bus",
-    "cgm_id": "TB35"
+    "cgm_id": "TB35",
+    "subtype": null
   },
   {
     "type": "bus",
-    "cgm_id": "TB36"
+    "cgm_id": "TB36",
+    "subtype": null
   },
   {
     "type": "bus",
     "cgm_id": "TB46",
-    "route_ref": "186"
+    "route_ref": "186",
+    "subtype": null
   },
   {
     "type": "bus",
-    "cgm_id": "TB39"
+    "cgm_id": "TB39",
+    "subtype": null
   },
   {
     "type": "bus",
-    "cgm_id": "TB24"
+    "cgm_id": "TB24",
+    "subtype": null
   },
   {
     "type": "bus",
-    "cgm_id": "TB41"
+    "cgm_id": "TB41",
+    "subtype": null
+  },
+  {
+    "type": "bus",
+    "cgm_id": "A259"
   }
 ]
