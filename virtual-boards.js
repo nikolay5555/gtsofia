@@ -1835,7 +1835,12 @@ function findRealtimeStaticMatchEntryAcrossDirections(
     const targetSequence = Number(staticTime?.stop_sequence);
     if (!Number.isFinite(targetSequence)) return null;
 
-    let effectiveDelay = Number.isFinite(Number(activeTrip?.trip_delay))
+    let effectiveDelay = (
+      activeTrip?.trip_delay !== null
+      && activeTrip?.trip_delay !== undefined
+      && String(activeTrip.trip_delay).trim() !== ""
+      && Number.isFinite(Number(activeTrip.trip_delay))
+    )
       ? Number(activeTrip.trip_delay)
       : null;
 
