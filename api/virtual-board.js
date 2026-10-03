@@ -624,7 +624,12 @@ schedule_relationship: optionalFiniteNumber(update?.scheduleRelationship)
       schedule_relationship: relationship,
       schedule_relationship_name: TRIP_RELATIONSHIP_NAME[relationship]
         || `UNKNOWN_${relationship}`,
-      trip_delay: optionalFiniteNumber(update?.delay),
+      trip_delay: (
+        relationship === TRIP_RELATIONSHIP.SCHEDULED
+        || relationship === TRIP_RELATIONSHIP.DUPLICATED
+      )
+        ? optionalFiniteNumber(update?.delay)
+        : null,
       delay_updates: serializeDelayUpdates(update.stopTimeUpdates)
     });
   }
