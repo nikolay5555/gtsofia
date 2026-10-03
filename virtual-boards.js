@@ -724,9 +724,36 @@ function findRealtimeStaticMatch(
       };
     }
 
+    if (matches.length > 1) {
+      // The same static trip_id can have multiple service-date instances in
+      // the board window (especially around midnight). GTFS-RT start_date is
+      // authoritative when present; otherwise choose the nearest static stop
+      // time to the realtime scheduled anchor (time - delay), and finally to
+      // the current instant. Do not reject a valid non-frequency trip merely
+      // because another date instance is also visible in the window.
+      const anchor = getRealtimeScheduledTimestamp(realtimeTime);
+      const actual = Number(realtimeTime?.timestamp);
+      const target = Number.isFinite(anchor)
+        ? anchor
+        : (Number.isFinite(actual) ? actual : Date.now() / 1000);
+
+      matches.sort((left, right) =>
+        Math.abs(Number(left.time?.timestamp) - target)
+        - Math.abs(Number(right.time?.timestamp) - target)
+      );
+
+      if (Number.isFinite(Number(matches[0]?.time?.timestamp))) {
+        return {
+          entry: matches[0],
+          strength: REALTIME_MATCH_STRENGTH.TRIP_ID,
+          method: "trip_id_nearest_service_date"
+        };
+      }
+    }
+
     // For REPLACEMENT the descriptor trip_id is explicitly the static trip
-    // being replaced. Do not guess by timing if the exact static trip cannot
-    // be resolved.
+    // being replaced. Without an exact/dated course it is not safe to guess
+    // a different static trip.
     if (relationship === 5) return null;
   }
 
