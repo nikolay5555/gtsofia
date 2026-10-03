@@ -650,8 +650,18 @@ function getRealtimeScheduledTimestamp(time) {
     return scheduledTimestamp;
   }
 
-  const actualTimestamp = Number(time?.timestamp);
-  const delay = Number(time?.delay);
+  const actualRaw = time?.timestamp;
+  const delayRaw = time?.delay;
+  const actualTimestamp = (
+    actualRaw !== null
+    && actualRaw !== undefined
+    && String(actualRaw).trim() !== ""
+  ) ? Number(actualRaw) : NaN;
+  const delay = (
+    delayRaw !== null
+    && delayRaw !== undefined
+    && String(delayRaw).trim() !== ""
+  ) ? Number(delayRaw) : NaN;
   if (Number.isFinite(actualTimestamp) && Number.isFinite(delay)) {
     return actualTimestamp - delay;
   }
