@@ -834,13 +834,16 @@ function findRealtimeStaticMatchIndex(
   matchedStaticIndexes
 ) {
   const entries = (staticTimes || []).map(time => ({
-    staticRoute: {},
+    staticRoute: { route_id: '__TEST_ROUTE__', direction_key: 'D1' },
     time
   }));
   const matchedKeys = new Set(
     (matchedStaticIndexes || []).size
       ? [...(matchedStaticIndexes || [])]
-        .map(index => getStaticCourseKey({}, staticTimes[index]))
+        .map(index => getStaticCourseKey(
+          { route_id: '__TEST_ROUTE__', direction_key: 'D1' },
+          staticTimes[index]
+        ))
         .filter(Boolean)
       : []
   );
