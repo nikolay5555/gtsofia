@@ -484,10 +484,16 @@ schedule_relationship: optionalFiniteNumber(update?.scheduleRelationship)
       const stopDelay = eventDelay(stopUpdate);
       const delay = stopDelay !== null
         ? stopDelay
-        : optionalFiniteNumber(tripUpdate?.delay);
+        : (
+          tripRelationship === TRIP_RELATIONSHIP.SCHEDULED
+            ? optionalFiniteNumber(tripUpdate?.delay)
+            : null
+        );
 
-      // For SCHEDULED trips delay-only StopTimeEvents are valid and the
-      // frontend can resolve the absolute timestamp using static GTFS.
+      // GTFS-RT delay is meaningful only when the prediction is relative to
+      // an existing static GTFS schedule. NEW and REPLACEMENT trips must use
+      // absolute StopTimeEvent.time values instead; their optional
+      // scheduled_time is a separate replacement/new-trip schedule anchor.
       if (!Number.isFinite(timestamp) && delay === null) continue;
 
       if (Number.isFinite(timestamp)) {
@@ -530,7 +536,9 @@ schedule_relationship: optionalFiniteNumber(update?.scheduleRelationship)
           schedule_relationship_name: TRIP_RELATIONSHIP_NAME[tripRelationship]
             || `UNKNOWN_${tripRelationship}`,
           destination_stop_id: terminalUpdate?.stopId || "",
-          trip_delay: optionalFiniteNumber(tripUpdate?.delay),
+          trip_delay: tripRelationship === TRIP_RELATIONSHIP.SCHEDULED
+            ? optionalFiniteNumber(tripUpdate?.delay)
+            : null,
           times: []
         });
       }
