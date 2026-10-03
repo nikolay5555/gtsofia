@@ -210,6 +210,22 @@ const duplicatedDelayOnlyTrip = encodeTripUpdate({
   }]
 });
 
+const malformedDuplicatedTrip = encodeTripUpdate({
+  trip: {
+    tripId: 'REALTIME-DUPLICATED-SOURCE-INVALID',
+    startTime: '08:50:00',
+    routeId: 'TB2',
+    scheduleRelationship: 6
+  },
+  stopUpdates: [{
+    stopId: '0605',
+    relationship: 0,
+    timestamp: now + 120,
+    scheduledTime: null,
+    delay: 120
+  }]
+});
+
 const replacementDelayOnlyTrip = encodeTripUpdate({
   trip: {
     tripId: 'REALTIME-REPLACEMENT-DELAY',
@@ -236,7 +252,8 @@ const feed = Buffer.concat([
   field(2, 2, encodeEntity('normal', normalTrip)),
   field(2, 2, encodeEntity('delay-only', delayOnlyTrip)),
   field(2, 2, encodeEntity('replacement-delay-only', replacementDelayOnlyTrip)),
-  field(2, 2, encodeEntity('duplicated-delay-only', duplicatedDelayOnlyTrip))
+  field(2, 2, encodeEntity('duplicated-delay-only', duplicatedDelayOnlyTrip)),
+  field(2, 2, encodeEntity('duplicated-invalid', malformedDuplicatedTrip))
 ]);
 
 global.fetch = async () => ({
@@ -324,6 +341,12 @@ const res = {
     payload.realtime_route_ids.sort(),
     ['TB2'],
     'canceled/deleted routes must not count as realtime-supported fallback blockers'
+  );
+
+  assert.equal(
+    payload.active_trips.some(item => item.trip_id === 'REALTIME-DUPLICATED-SOURCE-INVALID'),
+    false,
+    'DUPLICATED updates without required TripProperties.trip_id must be discarded'
   );
 
   const normalActiveTrip = payload.active_trips.find(
