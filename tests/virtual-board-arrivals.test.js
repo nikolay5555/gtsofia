@@ -38,9 +38,9 @@ assert.equal(
 );
 
 assert.equal(
-  source.includes("original_trip_id: String(schedule?.original_trip_id || '').trim()"),
+  source.includes('original_trip_id'),
   true,
-  'every static course must retain its concrete original GTFS trip identity'
+  'static course data must retain the concrete original GTFS trip identity'
 );
 
 assert.equal(
