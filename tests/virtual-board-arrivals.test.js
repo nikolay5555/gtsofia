@@ -32,6 +32,7 @@ function loadInternals(storage) {
   const exportedSource = source.replace(
     /\n\}\)\(\);\s*$/,
     `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    getRealtimeScheduledTimestamp,\n    findRealtimeStaticMatchIndex,\n    findRealtimeStaticMatch,\n    findRealtimeStaticMatchEntryAcrossDirections,\n    getStaticCourseKey,\n    getStaticScheduleTimeValue,\n    gtfsSecondsToServiceDateTimestamp,\n    realtimeSequenceMatchesStaticRoute,
+    getDuplicatedScheduleTimestamp,
     getRealtimeCourseStateKey,\n    rememberRealtimeCourseAssignment,\n    promotePassedRealtimeCourseStates,\n    isRealtimeCourseConsumed,
     isStaticCourseConsumed,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
   );
