@@ -1849,6 +1849,7 @@ function findRealtimeStaticMatchEntryAcrossDirections(
     }
     const generatedAt = data?.generated_at || Date.now();
     const skippedTrips = Array.isArray(data?.skipped_trips) ? data.skipped_trips : [];
+    const suppressedTrips = Array.isArray(data?.suppressed_trips) ? data.suppressed_trips : [];
 
     // Promote courses whose last known realtime arrival has already passed
     // before building static fallback rows. This closes the gap where the
@@ -1919,8 +1920,23 @@ function findRealtimeStaticMatchEntryAcrossDirections(
                 || '',
               times: route.times
                 .map(time => ({
-                  timestamp: Number(time?.timestamp),
+                  timestamp: Number.isFinite(Number(time?.timestamp))
+                    ? Number(time.timestamp)
+                    : null,
                   trip_id: String(time?.trip_id || route.trip_id || '').trim(),
+                  trip_instance_id: String(
+                    time?.trip_instance_id
+                    || route?.trip_instance_id
+                    || time?.trip_id
+                    || route?.trip_id
+                    || ''
+                  ).trim(),
+                  trip_start_date: String(
+                    time?.trip_start_date
+                    || route?.trip_start_date
+                    || route?.start_date
+                    || ''
+                  ).trim(),
                   trip_start_time: String(
                     time?.trip_start_time
                     || route?.trip_start_time
@@ -1934,6 +1950,33 @@ function findRealtimeStaticMatchEntryAcrossDirections(
                     && Number.isFinite(Number(time?.delay))
                   )
                     ? Number(time.delay)
+                    : (
+                      route?.trip_delay !== null
+                      && route?.trip_delay !== undefined
+                      && Number.isFinite(Number(route.trip_delay))
+                        ? Number(route.trip_delay)
+                        : null
+                    ),
+                  trip_delay: (
+                    time?.trip_delay !== null
+                    && time?.trip_delay !== undefined
+                    && Number.isFinite(Number(time?.trip_delay))
+                  )
+                    ? Number(time.trip_delay)
+                    : (
+                      route?.trip_delay !== null
+                      && route?.trip_delay !== undefined
+                      && Number.isFinite(Number(route.trip_delay))
+                        ? Number(route.trip_delay)
+                        : null
+                    ),
+                  trip_schedule_relationship: Number(
+                    time?.trip_schedule_relationship
+                    ?? route?.schedule_relationship
+                  ),
+                  stop_id: String(time?.stop_id || '').trim(),
+                  stop_sequence: Number.isFinite(Number(time?.stop_sequence))
+                    ? Number(time.stop_sequence)
                     : null,
                   scheduled: false,
                   source: 'realtime',
@@ -1948,7 +1991,10 @@ function findRealtimeStaticMatchEntryAcrossDirections(
                     ? Number(time.scheduled_time)
                     : null
                 }))
-                .filter(time => Number.isFinite(time.timestamp))
+                .filter(time =>
+                  Number.isFinite(Number(time.timestamp))
+                  || Number.isFinite(Number(time.delay))
+                )
             };
           })
           .filter(route => route.times.length)
@@ -1962,13 +2008,38 @@ function findRealtimeStaticMatchEntryAcrossDirections(
       );
     }
 
+    const metroRoutes = getMetroScheduledArrivals(stop);
+    const scheduledSurfaceRoutes = isMetroStop(stop)
+      ? []
+      : getSurfaceScheduledArrivals(stop, skippedTrips, suppressedTrips);
+
+    const realtimeRoutesForSelectedStop = realtimeRoutes
+      .map(route => ({
+        ...route,
+        times: (route.times || []).filter(time => {
+          if (time.stop_id) {
+            return stopIdsMatch(time.stop_id, stop.stop_id);
+          }
+
+          const sequence = Number(time.stop_sequence);
+          if (!Number.isFinite(sequence)) return false;
+
+          return scheduledSurfaceRoutes.some(staticRoute =>
+            String(staticRoute?.route_id || '').trim()
+              === String(route?.route_id || '').trim()
+            && staticRoute.times?.some(staticTime =>
+              Number(staticTime?.stop_sequence) === sequence
+            )
+          );
+        })
+      }))
+      .filter(route => route.times.length);
+
     const realtime = {
       status: data?.status || 'empty',
       generatedAt,
-      routes: isMetroStop(stop) ? [] : realtimeRoutes
+      routes: isMetroStop(stop) ? [] : realtimeRoutesForSelectedStop
     };
-    const metroRoutes = getMetroScheduledArrivals(stop);
-    const scheduledSurfaceRoutes = isMetroStop(stop) ? [] : getSurfaceScheduledArrivals(stop, skippedTrips);
 
     const mergedRealtime = new Map();
 
