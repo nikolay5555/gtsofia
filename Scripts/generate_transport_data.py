@@ -495,6 +495,26 @@ def build_stop_index(stops):
     return by_id
 
 
+def build_stop_code_map(stops_data):
+    result = {}
+
+    for row in stops_data:
+        gtfs_stop_id = normalize(
+            row.get("stop_id")
+        )
+        if not gtfs_stop_id:
+            continue
+
+        public_code = normalize_stop_id(
+            row.get("stop_code")
+            or gtfs_stop_id
+        )
+        if public_code:
+            result[gtfs_stop_id] = public_code
+
+    return result
+
+
 def build_stops(
     stops_data
 ):
@@ -633,7 +653,8 @@ def build_trips(
 
 def build_stop_times(
     stop_times_data,
-    trips_by_id
+    trips_by_id,
+    stop_code_by_gtfs_id=None
 ):
     result = defaultdict(list)
 
@@ -648,10 +669,19 @@ def build_stop_times(
         if trip_id not in trips_by_id:
             continue
 
-        stop_id = normalize_stop_id(
+        source_stop_id = normalize(
             row.get(
                 "stop_id"
             )
+        )
+
+        stop_id = (
+            stop_code_by_gtfs_id.get(
+                source_stop_id,
+                normalize_stop_id(source_stop_id)
+            )
+            if stop_code_by_gtfs_id
+            else normalize_stop_id(source_stop_id)
         )
 
         if not stop_id:
@@ -2698,10 +2728,15 @@ def main():
         # Stop times
         # --------------------------------------------------------
 
+        stop_code_by_gtfs_id = build_stop_code_map(
+            stops_data
+        )
+
         stop_times_by_trip = (
             build_stop_times(
                 stop_times_data,
-                trips_by_id
+                trips_by_id,
+                stop_code_by_gtfs_id
             )
         )
 
