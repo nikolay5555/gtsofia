@@ -141,9 +141,9 @@ const enrichedRoutes = internals.enrichFirstArrivalExtras([
     { t: 7, extras: ["0", "0", "1"] }
   ]
 }]);
-assert.deepEqual(
-  enrichedRoutes[0].times[0].extras,
-  ["1", "1", "0"],
+assert.equal(
+  JSON.stringify(enrichedRoutes[0].times[0].extras),
+  JSON.stringify(["1", "1", "0"]),
   'vehicle extras must be attached to the first arrival'
 );
 assert.equal(
