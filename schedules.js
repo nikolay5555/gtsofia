@@ -6,18 +6,25 @@ let selectedDayType = "weekday";
 let selectedCourse = null;
 
 const typeLabels = {
-  bus: "Автобуси",
-  trolleybus: "Тролейбуси",
-  tram: "Трамваи",
   metro: "Метролинии",
-  night: "Нощни линии"
+  tram: "Трамваи",
+  trolley: "Тролейбуси",
+  bus: "Автобуси",
+  temporary: "Заместващи автобуси",
+  school: "Училищни автобуси",
+  night: "Нощни автобуси"
 };
 
 const typeOrder = [
-  "bus",
-  "trolleybus",
-  "tram",
   "metro",
+  "tram",
+  "trolley",
+  "bus"
+];
+
+const subtypeOrder = [
+  "temporary",
+  "school",
   "night"
 ];
 
@@ -100,28 +107,8 @@ function renderLineDropdown() {
 
   menu.innerHTML = "";
 
-  for (const type of typeOrder) {
-    const lines =
-      scheduleLines
-        .filter(
-          line =>
-            line.type === type
-        )
-        .sort(
-          (a, b) =>
-            String(a.number).localeCompare(
-              String(b.number),
-              "bg",
-              {
-                numeric: true,
-                sensitivity: "base"
-              }
-            )
-        );
-
-    if (!lines.length) {
-      continue;
-    }
+  const renderGroup = (routes, type) => {
+    if (!routes.length) return;
 
     const group =
       document.createElement(
@@ -136,7 +123,7 @@ function renderLineDropdown() {
         ${typeLabels[type]}
       </div>`;
 
-    for (const line of lines) {
+    for (const line of routes) {
       const item =
         document.createElement(
           "button"
@@ -161,6 +148,49 @@ function renderLineDropdown() {
     }
 
     menu.appendChild(group);
+  };
+
+  for (const type of typeOrder) {
+    const lines = scheduleLines
+      .filter(
+        line =>
+          line.type === type &&
+          !line.subtype
+      )
+      .sort(
+        (a, b) =>
+          String(a.number).localeCompare(
+            String(b.number),
+            "bg",
+            {
+              numeric: true,
+              sensitivity: "base"
+            }
+          )
+      );
+
+    renderGroup(lines, type);
+  }
+
+  for (const subtype of subtypeOrder) {
+    const lines = scheduleLines
+      .filter(
+        line =>
+          line.subtype === subtype
+      )
+      .sort(
+        (a, b) =>
+          String(a.number).localeCompare(
+            String(b.number),
+            "bg",
+            {
+              numeric: true,
+              sensitivity: "base"
+            }
+          )
+      );
+
+    renderGroup(lines, subtype);
   }
 }
 
