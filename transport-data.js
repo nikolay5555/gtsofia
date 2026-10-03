@@ -330,11 +330,29 @@ function buildRuntimeSchedules(
 
         if (!times.some(Boolean) && !arrivalTimes.some(Boolean) && !departureTimes.some(Boolean)) continue;
 
-        // The first stop's departure_time is the authoritative GTFS trip
-        // start_time. Keep the old effective-time fallback for incomplete data.
-        const first = departureTimes.find(Boolean)
-            || times.find(Boolean)
-            || arrivalTimes.find(Boolean);
+        // GTFS trip start time comes from the first stop with a valid
+        // timepoint. Keep all timing fields on the same stop index so a
+        // missing departure at the first stop cannot accidentally select a
+        // later stop as the trip start.
+        const firstIndex = Array.from({
+            length: Math.max(
+                times.length,
+                arrivalTimes.length,
+                departureTimes.length
+            )
+        }).findIndex((_, index) =>
+            Boolean(
+                departureTimes[index]
+                || times[index]
+                || arrivalTimes[index]
+            )
+        );
+        if (firstIndex < 0) continue;
+
+        const first =
+            departureTimes[firstIndex]
+            || times[firstIndex]
+            || arrivalTimes[firstIndex];
         if (!first) continue;
 
         const direction = runtimeDirections?.[routeId]?.[directionKey] || {};
