@@ -635,7 +635,7 @@ function normalizeGtfsDateKey(value) {
 }
 
 function getRealtimeScheduledTimestamp(time) {
-  const relationship = optionalFiniteNumber(time?.trip_schedule_relationship);
+  const relationship = optionalFiniteNumber(time?.trip_schedule_relationship) ?? 0;
   const scheduledRaw = time?.scheduled_time;
   const scheduledTimestamp = optionalFiniteNumber(scheduledRaw);
 
