@@ -21,11 +21,12 @@ function field(number, wireType, value) {
 
 const text = value => Buffer.from(String(value), 'utf8');
 
-function encodeTripDescriptor({ tripId, startTime, routeId }) {
+function encodeTripDescriptor({ tripId, startTime, routeId, scheduleRelationship = 0 }) {
   return Buffer.concat([
     field(1, 2, text(tripId)),
     field(2, 2, text(startTime)),
     field(3, 2, text('20260930')),
+    field(4, 0, varint(scheduleRelationship)),
     field(5, 2, text(routeId))
   ]);
 }
@@ -101,7 +102,8 @@ const canceledTrip = encodeTripUpdate({
   trip: {
     tripId: 'REALTIME-CANCELED',
     startTime: '08:55:00',
-    routeId: 'TB3'
+    routeId: 'TB3',
+    scheduleRelationship: 3
   },
   stopUpdates: [{
     stopId: '0605',
@@ -115,7 +117,8 @@ const deletedTrip = encodeTripUpdate({
   trip: {
     tripId: 'REALTIME-DELETED',
     startTime: '09:05:00',
-    routeId: 'TB4'
+    routeId: 'TB4',
+    scheduleRelationship: 7
   },
   stopUpdates: [{
     stopId: '0605',
