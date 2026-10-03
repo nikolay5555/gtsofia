@@ -99,7 +99,7 @@
       normalizeStopKey(stopId),
       String(routeId || "").trim(),
       normalizeDirectionText(destination),
-      Math.floor(timestamp / 60)
+      Math.floor(timestamp)
     ].join("|");
   }
 
