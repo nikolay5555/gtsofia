@@ -161,14 +161,21 @@ function buildRuntimeDirections(
                 && String(trip?.direction_code ?? '').trim() === directionCode
             );
 
-            const headsign = mostCommonString(
-                directionRealtimeTrips.map(
-                    trip => trip?.trip_headsign
-                )
-            ) || String(
+            // Passenger-facing direction names follow Dimitar's model:
+            // resolve the terminal stop through the normalized stops data,
+            // where OSM is authoritative and GTFS is only the fallback source.
+            const osmDestination = String(
                 stopByCode.get(pattern[pattern.length - 1])?.names?.bg
                 || ''
             ).trim();
+
+            const gtfsHeadsign = mostCommonString(
+                directionRealtimeTrips.map(
+                    trip => trip?.trip_headsign
+                )
+            );
+
+            const headsign = osmDestination || gtfsHeadsign;
 
             const shapeId = mostCommonString(
                 directionRealtimeTrips.map(
