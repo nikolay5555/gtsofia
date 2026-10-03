@@ -6,7 +6,10 @@ from .common import normalize
 from .stops import round_coordinate, transliterate_bulgarian
 
 
-OSM_ENDPOINT = "https://maps.mail.ru/osm/tools/overpass/api/interpreter"
+OSM_ENDPOINTS = (
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+    "https://overpass-api.de/api/interpreter",
+)
 OSM_NETWORK_NAME = "Градски транспорт София"
 OSM_STOP_TYPES = (
     ("subway", "station"),
@@ -90,9 +93,31 @@ def fetch_osm_stops():
         },
     )
 
-    print("Fetching OSM stops...")
-    with urllib.request.urlopen(request, timeout=90) as response:
-        data = json.load(response)
+    last_error = None
+
+    for endpoint in OSM_ENDPOINTS:
+        try:
+            request = urllib.request.Request(
+                endpoint,
+                data=payload,
+                headers={
+                    "User-Agent": "github/nikolay5555/gtsofia",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
+                },
+            )
+
+            print(f"Fetching OSM stops from {endpoint}...")
+            with urllib.request.urlopen(request, timeout=90) as response:
+                data = json.load(response)
+            break
+        except Exception as exc:
+            last_error = exc
+            print(f"Warning: OSM endpoint failed: {endpoint}: {exc}")
+    else:
+        raise RuntimeError(
+            f"All OSM endpoints failed; last error: {last_error}"
+        )
 
     elements = data.get("elements", [])
 
