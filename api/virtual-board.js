@@ -383,6 +383,16 @@ schedule_relationship: optionalFiniteNumber(update?.scheduleRelationship)
     const tripRelationship = getTripRelationship(trip);
     const tripId = getTripInstanceId(trip, tripUpdate);
     const sourceTripId = String(trip.tripId || "").trim();
+
+    // DUPLICATED identifies the source trip in TripDescriptor.trip_id and the
+    // new concrete trip instance in TripProperties. The latter is required by
+    // GTFS-RT; without it this entity cannot identify the duplicate trip.
+    if (
+      tripRelationship === TRIP_RELATIONSHIP.DUPLICATED
+      && (!tripId || !sourceTripId)
+    ) {
+      continue;
+    }
     const tripStartDate = String(
       trip.startDate || tripUpdate.tripProperties?.startDate || ""
     ).trim();
