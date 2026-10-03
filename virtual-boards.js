@@ -256,11 +256,33 @@ function parseRealtimeTripStartTimestamp(route) {
 }
 
 function getRealtimeScheduledTimestamp(time) {
-  const scheduledTimestamp = Number(time?.scheduled_time);
+  const scheduledRaw = time?.scheduled_time;
+  const scheduledTimestamp = (
+    scheduledRaw !== null
+    && scheduledRaw !== undefined
+    && String(scheduledRaw).trim() !== ''
+  )
+    ? Number(scheduledRaw)
+    : NaN;
   if (Number.isFinite(scheduledTimestamp)) return scheduledTimestamp;
 
-  const actualTimestamp = Number(time?.timestamp);
-  const delay = Number(time?.delay);
+  const actualRaw = time?.timestamp;
+  const delayRaw = time?.delay;
+  const actualTimestamp = (
+    actualRaw !== null
+    && actualRaw !== undefined
+    && String(actualRaw).trim() !== ''
+  )
+    ? Number(actualRaw)
+    : NaN;
+  const delay = (
+    delayRaw !== null
+    && delayRaw !== undefined
+    && String(delayRaw).trim() !== ''
+  )
+    ? Number(delayRaw)
+    : NaN;
+
   if (Number.isFinite(actualTimestamp) && Number.isFinite(delay)) {
     return actualTimestamp - delay;
   }
