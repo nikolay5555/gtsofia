@@ -12,10 +12,17 @@ assert.equal(
   'automatic refresh must not reference the removed displayedPrimaryArrival state'
 );
 
-assert.equal(
-  (source.match(/rememberConsumedRealtimeArrivals\(stop, mergedSurfaceRoutes\);/g) || []).length,
-  1,
+const rememberConsumedIndex = source.indexOf('rememberConsumedRealtimeArrivals(stop, [{');
+const staticFallbackIndex = source.indexOf('const surfaceFallbackRoutes');
+assert.ok(
+  rememberConsumedIndex >= 0 && rememberConsumedIndex < staticFallbackIndex,
   'a passed realtime course must be persisted before static fallback is evaluated'
+);
+
+assert.equal(
+  source.includes('timestamp += 86400'),
+  false,
+  'a past GTFS service-day time must not be blindly rolled into the next day'
 );
 
 assert.equal(
