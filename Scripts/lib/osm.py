@@ -95,6 +95,21 @@ def fetch_osm_stops():
         data = json.load(response)
 
     elements = data.get("elements", [])
+
+    # Match Dimitar's deterministic duplicate handling:
+    # stop_position first, platform second, so platform wins when both
+    # describe the same public stop code.
+    osm_order = {
+        "stop_position": 1,
+        "platform": 2,
+    }
+    elements.sort(
+        key=lambda element: osm_order.get(
+            normalize((element.get("tags") or {}).get("public_transport")),
+            999,
+        )
+    )
+
     stops = []
 
     for element in elements:
