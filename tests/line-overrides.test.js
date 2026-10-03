@@ -15,30 +15,28 @@ const context = {
 context.window = context;
 vm.runInNewContext(source, context, { filename: sourcePath });
 
-context.transportData = {
-  lineOverrides: [
-    { cgm_id: 'TB34', route_ref: '20ТМ', type: 'bus' },
-    { cgm_id: 'TB46', route_ref: '186', type: 'bus' },
-    { cgm_id: 'TB37', type: 'bus' }
-  ]
-};
-
-const trolley20 = {
+const busOverride = {
   route_id: 'TB34',
-  route_short_name: '20T',
-  route_type: '11'
+  route_short_name: '20ТМ',
+  route_type: '3',
+  type: 'bus',
+  subtype: 'temporary'
 };
 
 assert.equal(
-  context.getLineType(trolley20),
+  context.getLineType(busOverride),
   'bus'
 );
 assert.equal(
-  context.getLineDisplayNumber(trolley20, 'bus'),
+  context.getLineSubtype(busOverride),
+  'temporary'
+);
+assert.equal(
+  context.getLineDisplayNumber(busOverride, 'bus'),
   '20ТМ'
 );
 assert.equal(
-  context.getLineColor(trolley20, 'bus'),
+  context.getLineColor(busOverride, 'bus'),
   '#BE1E2D'
 );
 assert.equal(
@@ -46,49 +44,62 @@ assert.equal(
   'Icons/Active icons/bus.svg'
 );
 
-const e186 = {
-  route_id: 'TB46',
-  route_short_name: 'E186',
-  route_type: '11'
+const schoolBus = {
+  route_id: 'Y12',
+  route_short_name: 'У12',
+  route_type: '3',
+  type: 'bus',
+  subtype: 'school'
 };
 
 assert.equal(
-  context.getLineType(e186),
+  context.getLineType(schoolBus),
   'bus'
 );
 assert.equal(
-  context.getLineDisplayNumber(e186, 'bus'),
-  '186'
+  context.getLineSubtype(schoolBus),
+  'school'
 );
 
-const threeTm = {
-  route_id: 'TB37',
-  route_short_name: '3TM',
-  route_type: '11'
+const nightBus = {
+  route_id: 'N1',
+  route_short_name: 'N1',
+  route_type: '3',
+  type: 'bus',
+  subtype: 'night'
 };
 
 assert.equal(
-  context.getLineType(threeTm),
+  context.getLineType(nightBus),
   'bus'
 );
 assert.equal(
-  context.getLineDisplayNumber(threeTm, 'bus'),
-  '3TM'
+  context.getLineSubtype(nightBus),
+  'night'
+);
+assert.equal(
+  context.getTransportIcon('bus', 'N1'),
+  'Icons/Active icons/night-bus.svg'
 );
 
 const regularTrolley = {
   route_id: 'TB32',
   route_short_name: '3',
-  route_type: '11'
+  route_type: '11',
+  type: 'trolley'
 };
 
 assert.equal(
   context.getLineType(regularTrolley),
-  'trolleybus'
+  'trolley'
 );
 assert.equal(
-  context.getLineDisplayNumber(regularTrolley, 'trolleybus'),
+  context.getLineDisplayNumber(regularTrolley, 'trolley'),
   '3'
+);
+assert.equal(
+  context.getTransportIcon('trolley', '3'),
+  'Icons/Active icons/trolley.svg'
 );
 
 console.log('line-overrides: all tests passed');
