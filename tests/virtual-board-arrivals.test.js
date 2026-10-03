@@ -12,6 +12,12 @@ assert.equal(
   'automatic refresh must not reference the removed displayedPrimaryArrival state'
 );
 
+assert.equal(
+  source.includes('realtimeSupportedRouteIds.has(routeId)'),
+  false,
+  'a realtime trip elsewhere on the line must not suppress static departures at this stop'
+);
+
 function createStorage(initialEntries = []) {
   const store = new Map(initialEntries);
   return {
