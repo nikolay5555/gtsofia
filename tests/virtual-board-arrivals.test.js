@@ -461,6 +461,27 @@ assert.equal(
 
   assert.equal(
     internals.getRealtimeScheduledTimestamp({
+      trip_schedule_relationship: 1,
+      timestamp: 1_000_410,
+      scheduled_time: 1_000_480,
+      delay: -70
+    }),
+    null,
+    'ADDED scheduled_time must not be treated as a valid static schedule anchor'
+  );
+
+  assert.equal(
+    internals.getRealtimeScheduledTimestamp({
+      trip_schedule_relationship: 2,
+      timestamp: 1_000_410,
+      delay: -70
+    }),
+    null,
+    'UNSCHEDULED delay must not be interpreted against static GTFS'
+  );
+
+  assert.equal(
+    internals.getRealtimeScheduledTimestamp({
       timestamp: 1_000_410,
       scheduled_time: '',
       delay: 0
