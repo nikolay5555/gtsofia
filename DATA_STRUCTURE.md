@@ -13,7 +13,7 @@ The generated transport data is split into small, single-purpose JSON files.
 - shapes.json — only shapes referenced by surviving realtime trip mappings.
 - realtime-trips.json — minimal source-trip mapping required to match GTFS-Realtime with the compact model.
 - calendar.json — exact GTFS calendar evaluation and exceptions for the generated window.
-- line-overrides.json — presentation/route overrides.
+- line-overrides.json — presentation/route overrides; an explicit `subtype: null` suppresses inferred secondary classification for a manually overridden route.
 - metadata.json — model version, source, retrieval date and SHA-256 hashes.
 - manifest.json — generated file list and model version.
 
