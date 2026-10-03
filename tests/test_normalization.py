@@ -30,6 +30,28 @@ class NormalizationTests(unittest.TestCase):
         self.assertEqual(determine_model_route_type("55", "11"), "bus")
         self.assertEqual(determine_model_route_type("3", "11"), "trolley")
 
+    def test_explicit_override_can_suppress_subtype(self):
+        from lib.routes import build_model_routes
+
+        routes = [{
+            "route_id": "TB35",
+            "route_short_name": "60",
+            "route_type": "3",
+        }]
+
+        result = build_model_routes(
+            routes,
+            {"TB35"},
+            [{
+                "cgm_id": "TB35",
+                "type": "bus",
+                "subtype": None,
+            }],
+        )
+
+        self.assertEqual(result[0]["type"], "bus")
+        self.assertNotIn("subtype", result[0])
+
     def test_osm_code_preserves_metro_prefix(self):
         self.assertEqual(_osm_code({"ref": "1", "subway": "yes"}), "M1")
         self.assertEqual(_osm_code({"ref": "123"}), "0123")
