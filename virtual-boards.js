@@ -1862,8 +1862,17 @@ function findRealtimeStaticMatchEntryAcrossDirections(
         continue;
       }
 
-      if (Number.isFinite(Number(update?.delay))) {
-        effectiveDelay = Number(update.delay);
+      const updateDelay = (
+        update?.delay !== null
+        && update?.delay !== undefined
+        && String(update.delay).trim() !== ""
+        && Number.isFinite(Number(update.delay))
+      )
+        ? Number(update.delay)
+        : null;
+
+      if (updateDelay !== null) {
+        effectiveDelay = updateDelay;
         continue;
       }
 
