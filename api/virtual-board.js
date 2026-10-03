@@ -481,8 +481,20 @@ function buildBoard(updates, stopCode, feedTimestamp) {
     });
   }
 
+  // A route is considered realtime-supported only while it has at least
+  // one operational trip in the current feed. CANCELED/DELETED trip updates
+  // must not disable the static timetable fallback for an otherwise inactive
+  // line.
   const realtimeRouteIds = [...new Set(
     (updates || [])
+      .filter(update => {
+        const relationship = Number.isFinite(Number(update?.trip?.scheduleRelationship))
+          ? Number(update.trip.scheduleRelationship)
+          : TRIP_RELATIONSHIP.SCHEDULED;
+
+        return relationship !== TRIP_RELATIONSHIP.CANCELED
+          && relationship !== TRIP_RELATIONSHIP.DELETED;
+      })
       .map(update => String(update?.trip?.routeId || '').trim())
       .filter(Boolean)
   )];
