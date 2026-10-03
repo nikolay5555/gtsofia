@@ -1147,31 +1147,72 @@ const realtimeRoutes = Array.isArray(data?.routes)
         );
 
         const combinedTimes = [...realtimeTimes];
-        for (const staticTime of staticTimes) {
-          const staticTimestamp = Number(staticTime?.timestamp);
-          const staticTripId = String(staticTime?.trip_id || '').trim();
+        const matchedStaticIndexes = new Set();
 
-          const alreadyRepresented = realtimeTimes.some(realtimeTime => {
-            const realtimeTripId = String(realtimeTime?.trip_id || '').trim();
-            const scheduledTimestamp = Number(realtimeTime?.scheduled_time);
+        // Realtime must replace its corresponding scheduled course, not sit
+        // next to it as a second departure. Prefer the strongest identifiers
+        // first, then use a very small time tolerance only as a fallback for
+        // feeds that omit or alter the scheduled trip identity.
+        for (const realtimeTime of realtimeTimes) {
+          const realtimeTripId = String(realtimeTime?.trip_id || '').trim();
+          const realtimeScheduledTimestamp = Number(realtimeTime?.scheduled_time);
+          const realtimeTimestamp = Number(realtimeTime?.timestamp);
 
-            if (staticTripId && realtimeTripId && staticTripId === realtimeTripId) {
-              return true;
-            }
+          let matchIndex = -1;
 
-            return Number.isFinite(scheduledTimestamp)
-              && Number.isFinite(staticTimestamp)
-              && scheduledTimestamp === staticTimestamp;
-          });
+          if (realtimeTripId) {
+            matchIndex = staticTimes.findIndex((staticTime, index) =>
+              !matchedStaticIndexes.has(index)
+              && String(staticTime?.trip_id || '').trim() === realtimeTripId
+            );
+          }
 
-          if (alreadyRepresented) continue;
+          if (matchIndex < 0 && Number.isFinite(realtimeScheduledTimestamp)) {
+            matchIndex = staticTimes.findIndex((staticTime, index) =>
+              !matchedStaticIndexes.has(index)
+              && Number(staticTime?.timestamp) === realtimeScheduledTimestamp
+            );
+          }
+
+          // Last-resort protection against duplicate "8 мин." entries when
+          // Sofia Traffic's realtime record cannot be linked by trip_id or
+          // scheduled_time. Only match a nearby scheduled departure; do not
+          // broadly collapse the timetable because delayed realtime trips can
+          // legitimately be close to another scheduled course.
+          if (
+            matchIndex < 0
+            && !realtimeTripId
+            && !Number.isFinite(realtimeScheduledTimestamp)
+            && Number.isFinite(realtimeTimestamp)
+          ) {
+            let bestDifference = Infinity;
+            staticTimes.forEach((staticTime, index) => {
+              if (matchedStaticIndexes.has(index)) return;
+              const staticTimestamp = Number(staticTime?.timestamp);
+              if (!Number.isFinite(staticTimestamp)) return;
+
+              const difference = Math.abs(staticTimestamp - realtimeTimestamp);
+              if (difference <= 60 && difference < bestDifference) {
+                bestDifference = difference;
+                matchIndex = index;
+              }
+            });
+          }
+
+          if (matchIndex >= 0) {
+            matchedStaticIndexes.add(matchIndex);
+          }
+        }
+
+        staticTimes.forEach((staticTime, index) => {
+          if (matchedStaticIndexes.has(index)) return;
 
           combinedTimes.push({
             ...staticTime,
             scheduled: true,
             source: 'static'
           });
-        }
+        })
 
         return {
           ...route,
