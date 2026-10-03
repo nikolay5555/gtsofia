@@ -1760,6 +1760,16 @@ function findRealtimeStaticMatchEntryAcrossDirections(
               stop_sequence: Number.isFinite(stopSequence) ? stopSequence : null,
               arrival_time: String(arrivalTimes[stopIndex] || "").trim(),
               departure_time: String(departureTimes[stopIndex] || "").trim(),
+              course_times: Array.isArray(schedule?.times)
+                ? schedule.times.map(value => String(value || "").trim())
+                : [],
+              course_arrival_times: arrivalTimes.map(value => String(value || "").trim()),
+              course_departure_times: departureTimes.map(value => String(value || "").trim()),
+              course_stop_sequences: Array.isArray(schedule?.stop_sequences)
+                ? schedule.stop_sequences.map(value =>
+                    value === null || value === undefined ? null : Number(value)
+                  )
+                : [],
               delay: null,
               scheduled: true,
               source: "static"
@@ -1819,6 +1829,160 @@ function findRealtimeStaticMatchEntryAcrossDirections(
     return result.sort((a, b) =>
       Number(a.times?.[0]?.timestamp) - Number(b.times?.[0]?.timestamp)
     );
+  }
+
+  function getPropagatedRealtimeDelay(activeTrip, staticTime) {
+    const targetSequence = Number(staticTime?.stop_sequence);
+    if (!Number.isFinite(targetSequence)) return null;
+
+    let effectiveDelay = (
+      activeTrip?.trip_delay !== null
+      && activeTrip?.trip_delay !== undefined
+      && String(activeTrip.trip_delay).trim() !== ""
+      && Number.isFinite(Number(activeTrip.trip_delay))
+    )
+      ? Number(activeTrip.trip_delay)
+      : null;
+
+    let targetSkipped = false;
+
+    for (const update of Array.isArray(activeTrip?.delay_updates)
+      ? activeTrip.delay_updates
+      : []) {
+      const sequence = Number(update?.stop_sequence);
+      if (!Number.isFinite(sequence) || sequence > targetSequence) continue;
+
+      const relationship = Number(update?.schedule_relationship);
+      targetSkipped = sequence === targetSequence
+        && relationship === 1;
+
+      if (relationship === 2) {
+        // NO_DATA propagates and clears the inherited prediction.
+        effectiveDelay = null;
+        continue;
+      }
+
+      const updateDelay = (
+        update?.delay !== null
+        && update?.delay !== undefined
+        && String(update.delay).trim() !== ""
+        && Number.isFinite(Number(update.delay))
+      )
+        ? Number(update.delay)
+        : null;
+
+      if (updateDelay !== null) {
+        effectiveDelay = updateDelay;
+        continue;
+      }
+
+      const predictionTime = Number(update?.timestamp);
+      if (!Number.isFinite(predictionTime)) continue;
+
+      // A time-only StopTimeEvent establishes a new delay by comparing its
+      // absolute prediction against the exact static time at that same stop.
+      const courseSequences = Array.isArray(staticTime?.course_stop_sequences)
+        ? staticTime.course_stop_sequences
+        : [];
+      const anchorIndex = courseSequences.findIndex(value =>
+        Number(value) === sequence
+      );
+      if (anchorIndex < 0) continue;
+
+      const anchorRaw =
+        staticTime?.course_arrival_times?.[anchorIndex]
+        || staticTime?.course_departure_times?.[anchorIndex]
+        || staticTime?.course_times?.[anchorIndex]
+        || "";
+      const anchorSeconds = parseGtfsTime(anchorRaw);
+      const serviceDate = normalizeGtfsDateKey(staticTime?.service_date);
+      const anchorTimestamp = gtfsSecondsToServiceDateTimestamp(
+        serviceDate,
+        anchorSeconds
+      );
+
+      if (Number.isFinite(anchorTimestamp)) {
+        effectiveDelay = predictionTime - anchorTimestamp;
+      }
+    }
+
+    if (targetSkipped) return null;
+    return Number.isFinite(effectiveDelay) ? effectiveDelay : null;
+  }
+
+  function buildSyntheticRealtimeRoutes(activeTrips, scheduledSurfaceRoutes, stop) {
+    const result = [];
+
+    for (const activeTrip of Array.isArray(activeTrips) ? activeTrips : []) {
+      const relationship = Number(activeTrip?.schedule_relationship);
+      if (relationship !== 0) continue;
+
+      const tripId = String(activeTrip?.trip_id || "").trim();
+      if (!tripId) continue;
+
+      for (const staticRoute of scheduledSurfaceRoutes || []) {
+        if (String(staticRoute?.route_id || "").trim() !== String(activeTrip?.route_id || "").trim()) continue;
+
+        const routeDirectionId = String(
+          staticRoute?.direction_id
+          || staticRoute?.direction?.direction_id
+          || ""
+        ).trim();
+        const activeDirectionId = String(activeTrip?.direction_id || "").trim();
+        if (activeDirectionId && routeDirectionId && activeDirectionId !== routeDirectionId) continue;
+
+        for (const staticTime of staticRoute.times || []) {
+          const staticTripId = String(staticTime?.original_trip_id || "").trim();
+          if (!staticTripId || staticTripId !== tripId) continue;
+
+          const delay = getPropagatedRealtimeDelay(activeTrip, staticTime);
+          if (!Number.isFinite(delay)) continue;
+
+          const timestamp = Number(staticTime.timestamp) + delay;
+          if (!Number.isFinite(timestamp)) continue;
+
+          result.push({
+            route_id: String(staticRoute.route_id || "").trim(),
+            route_ref: String(staticRoute.route_ref || "").trim(),
+            direction_key: String(staticRoute.direction_key || "").trim(),
+            direction_id: routeDirectionId,
+            destination_stop_id: String(staticRoute.terminal_stop_id || "").trim(),
+            destination: String(staticRoute.destination || "").trim(),
+            trip_id: tripId,
+            source_trip_id: String(activeTrip?.source_trip_id || tripId).trim(),
+            trip_instance_id: tripId,
+            trip_start_date: String(activeTrip?.start_date || "").trim(),
+            trip_start_time: String(activeTrip?.start_time || "").trim(),
+            schedule_relationship: relationship,
+            schedule_relationship_name: String(activeTrip?.schedule_relationship_name || "SCHEDULED"),
+            source: "realtime",
+            realtime: true,
+            synthetic_from_static: true,
+            times: [{
+              timestamp,
+              trip_id: tripId,
+              trip_instance_id: tripId,
+              trip_start_date: String(activeTrip?.start_date || "").trim(),
+              trip_start_time: String(activeTrip?.start_time || "").trim(),
+              delay,
+              trip_delay: Number.isFinite(Number(activeTrip?.trip_delay))
+                ? Number(activeTrip.trip_delay)
+                : null,
+              trip_schedule_relationship: relationship,
+              stop_id: String(stop?.stop_id || "").trim(),
+              stop_sequence: Number(staticTime?.stop_sequence),
+              stop_schedule_relationship: 0,
+              stop_schedule_relationship_name: "SCHEDULED",
+              scheduled_time: null,
+              scheduled: false,
+              source: "realtime"
+            }]
+          });
+        }
+      }
+    }
+
+    return result;
   }
 
   async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 45000) {
@@ -2014,7 +2178,46 @@ function findRealtimeStaticMatchEntryAcrossDirections(
       ? []
       : getSurfaceScheduledArrivals(stop, skippedTrips, suppressedTrips);
 
-    const realtimeRoutesForSelectedStop = realtimeRoutes
+    const syntheticRealtimeRoutes = isMetroStop(stop)
+      ? []
+      : buildSyntheticRealtimeRoutes(
+          data?.active_trips || [],
+          scheduledSurfaceRoutes,
+          stop
+        );
+
+    const explicitRealtimeTripIds = new Set(
+      realtimeRoutes.flatMap(route =>
+        (route.times || []).map(time =>
+          String(
+            time?.trip_instance_id
+            || time?.trip_id
+            || route?.trip_instance_id
+            || route?.trip_id
+            || ''
+          ).trim()
+        )
+      ).filter(Boolean)
+    );
+
+    const realtimeRoutesWithSparsePredictions = [
+      ...realtimeRoutes,
+      ...syntheticRealtimeRoutes.filter(route =>
+        !(route.times || []).some(time =>
+          explicitRealtimeTripIds.has(
+            String(
+              time?.trip_instance_id
+              || time?.trip_id
+              || route?.trip_instance_id
+              || route?.trip_id
+              || ''
+            ).trim()
+          )
+        )
+      )
+    ];
+
+    const realtimeRoutesForSelectedStop = realtimeRoutesWithSparsePredictions
       .map(route => ({
         ...route,
         times: (route.times || []).filter(time => {

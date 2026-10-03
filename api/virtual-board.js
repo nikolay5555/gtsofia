@@ -300,6 +300,17 @@ function stopIdsMatch(left, right) {
   return normalizeStopKey(left) === normalizeStopKey(right);
 }
 
+function optionalFiniteNumber(value) {
+  if (
+    value === null
+    || value === undefined
+    || String(value).trim() === ""
+  ) return null;
+
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
 function eventTimestamp(update) {
   if (Number.isFinite(update?.arrival?.time)) return update.arrival.time;
   if (Number.isFinite(update?.departure?.time)) return update.departure.time;
@@ -331,6 +342,44 @@ function buildBoard(updates, stopCode, feedTimestamp) {
     }
     return String(trip?.tripId || "").trim();
   };
+
+  function normalizeStopTimeUpdates(stopTimeUpdates) {
+    return (stopTimeUpdates || [])
+      .map((update, index) => ({
+        update,
+        index,
+        sequence: Number.isFinite(Number(update?.stopSequence))
+          ? Number(update.stopSequence)
+          : null
+      }))
+      .sort((left, right) => {
+        if (left.sequence != null && right.sequence != null) {
+          return left.sequence - right.sequence;
+        }
+        if (left.sequence != null) return -1;
+        if (right.sequence != null) return 1;
+        return left.index - right.index;
+      })
+      .map(item => item.update);
+  }
+
+  function serializeDelayUpdates(stopTimeUpdates) {
+    return normalizeStopTimeUpdates(stopTimeUpdates).map(update => ({
+      stop_id: String(update?.stopId || "").trim(),
+      stop_sequence: Number.isFinite(Number(update?.stopSequence))
+        ? Number(update.stopSequence)
+        : null,
+      schedule_relationship: Number.isFinite(Number(update?.scheduleRelationship))
+        ? Number(update.scheduleRelationship)
+        : STOP_RELATIONSHIP.SCHEDULED,
+      delay: optionalFiniteNumber(eventDelay(update)),
+      timestamp: optionalFiniteNumber(eventTimestamp(update)),
+      scheduled_time: optionalFiniteNumber(
+        update?.arrival?.scheduledTime
+        ?? update?.departure?.scheduledTime
+      )
+    }));
+  }
 
   for (const tripUpdate of updates || []) {
     const trip = tripUpdate?.trip;
@@ -378,7 +427,7 @@ function buildBoard(updates, stopCode, feedTimestamp) {
       continue;
     }
 
-    for (const stopUpdate of tripUpdate.stopTimeUpdates || []) {
+    for (const stopUpdate of normalizeStopTimeUpdates(tripUpdate.stopTimeUpdates)) {
       const stopRelationship = Number.isFinite(Number(stopUpdate.scheduleRelationship))
         ? Number(stopUpdate.scheduleRelationship)
         : STOP_RELATIONSHIP.SCHEDULED;
@@ -574,7 +623,9 @@ function buildBoard(updates, stopCode, feedTimestamp) {
       direction_id: String(trip.directionId || ""),
       schedule_relationship: relationship,
       schedule_relationship_name: TRIP_RELATIONSHIP_NAME[relationship]
-        || `UNKNOWN_${relationship}`
+        || `UNKNOWN_${relationship}`,
+      trip_delay: optionalFiniteNumber(update?.delay),
+      delay_updates: serializeDelayUpdates(update.stopTimeUpdates)
     });
   }
 
