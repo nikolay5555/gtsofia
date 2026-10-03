@@ -44,6 +44,22 @@ assert.equal(
   'Icons/Active icons/bus.svg'
 );
 
+const x43 = {
+  route_id: 'A259',
+  route_short_name: 'X43',
+  route_type: '3',
+  type: 'bus'
+};
+
+assert.equal(
+  context.getLineColor(x43, 'bus'),
+  '#BE1E2D'
+);
+assert.equal(
+  context.getTransportIcon('bus', 'X43'),
+  'Icons/Active icons/bus.svg'
+);
+
 const schoolBus = {
   route_id: 'Y12',
   route_short_name: 'У12',
@@ -78,8 +94,12 @@ assert.equal(
   'night'
 );
 assert.equal(
-  context.getTransportIcon('bus', 'N1'),
+  context.getTransportIcon('bus', 'N1', 'night'),
   'Icons/Active icons/night-bus.svg'
+);
+assert.equal(
+  context.getLineColor(nightBus, 'bus'),
+  '#111827'
 );
 
 const regularTrolley = {
