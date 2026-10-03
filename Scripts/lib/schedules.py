@@ -1,7 +1,7 @@
 from collections import defaultdict
 
 from .calendar import build_active_service_ids
-from .common import normalize, parse_time
+from .common import normalize, normalize_stop_id, parse_time
 
 
 def build_trips(
