@@ -345,6 +345,55 @@
     return Math.max(0, (seconds - Date.now() / 1000) / 60);
   }
 
+  function normalizeArrivalExtras(extras) {
+    if (!Array.isArray(extras)) return ["0", "0", "0"];
+
+    return [
+      extras[0] === 1 || extras[0] === "1" ? "1" : "0",
+      extras[1] === 1 || extras[1] === "1" ? "1" : "0",
+      extras[2] === 1 || extras[2] === "1" ? "1" : "0"
+    ];
+  }
+
+  function getDimitarArrivalExtras(route, relativeMinutes) {
+    if (!route || relativeMinutes == null) return ["0", "0", "0"];
+
+    const times = Array.isArray(route.times) ? route.times : [];
+    let best = null;
+    let bestDifference = Infinity;
+
+    for (const time of times) {
+      const candidateMinutes = Number(time?.t);
+      if (!Number.isFinite(candidateMinutes)) continue;
+
+      const difference = Math.abs(candidateMinutes - relativeMinutes);
+      if (difference > 2 || difference >= bestDifference) continue;
+
+      best = time;
+      bestDifference = difference;
+    }
+
+    return normalizeArrivalExtras(best?.extras);
+  }
+
+  function dimitarExtrasIconHtml(extras) {
+    const values = normalizeArrivalExtras(extras);
+    const icons = [
+      { index: 0, className: "bi bi-snow", label: "Климатик" },
+      { index: 1, className: "bi bi-person-wheelchair", label: "Достъп за инвалидна количка" },
+      { index: 2, className: "bi bi-bicycle", label: "Стойка за велосипед" }
+    ];
+
+    const active = icons.filter(icon => values[icon.index] === "1");
+    if (!active.length) return "";
+
+    const html = active.map(icon =>
+      '<i class="' + icon.className + '" title="' + icon.label + '" aria-label="' + icon.label + '"></i>'
+    ).join("");
+
+    return '<span class="vb-arrival-extras">' + html + '</span>';
+  }
+
   function formatArrivalCountdown(timestamp, nowSeconds = Date.now() / 1000) {
     const seconds = Number(timestamp);
     if (!Number.isFinite(seconds)) return "";
