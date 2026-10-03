@@ -106,16 +106,23 @@ def build_model_routes(
             "type": route_type,
         }
 
-        subtype = determine_model_route_subtype(
-            route_ref,
-            route_type,
-        )
-        if (
-            not subtype
-            and route_type == "bus"
-            and route_id.upper().startswith(("TB", "TM"))
-        ):
-            subtype = "temporary"
+        if override and "subtype" in override:
+            # An explicit override can suppress the inferred subtype.
+            # This is needed for TB* CGM services that are manually masked
+            # as ordinary bus lines (e.g. 60, 73, 74, 123, 186, 288, 801).
+            subtype = normalize(override.get("subtype")).lower() or None
+        else:
+            subtype = determine_model_route_subtype(
+                route_ref,
+                route_type,
+            )
+            if (
+                not subtype
+                and route_type == "bus"
+                and route_id.upper().startswith(("TB", "TM"))
+            ):
+                subtype = "temporary"
+
         if subtype:
             model_route["subtype"] = subtype
 
