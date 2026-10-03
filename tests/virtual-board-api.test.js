@@ -264,6 +264,24 @@ const res = {
     'canceled/deleted routes must not count as realtime-supported fallback blockers'
   );
 
+  const delayOnlyActiveTrip = payload.active_trips.find(
+    item => item.trip_id === 'REALTIME-DELAY-ONLY'
+  );
+  assert.ok(delayOnlyActiveTrip, 'delay-only trip must remain an active trip');
+  assert.equal(delayOnlyActiveTrip.trip_delay, 90);
+  assert.deepEqual(
+    delayOnlyActiveTrip.delay_updates,
+    [{
+      stop_id: '0605',
+      stop_sequence: null,
+      schedule_relationship: 0,
+      delay: null,
+      timestamp: null,
+      scheduled_time: null
+    }],
+    'missing StopTimeEvent delay must remain unknown rather than coercing to zero'
+  );
+
   console.log('virtual-board-api: all tests passed');
 })().catch(error => {
   console.error(error);
