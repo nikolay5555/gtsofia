@@ -670,6 +670,72 @@ assert.equal(
     );
   }
 
+  {
+    const staticTime = {
+      timestamp: 7_000_100,
+      service_date: '2026-10-03',
+      stop_sequence: 30,
+      course_times: ['18:00:00', '18:02:00', '18:04:00'],
+      course_arrival_times: ['18:00:00', '18:02:00', '18:04:00'],
+      course_departure_times: ['18:00:20', '18:02:20', '18:04:20'],
+      course_stop_sequences: [10, 20, 30]
+    };
+
+    for (const scenario of [
+      { label: 'trip-early', tripDelay: -120, updates: [] },
+      { label: 'trip-on-time', tripDelay: 0, updates: [] },
+      { label: 'trip-late', tripDelay: 180, updates: [] },
+      {
+        label: 'stop-delay-propagates',
+        tripDelay: null,
+        updates: [
+          { stop_sequence: 20, schedule_relationship: 0, delay: 90, timestamp: null }
+        ]
+      },
+      {
+        label: 'no-data-stops-propagation',
+        tripDelay: 120,
+        updates: [
+          { stop_sequence: 20, schedule_relationship: 2, delay: null, timestamp: null }
+        ]
+      },
+      {
+        label: 'time-only-updates-propagate',
+        tripDelay: null,
+        updates: [
+          {
+            stop_sequence: 20,
+            schedule_relationship: 0,
+            delay: null,
+            timestamp: 7_000_190
+          }
+        ]
+      }
+    ]) {
+      const delay = internals.getPropagatedRealtimeDelay(
+        {
+          trip_delay: scenario.tripDelay,
+          delay_updates: scenario.updates
+        },
+        staticTime
+      );
+
+      const expected = scenario.label === 'stop-delay-propagates'
+        ? 90
+        : scenario.label === 'no-data-stops-propagation'
+          ? null
+          : scenario.label === 'time-only-updates-propagate'
+            ? 90
+            : scenario.tripDelay;
+
+      assert.equal(
+        delay,
+        expected,
+        `${scenario.label} must resolve the correct propagated delay`
+      );
+    }
+  }
+
 // Lifecycle regression: an early realtime course must remain attached to
   // its static course after the realtime update disappears just after passing.
   {
