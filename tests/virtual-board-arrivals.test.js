@@ -373,6 +373,26 @@ assert.equal(
   );
 
   assert.equal(
+    internals.getRealtimeScheduledTimestamp({
+      timestamp: 1_000_410,
+      scheduled_time: '',
+      delay: 0
+    }),
+    1_000_410,
+    'an empty scheduled_time must fall back to actual time plus delay'
+  );
+
+  assert.equal(
+    internals.getRealtimeScheduledTimestamp({
+      timestamp: null,
+      scheduled_time: null,
+      delay: null
+    }),
+    null,
+    'missing realtime timing fields must remain unavailable, not become timestamp zero'
+  );
+
+  assert.equal(
     internals.findRealtimeStaticMatchIndex(
       { trip_id: '', trip_start_time: '' },
       { trip_id: '', timestamp: 1_000_420, scheduled_time: null, delay: null },
