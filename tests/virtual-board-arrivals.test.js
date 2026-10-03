@@ -817,7 +817,7 @@ assert.equal(
             stop_sequence: 20,
             schedule_relationship: 0,
             delay: null,
-            timestamp: 7_000_190
+            timestamp: new Date('2026-10-03T15:03:30Z').getTime() / 1000
           }
         ]
       }
