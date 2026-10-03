@@ -902,7 +902,11 @@
           if (!existing) {
             rowsByTerminal.set(terminalStopId, {
               terminalStopId,
-              times: [{ timestamp, trip_id: tripId }]
+              times: [{
+                timestamp,
+                trip_id: tripId,
+                start_time: String(schedule?.start_time || '').trim()
+              }]
             });
           } else {
             existing.times.push({ timestamp, trip_id: tripId });
@@ -1125,6 +1129,97 @@ const realtimeRoutes = Array.isArray(data?.routes)
       );
     }
 
+    function parseRealtimeTripStartTimestamp(route) {
+      const value = String(route?.trip_start_time || route?.start_time || '').trim();
+      const seconds = parseGtfsTime(value);
+      return seconds == null ? null : seconds;
+    }
+
+    function getRealtimeScheduledTimestamp(time) {
+      const scheduledTimestamp = Number(time?.scheduled_time);
+      if (Number.isFinite(scheduledTimestamp)) return scheduledTimestamp;
+
+      const actualTimestamp = Number(time?.timestamp);
+      const delay = Number(time?.delay);
+      if (Number.isFinite(actualTimestamp) && Number.isFinite(delay)) {
+        return actualTimestamp - delay;
+      }
+
+      return null;
+    }
+
+    function findRealtimeStaticMatchIndex(realtimeRoute, realtimeTime, staticTimes, matchedStaticIndexes) {
+      const realtimeTripId = String(realtimeTime?.trip_id || realtimeRoute?.trip_id || '').trim();
+
+      // 1) Exact trip identity is the strongest possible match.
+      if (realtimeTripId) {
+        const byTripId = staticTimes.findIndex((staticTime, index) =>
+          !matchedStaticIndexes.has(index)
+          && String(staticTime?.trip_id || '').trim() === realtimeTripId
+        );
+        if (byTripId >= 0) return byTripId;
+      }
+
+      // 2) Some GTFS-RT generations use a different trip_id namespace from
+      // the static export, but keep the same GTFS trip start time.
+      const realtimeStartSeconds = parseRealtimeTripStartTimestamp(realtimeRoute);
+      if (realtimeStartSeconds != null) {
+        const byStartTime = staticTimes.findIndex((staticTime, index) =>
+          !matchedStaticIndexes.has(index)
+          && parseGtfsTime(staticTime?.start_time) === realtimeStartSeconds
+        );
+        if (byStartTime >= 0) return byStartTime;
+      }
+
+      const realtimeScheduledTimestamp = getRealtimeScheduledTimestamp(realtimeTime);
+
+      // 3) Exact scheduled arrival time. This catches normal realtime
+      // departures as well as vehicles running early/late.
+      if (Number.isFinite(realtimeScheduledTimestamp)) {
+        const byScheduledTime = staticTimes.findIndex((staticTime, index) =>
+          !matchedStaticIndexes.has(index)
+          && Number(staticTime?.timestamp) === realtimeScheduledTimestamp
+        );
+        if (byScheduledTime >= 0) return byScheduledTime;
+      }
+
+      // 4) If the feed only gives a live timestamp, use a conservative
+      // proximity fallback. This specifically handles the observed case where
+      // one course is one minute early/late and the feed omitted its scheduled
+      // time. Do not use this when a second scheduled course is equally close:
+      // in that situation merging would risk hiding a real separate vehicle.
+      const actualTimestamp = Number(realtimeTime?.timestamp);
+      if (!Number.isFinite(actualTimestamp)) return -1;
+
+      const candidates = [];
+      staticTimes.forEach((staticTime, index) => {
+        if (matchedStaticIndexes.has(index)) return;
+
+        const staticTimestamp = Number(staticTime?.timestamp);
+        if (!Number.isFinite(staticTimestamp)) return;
+
+        const difference = Math.abs(staticTimestamp - actualTimestamp);
+        if (difference <= 120) {
+          candidates.push({ index, difference });
+        }
+      });
+
+      if (!candidates.length) return -1;
+
+      candidates.sort((a, b) => a.difference - b.difference);
+
+      // One clear nearby course is safe to replace. When two courses are
+      // similarly close, keep both rather than guessing which one is realtime.
+      if (
+        candidates.length > 1
+        && candidates[1].difference - candidates[0].difference < 30
+      ) {
+        return -1;
+      }
+
+      return candidates[0].index;
+    }
+
     const mergedSurfaceRoutes = [...mergedRealtime.values()]
       .map(route => {
         const routeId = String(route?.route_id || '').trim();
@@ -1154,50 +1249,12 @@ const realtimeRoutes = Array.isArray(data?.routes)
         // first, then use a very small time tolerance only as a fallback for
         // feeds that omit or alter the scheduled trip identity.
         for (const realtimeTime of realtimeTimes) {
-          const realtimeTripId = String(realtimeTime?.trip_id || '').trim();
-          const realtimeScheduledTimestamp = Number(realtimeTime?.scheduled_time);
-          const realtimeTimestamp = Number(realtimeTime?.timestamp);
-
-          let matchIndex = -1;
-
-          if (realtimeTripId) {
-            matchIndex = staticTimes.findIndex((staticTime, index) =>
-              !matchedStaticIndexes.has(index)
-              && String(staticTime?.trip_id || '').trim() === realtimeTripId
-            );
-          }
-
-          if (matchIndex < 0 && Number.isFinite(realtimeScheduledTimestamp)) {
-            matchIndex = staticTimes.findIndex((staticTime, index) =>
-              !matchedStaticIndexes.has(index)
-              && Number(staticTime?.timestamp) === realtimeScheduledTimestamp
-            );
-          }
-
-          // Last-resort protection against duplicate "8 мин." entries when
-          // Sofia Traffic's realtime record cannot be linked by trip_id or
-          // scheduled_time. Only match a nearby scheduled departure; do not
-          // broadly collapse the timetable because delayed realtime trips can
-          // legitimately be close to another scheduled course.
-          if (
-            matchIndex < 0
-            && !realtimeTripId
-            && !Number.isFinite(realtimeScheduledTimestamp)
-            && Number.isFinite(realtimeTimestamp)
-          ) {
-            let bestDifference = Infinity;
-            staticTimes.forEach((staticTime, index) => {
-              if (matchedStaticIndexes.has(index)) return;
-              const staticTimestamp = Number(staticTime?.timestamp);
-              if (!Number.isFinite(staticTimestamp)) return;
-
-              const difference = Math.abs(staticTimestamp - realtimeTimestamp);
-              if (difference <= 60 && difference < bestDifference) {
-                bestDifference = difference;
-                matchIndex = index;
-              }
-            });
-          }
+          const matchIndex = findRealtimeStaticMatchIndex(
+            route,
+            realtimeTime,
+            staticTimes,
+            matchedStaticIndexes
+          );
 
           if (matchIndex >= 0) {
             matchedStaticIndexes.add(matchIndex);
