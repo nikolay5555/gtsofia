@@ -1322,20 +1322,222 @@ function findRealtimeStaticMatchEntryAcrossDirections(
     return !!selectedName && !!destinationName && selectedName === destinationName;
   }
 
+  function shiftSofiaDateKey(date = new Date(), offsetDays = 0) {
+    const parts = getSofiaDateParts(date);
+    if (![parts.year, parts.month, parts.day].every(Number.isFinite)) return "";
+
+    const shifted = new Date(
+      Date.UTC(parts.year, parts.month - 1, parts.day) + offsetDays * 86400 * 1000
+    );
+
+    return [
+      String(shifted.getUTCFullYear()).padStart(4, "0"),
+      String(shifted.getUTCMonth() + 1).padStart(2, "0"),
+      String(shifted.getUTCDate()).padStart(2, "0")
+    ].join("-");
+  }
+
+  function gtfsSecondsToServiceDateTimestamp(serviceDate, seconds) {
+    const normalizedDate = normalizeGtfsDateKey(serviceDate);
+    const numericSeconds = Number(seconds);
+    if (
+      !normalizedDate
+      || !Number.isFinite(numericSeconds)
+      || numericSeconds < 0
+    ) return null;
+
+    const [year, month, day] = normalizedDate.split("-").map(Number);
+    if (![year, month, day].every(Number.isFinite)) return null;
+
+    const baseUtc = Date.UTC(year, month - 1, day);
+    const candidate = (
+      baseUtc
+      + numericSeconds * 1000
+      - getSofiaOffsetMs(new Date(baseUtc))
+    );
+
+    return candidate / 1000;
+  }
+
+  function getBoardServiceDates(now = new Date()) {
+    // The previous service date is needed for GTFS times such as 25:30:00
+    // after midnight. The next two dates cover ordinary next-day departures
+    // and late-running >24h service while preserving the service-date meaning.
+    return [-1, 0, 1, 2]
+      .map(offset => shiftSofiaDateKey(now, offset))
+      .filter(Boolean);
+  }
+
+  function getCalendarDayTypeForDate(serviceDate) {
+    const normalized = normalizeGtfsDateKey(serviceDate);
+    if (!normalized) return "";
+
+    const calendar = transportData?.calendar || {};
+    const explicit = calendar?.dateTypes?.[normalized];
+    if (explicit === "weekday" || explicit === "weekend") return explicit;
+
+    const date = new Date(`${normalized}T12:00:00Z`);
+    const weekday = date.getUTCDay();
+    return weekday === 0 || weekday === 6 ? "weekend" : "weekday";
+  }
+
+  function isSuppressedStaticSchedule(
+    schedule,
+    routeId,
+    directionKey,
+    serviceDate,
+    suppressedTrips = []
+  ) {
+    if (!Array.isArray(suppressedTrips) || !suppressedTrips.length) return false;
+
+    const scheduleOriginalTripId = String(schedule?.original_trip_id || "").trim();
+    const scheduleStartTime = parseGtfsTime(schedule?.start_time);
+    const normalizedServiceDate = normalizeGtfsDateKey(serviceDate);
+
+    return suppressedTrips.some(suppressed => {
+      if (!suppressed) return false;
+
+      const suppressedRouteId = String(suppressed?.route_id || "").trim();
+      if (
+        suppressedRouteId
+        && routeId
+        && suppressedRouteId !== routeId
+      ) return false;
+
+      const suppressedTripId = String(
+        suppressed?.trip_id || suppressed?.source_trip_id || ""
+      ).trim();
+
+      if (
+        suppressedTripId
+        && scheduleOriginalTripId
+        && suppressedTripId === scheduleOriginalTripId
+      ) {
+        const suppressedDate = normalizeGtfsDateKey(suppressed?.start_date);
+        return !suppressedDate || !normalizedServiceDate || suppressedDate === normalizedServiceDate;
+      }
+
+      const suppressedStartTime = parseGtfsTime(suppressed?.start_time);
+      if (suppressedStartTime == null || scheduleStartTime == null) return false;
+
+      const suppressedDate = normalizeGtfsDateKey(suppressed?.start_date);
+      if (suppressedDate && normalizedServiceDate && suppressedDate !== normalizedServiceDate) {
+        return false;
+      }
+
+      const suppressedDirectionId = String(suppressed?.direction_id || "").trim();
+      const scheduleDirectionId = String(
+        schedule?.direction_id || ""
+      ).trim();
+      if (
+        suppressedDirectionId
+        && scheduleDirectionId
+        && suppressedDirectionId !== scheduleDirectionId
+      ) return false;
+
+      if (
+        directionKey
+        && scheduleDirectionId === ""
+        && suppressedDirectionId === ""
+      ) return false;
+
+      return suppressedStartTime === scheduleStartTime;
+    });
+  }
+
+  function getStaticScheduleTimeValue(schedule, stopIndex) {
+    const arrivalTimes = Array.isArray(schedule?.arrival_times)
+      ? schedule.arrival_times
+      : [];
+    const departureTimes = Array.isArray(schedule?.departure_times)
+      ? schedule.departure_times
+      : [];
+    const effectiveTimes = Array.isArray(schedule?.times)
+      ? schedule.times
+      : [];
+
+    return (
+      arrivalTimes[stopIndex]
+      || departureTimes[stopIndex]
+      || effectiveTimes[stopIndex]
+      || ""
+    );
+  }
+
+  function getStaticTerminalIndex(schedule, pattern) {
+    const arrivalTimes = Array.isArray(schedule?.arrival_times)
+      ? schedule.arrival_times
+      : [];
+    const departureTimes = Array.isArray(schedule?.departure_times)
+      ? schedule.departure_times
+      : [];
+    const effectiveTimes = Array.isArray(schedule?.times)
+      ? schedule.times
+      : [];
+    const max = Math.min(
+      pattern.length,
+      Math.max(arrivalTimes.length, departureTimes.length, effectiveTimes.length)
+    );
+
+    for (let i = max - 1; i >= 0; i--) {
+      if (
+        parseGtfsTime(arrivalTimes[i]) != null
+        || parseGtfsTime(departureTimes[i]) != null
+        || parseGtfsTime(effectiveTimes[i]) != null
+      ) {
+        return i;
+      }
+    }
+
+    return -1;
+  }
+
+  function collectStaticSchedulesForDirection(scheduleSet, serviceDate) {
+    const dayType = getCalendarDayTypeForDate(serviceDate);
+    const result = new Map();
+
+    // Search both buckets because calendar_dates.txt may override the normal
+    // weekday/weekend classification. Exact service_id evaluation below is
+    // authoritative for whether a concrete trip operates on this date.
+    for (const bucket of ["weekday", "weekend"]) {
+      for (const schedule of Array.isArray(scheduleSet?.[bucket]) ? scheduleSet[bucket] : []) {
+        const serviceId = String(schedule?.service_id || "").trim();
+
+        if (!serviceId && bucket !== dayType) continue;
+        if (
+          serviceId
+          && !isServiceActiveOnDate(serviceId, new Date(`${serviceDate}T12:00:00Z`))
+        ) continue;
+
+        const identity = [
+          String(schedule?.original_trip_id || schedule?.trip_id || "").trim(),
+          String(schedule?.start_time || "").trim()
+        ].join("|");
+
+        if (!identity || result.has(identity)) continue;
+        result.set(identity, schedule);
+      }
+    }
+
+    return [...result.values()];
+  }
+
   function getMetroScheduledArrivals(stop) {
-    const now = getNowGtfsSeconds();
-    const dayType = getCurrentScheduleDayType();
-    const selectedStop = String(stop?.stop_id || stop?.stop_code || '').trim();
+    const nowTimestamp = Date.now() / 1000;
+    const horizonTimestamp = nowTimestamp + 2 * 60 * 60;
+    const selectedStop = String(stop?.stop_id || stop?.stop_code || "").trim();
     if (!selectedStop) return [];
 
     const result = [];
-    for (const route of (transportData?.routes || [])) {
-      if (String(route?.route_type) !== '1') continue;
+    const serviceDates = getBoardServiceDates();
 
-      const routeId = String(route.route_id || '').trim();
+    for (const route of (transportData?.routes || [])) {
+      if (String(route.route_type) !== "1") continue;
+
+      const routeId = String(route.route_id || "").trim();
       const directionSet = transportData?.directions?.[routeId] || {};
       const scheduleSet = transportData?.schedules?.[routeId] || {};
-      const meta = getLineMeta(routeId, route.route_short_name || '');
+      const meta = getLineMeta(routeId, route.route_short_name || "");
 
       for (const [directionKey, direction] of Object.entries(directionSet)) {
         const pattern = Array.isArray(direction?.pattern) ? direction.pattern.map(String) : [];
@@ -1343,195 +1545,174 @@ function findRealtimeStaticMatchEntryAcrossDirections(
         if (stopIndex < 0) continue;
         if (isTerminalDirectionForStop(routeId, selectedStop, direction)) continue;
 
-        const daySchedules = scheduleSet?.[directionKey]?.[dayType];
-        if (!Array.isArray(daySchedules)) continue;
-
         const arrivals = [];
-        for (const schedule of daySchedules) {
-          if (!isScheduleRowActiveToday(schedule)) continue;
-          const rawTime = Array.isArray(schedule?.times) ? schedule.times[stopIndex] : null;
-          const seconds = parseGtfsTime(rawTime);
-          if (seconds == null) continue;
+        for (const serviceDate of serviceDates) {
+          const schedules = collectStaticSchedulesForDirection(scheduleSet, serviceDate);
+          for (const schedule of schedules) {
+            const rawTime = getStaticScheduleTimeValue(schedule, stopIndex);
+            const seconds = parseGtfsTime(rawTime);
+            if (seconds == null) continue;
 
-          const todayTimestamp = gtfsSecondsToTodayTimestamp(seconds);
-          let timestamp = todayTimestamp;
-          if (timestamp < Date.now() / 1000) timestamp += 86400;
-          arrivals.push(timestamp);
+            const timestamp = gtfsSecondsToServiceDateTimestamp(serviceDate, seconds);
+            if (!Number.isFinite(timestamp)) continue;
+            if (timestamp < nowTimestamp) continue;
+            if (timestamp > horizonTimestamp) continue;
+
+            arrivals.push({
+              timestamp,
+              trip_id: String(schedule?.trip_id ?? "").trim(),
+              original_trip_id: String(schedule?.original_trip_id || "").trim(),
+              service_id: String(schedule?.service_id || "").trim(),
+              service_date: serviceDate,
+              start_time: String(schedule?.start_time || "").trim(),
+              stop_sequence: Array.isArray(schedule?.stop_sequences)
+                ? Number(schedule.stop_sequences[stopIndex])
+                : null,
+              direction_id: String(
+                schedule?.direction_id || direction?.direction_id || ""
+              ).trim(),
+              delay: null,
+              scheduled: true,
+              source: "static"
+            });
+          }
         }
 
-        arrivals.sort((a, b) => a - b);
-        const unique = [...new Set(arrivals)].slice(0, 4);
+        arrivals.sort((a, b) => a.timestamp - b.timestamp);
+
+        const unique = [];
+        const seen = new Set();
+        for (const time of arrivals) {
+          const key = getStaticCourseKey(
+            { route_id: routeId, direction_key: directionKey, destination: direction?.destination },
+            time
+          );
+          if (!key || seen.has(key)) continue;
+          seen.add(key);
+          unique.push(time);
+        }
+
         if (!unique.length) continue;
 
         result.push({
           route_id: routeId,
-          route_ref: meta.number || route.route_short_name || '—',
-          destination: direction?.destination || direction?.headsign || '',
-          times: unique.map(timestamp => ({ timestamp, delay: null, scheduled: true, source: 'static' })),
-          meta
+          direction_key: directionKey,
+          direction,
+          route_ref: meta.number || route.route_short_name || "—",
+          destination: direction?.destination || direction?.headsign || "",
+          times: unique.slice(0, 4),
+          meta,
+          scheduled: true,
+          source: "static"
         });
       }
     }
+
     return result;
   }
 
-  function isSkippedStaticSchedule(
-    schedule,
-    routeId,
-    directionKey,
-    selectedStopId,
-    stopIndex,
-    skippedTrips = []
-  ) {
-    if (!Array.isArray(skippedTrips) || !skippedTrips.length) return false;
-
-    const scheduleRouteId = String(routeId || '').trim();
-    const scheduleDirectionKey = String(directionKey || '').trim();
-    const scheduleOriginalTripId = String(schedule?.original_trip_id || '').trim();
-    const scheduleStartTime = parseGtfsTime(schedule?.start_time);
-    const scheduleStopSequences = Array.isArray(schedule?.stop_sequences)
-      ? schedule.stop_sequences
-      : [];
-    const selectedSequence = Number.isInteger(stopIndex)
-      ? Number(scheduleStopSequences[stopIndex])
-      : NaN;
-
-    return skippedTrips.some(skipped => {
-      if (!skipped) return false;
-
-      const skippedRouteId = String(skipped.route_id || '').trim();
-      if (skippedRouteId && scheduleRouteId && skippedRouteId !== scheduleRouteId) return false;
-
-      // A SKIPPED record is meaningful only for the exact stop represented by
-      // this static schedule row. Prefer stop_id; when GTFS-RT omitted it,
-      // resolve the stop through stop_sequence against the generated pattern.
-      const skippedStopId = String(skipped.stop_id || '').trim();
-      if (skippedStopId) {
-        if (!stopIdsMatch(skippedStopId, selectedStopId)) return false;
-      } else {
-        const skippedSequence = Number(skipped.stop_sequence);
-        if (!Number.isFinite(skippedSequence) || !Number.isFinite(selectedSequence)) return false;
-        if (skippedSequence !== selectedSequence) return false;
-      }
-
-      const skippedTripId = String(skipped.trip_id || '').trim();
-
-      // Newer generated transport.json contains the exact original GTFS trip
-      // id on every schedule row. This is the strongest possible match.
-      if (scheduleOriginalTripId && skippedTripId && scheduleOriginalTripId === skippedTripId) {
-        return true;
-      }
-
-      // Compatibility with older generated data: resolve the realtime trip to
-      // its static direction and match its GTFS start_time. The stop check above
-      // is deliberately done first so an unrelated SKIPPED stop cannot suppress
-      // the same scheduled course.
-      if (!skippedTripId || scheduleStartTime == null) return false;
-
-      const staticTrip = findStaticTrip(skippedTripId);
-      if (!staticTrip) return false;
-
-      const skippedDirection = getStaticDirectionForTrip(staticTrip);
-      if (skippedDirection?.key
-        && scheduleDirectionKey
-        && String(skippedDirection.key) !== scheduleDirectionKey) {
-        return false;
-      }
-
-      const skippedStartTime = parseGtfsTime(skipped.start_time);
-      if (skippedStartTime == null) return false;
-
-      return skippedStartTime === scheduleStartTime;
-    });
-  }
-
-  function getSurfaceScheduledArrivals(stop, skippedTrips = []) {
+  function getSurfaceScheduledArrivals(stop, skippedTrips = [], suppressedTrips = []) {
     const nowTimestamp = Date.now() / 1000;
     const horizonTimestamp = nowTimestamp + 2 * 60 * 60;
-    const dayType = getCurrentScheduleDayType();
-    const selectedStop = String(stop?.stop_id || stop?.stop_code || '').trim();
+    const selectedStop = String(stop?.stop_id || stop?.stop_code || "").trim();
     if (!selectedStop) return [];
 
     const result = [];
+    const serviceDates = getBoardServiceDates();
 
     for (const route of transportData?.routes || []) {
-      if (String(route?.route_type) === '1') continue;
+      if (String(route?.route_type) === "1") continue;
 
-      const routeId = String(route?.route_id || '').trim();
+      const routeId = String(route?.route_id || "").trim();
       if (!routeId) continue;
 
       const directions = transportData?.directions?.[routeId] || {};
       const schedules = transportData?.schedules?.[routeId] || {};
-      const meta = getLineMeta(routeId, route.route_short_name || '');
+      const meta = getLineMeta(routeId, route.route_short_name || "");
 
       for (const [directionKey, direction] of Object.entries(directions)) {
-        const pattern = Array.isArray(direction?.pattern) ? direction.pattern.map(String) : [];
+        const pattern = Array.isArray(direction?.pattern)
+          ? direction.pattern.map(String)
+          : [];
         const stopIndex = pattern.findIndex(id => stopIdsMatch(id, selectedStop));
         if (stopIndex < 0) continue;
 
-        const daySchedules = schedules?.[directionKey]?.[dayType];
-        if (!Array.isArray(daySchedules)) continue;
-
         const rowsByTerminal = new Map();
 
-        for (const schedule of daySchedules) {
-          if (!isScheduleRowActiveToday(schedule)) continue;
-
-          const times = Array.isArray(schedule?.times) ? schedule.times : [];
-          const seconds = parseGtfsTime(times[stopIndex]);
-          if (seconds == null) continue;
-
-          let terminalIndex = -1;
-          for (let i = Math.min(times.length, pattern.length) - 1; i >= 0; i--) {
-            if (parseGtfsTime(times[i]) != null) {
-              terminalIndex = i;
-              break;
-            }
-          }
-          if (terminalIndex < stopIndex) continue;
-
-          const terminalStopId = String(
-            pattern[terminalIndex] || getDirectionTerminalStopId(direction) || ''
-          ).trim();
-          if (!terminalStopId || stopIdsMatch(terminalStopId, selectedStop)) continue;
-
-          let timestamp = gtfsSecondsToTodayTimestamp(seconds);
-          if (timestamp < nowTimestamp) timestamp += 86400;
-          if (timestamp > horizonTimestamp) continue;
-
-          if (isSkippedStaticSchedule(
-            schedule,
-            routeId,
-            directionKey,
-            selectedStop,
-            stopIndex,
-            skippedTrips
-          )) continue;
-
-          const destination = normalizeDirectionText(
-            direction?.destination || direction?.headsign || terminalStopId
+        for (const serviceDate of serviceDates) {
+          const schedulesForDate = collectStaticSchedulesForDirection(
+            schedules?.[directionKey],
+            serviceDate
           );
-          if (isConsumedRealtimeScheduledArrival(
-            selectedStop,
-            routeId,
-            destination,
-            timestamp
-          )) continue;
 
-          const time = {
-            timestamp,
-            trip_id: String(schedule?.trip_id ?? '').trim(),
-            original_trip_id: String(schedule?.original_trip_id || '').trim(),
-            service_id: String(schedule?.service_id || '').trim(),
-            start_time: String(schedule?.start_time || '').trim(),
-            delay: null,
-            scheduled: true,
-            source: 'static'
-          };
+          for (const schedule of schedulesForDate) {
+            const times = Array.isArray(schedule?.times) ? schedule.times : [];
+            const terminalIndex = getStaticTerminalIndex(schedule, pattern);
+            if (terminalIndex < stopIndex) continue;
 
-          const list = rowsByTerminal.get(terminalStopId) || [];
-          list.push(time);
-          rowsByTerminal.set(terminalStopId, list);
+            const rawTime = getStaticScheduleTimeValue(schedule, stopIndex);
+            const seconds = parseGtfsTime(rawTime);
+            if (seconds == null) continue;
+
+            const terminalStopId = String(
+              pattern[terminalIndex] || getDirectionTerminalStopId(direction) || ""
+            ).trim();
+            if (!terminalStopId || stopIdsMatch(terminalStopId, selectedStop)) continue;
+
+            const timestamp = gtfsSecondsToServiceDateTimestamp(serviceDate, seconds);
+            if (!Number.isFinite(timestamp)) continue;
+            if (timestamp < nowTimestamp) continue;
+            if (timestamp > horizonTimestamp) continue;
+
+            if (isSkippedStaticSchedule(
+              schedule,
+              routeId,
+              directionKey,
+              selectedStop,
+              stopIndex,
+              skippedTrips
+            )) continue;
+
+            if (isSuppressedStaticSchedule(
+              schedule,
+              routeId,
+              directionKey,
+              serviceDate,
+              suppressedTrips
+            )) continue;
+
+            const arrivalTimes = Array.isArray(schedule?.arrival_times)
+              ? schedule.arrival_times
+              : [];
+            const departureTimes = Array.isArray(schedule?.departure_times)
+              ? schedule.departure_times
+              : [];
+            const stopSequence = Array.isArray(schedule?.stop_sequences)
+              ? Number(schedule.stop_sequences[stopIndex])
+              : null;
+
+            const time = {
+              timestamp,
+              trip_id: String(schedule?.trip_id ?? "").trim(),
+              original_trip_id: String(schedule?.original_trip_id || "").trim(),
+              service_id: String(schedule?.service_id || "").trim(),
+              service_date: serviceDate,
+              start_time: String(schedule?.start_time || "").trim(),
+              direction_id: String(
+                schedule?.direction_id || direction?.direction_id || ""
+              ).trim(),
+              stop_sequence: Number.isFinite(stopSequence) ? stopSequence : null,
+              arrival_time: String(arrivalTimes[stopIndex] || "").trim(),
+              departure_time: String(departureTimes[stopIndex] || "").trim(),
+              delay: null,
+              scheduled: true,
+              source: "static"
+            };
+
+            const list = rowsByTerminal.get(terminalStopId) || [];
+            list.push(time);
+            rowsByTerminal.set(terminalStopId, list);
+          }
         }
 
         for (const [terminalStopId, times] of rowsByTerminal) {
@@ -1557,20 +1738,23 @@ function findRealtimeStaticMatchEntryAcrossDirections(
           );
           const terminalStop = getStopById(terminalStopId);
           const rowDestination = isPartialCourse
-            ? (terminalStop?.stop_name || direction?.destination || direction?.headsign || '')
-            : (direction?.destination || direction?.headsign || terminalStop?.stop_name || '');
+            ? (terminalStop?.stop_name || direction?.destination || direction?.headsign || "")
+            : (direction?.destination || direction?.headsign || terminalStop?.stop_name || "");
 
           result.push({
             route_id: routeId,
             direction_key: directionKey,
             direction,
+            direction_id: String(
+              direction?.direction_id || ""
+            ).trim(),
             terminal_stop_id: terminalStopId,
-            route_ref: meta.number || route.route_short_name || '—',
+            route_ref: meta.number || route.route_short_name || "—",
             destination: rowDestination,
             times: uniqueTimes,
             meta,
             scheduled: true,
-            source: 'static'
+            source: "static"
           });
         }
       }
