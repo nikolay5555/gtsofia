@@ -1,5 +1,4 @@
 import hashlib
-from pathlib import Path
 
 from .common import DATA_DIR, get_today, write_json
 
@@ -27,19 +26,24 @@ def write_metadata(source="CGM Sofia official GTFS"):
         hashes[path.stem] = hashlib.sha256(path.read_bytes()).hexdigest()
 
     metadata = {
-        "app_version": "gtsofia-data-model-v3",
-        "model_version": 3,
+        "app_version": "gtsofia-data-model-v4",
+        "model_version": 4,
         "retrieval_date": get_today().isoformat(),
         "source": source,
         "files": list(GENERATED_FILES),
         "hashes": hashes,
+        "route_hierarchy": {
+            "type": ["metro", "tram", "trolley", "bus"],
+            "subtype": ["temporary", "school", "night"],
+        },
+        "stop_names_source": "OpenStreetMap first, GTFS fallback",
     }
     write_json(DATA_DIR / "metadata.json", metadata)
 
     write_json(
         DATA_DIR / "manifest.json",
         {
-            "version": 3,
+            "version": 4,
             "metadata": "metadata.json",
             "files": list(GENERATED_FILES) + ["metadata.json", "manifest.json"],
         },
