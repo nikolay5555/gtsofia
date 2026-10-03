@@ -307,6 +307,7 @@ function getStaticCourseKey(staticRoute, staticTime) {
   return [
     routeId,
     directionKey || normalizeDirectionText(staticRoute?.destination || ''),
+    String(staticTime?.start_time || '').trim(),
     Math.floor(timestamp)
   ].join('|');
 }
