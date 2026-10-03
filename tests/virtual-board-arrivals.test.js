@@ -31,7 +31,8 @@ function createStorage(initialEntries = []) {
 function loadInternals(storage) {
   const exportedSource = source.replace(
     /\n\}\)\(\);\s*$/,
-    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    getRealtimeScheduledTimestamp,\n    findRealtimeStaticMatchIndex,\n    findRealtimeStaticMatch,\n    findRealtimeStaticMatchEntryAcrossDirections,\n    getStaticCourseKey,\n    getStaticScheduleTimeValue,\n    gtfsSecondsToServiceDateTimestamp,\n    getRealtimeCourseStateKey,\n    rememberRealtimeCourseAssignment,\n    promotePassedRealtimeCourseStates,\n    isRealtimeCourseConsumed,
+    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    getRealtimeScheduledTimestamp,\n    findRealtimeStaticMatchIndex,\n    findRealtimeStaticMatch,\n    findRealtimeStaticMatchEntryAcrossDirections,\n    getStaticCourseKey,\n    getStaticScheduleTimeValue,\n    gtfsSecondsToServiceDateTimestamp,\n    realtimeSequenceMatchesStaticRoute,
+    getRealtimeCourseStateKey,\n    rememberRealtimeCourseAssignment,\n    promotePassedRealtimeCourseStates,\n    isRealtimeCourseConsumed,
     isStaticCourseConsumed,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
   );
 
@@ -329,6 +330,25 @@ assert.equal(
   'SKIPPED from another route must never suppress this route fallback'
 );
 
+
+assert.equal(
+  internals.realtimeSequenceMatchesStaticRoute(
+    { stop_sequence: 24 },
+    { route_id: 'TEST_ROUTE', direction_id: '0' },
+    { route_id: 'TEST_ROUTE', direction_id: '1', times: [{ stop_sequence: 24 }] }
+  ),
+  false,
+  'sequence-only realtime updates must not cross direction boundaries'
+);
+assert.equal(
+  internals.realtimeSequenceMatchesStaticRoute(
+    { stop_sequence: 24 },
+    { route_id: 'TEST_ROUTE', direction_id: '0' },
+    { route_id: 'TEST_ROUTE', direction_id: '0', times: [{ stop_sequence: 24 }] }
+  ),
+  true,
+  'sequence-only realtime updates may match the same direction'
+);
 
 const sequenceOnlySkipped = [{
   trip_id: 'REALTIME-11',
