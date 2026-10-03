@@ -59,18 +59,18 @@ assert.equal(
 );
 assert.equal(
   internals.formatArrivalCountdown(countdownNow + 59.9, countdownNow),
-  'Сега',
-  'less than 60 seconds remaining must show Сега'
+  '0 мин.',
+  'less than 60 seconds remaining must show zero minutes'
 );
 assert.equal(
   internals.formatArrivalCountdown(countdownNow, countdownNow),
-  'Сега',
-  'at the arrival timestamp must show Сега'
+  '0 мин.',
+  'at the arrival timestamp must show zero minutes'
 );
 assert.equal(
   internals.formatArrivalCountdown(countdownNow + 60 + 59, countdownNow),
-  '2 мин.',
-  '1 minute 59 seconds remaining should round to two minutes'
+  '1 мин.',
+  '1 minute 59 seconds remaining should stay at one minute'
 );
 assert.equal(
   internals.formatArrivalCountdown(countdownNow + 60 + 29, countdownNow),
@@ -79,13 +79,13 @@ assert.equal(
 );
 assert.equal(
   internals.formatArrivalCountdown(countdownNow + 60 + 30, countdownNow),
-  '2 мин.',
-  '1 minute 30 seconds remaining should round to two minutes'
+  '1 мин.',
+  '1 minute 30 seconds remaining should stay at one minute'
 );
 assert.equal(
   internals.formatArrivalCountdown(countdownNow + 60 * 3 - 1, countdownNow),
-  '3 мин.',
-  '2 minutes 59 seconds remaining must display three minutes'
+  '2 мин.',
+  '2 minutes 59 seconds remaining must display two minutes'
 );
 
 // A service that begins on Saturday must not be treated as active on Thursday
