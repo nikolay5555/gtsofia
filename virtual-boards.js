@@ -328,6 +328,20 @@
     const previousStrength = Number(previous?.match_strength || 0);
     const currentStrength = Number(matchStrength || 0);
 
+    const consumed = previous?.consumed === true
+      || actualTimestamp <= Date.now() / 1000;
+    const consumedCourseKeys = [
+      ...new Set([
+        ...(Array.isArray(previous?.consumed_static_course_keys)
+          ? previous.consumed_static_course_keys
+          : []),
+        ...(previous?.consumed === true && previous?.static_course_key
+          ? [String(previous.static_course_key).trim()]
+          : []),
+        ...(consumed ? [staticCourseKey] : [])
+      ].filter(Boolean))
+    ];
+
     const nextState = {
       ...(previous || {}),
       stop_id: stopId,
@@ -352,8 +366,9 @@
         || ""
       ).trim(),
       consumed_key: previous?.consumed_key || consumedKey,
+      consumed_static_course_keys: consumedCourseKeys,
       last_actual_timestamp: actualTimestamp,
-      consumed: previous?.consumed === true || actualTimestamp <= Date.now() / 1000,
+      consumed,
       expiresAt: Date.now() + REALTIME_COURSE_STATE_TTL_MS
     };
 
@@ -426,6 +441,15 @@
       if (stateStopId !== wantedStopId) continue;
 
       if (String(state?.static_course_key || "").trim() === courseKey) {
+        return true;
+      }
+
+      if (
+        Array.isArray(state?.consumed_static_course_keys)
+        && state.consumed_static_course_keys.some(
+          key => String(key || "").trim() === courseKey
+        )
+      ) {
         return true;
       }
     }
@@ -2421,6 +2445,12 @@ function findRealtimeStaticMatchEntryAcrossDirections(
             return (
               !matchedStaticCourseKeys.has(courseKey)
               && !isStaticCourseConsumed(stop.stop_id, route, time)
+              && !isConsumedRealtimeScheduledArrival(
+                stop.stop_id,
+                route.route_id,
+                route.destination,
+                time.timestamp
+              )
             );
           });
 
