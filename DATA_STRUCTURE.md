@@ -5,7 +5,7 @@ The generated transport data is split into small, single-purpose JSON files.
 ## Canonical data
 
 - routes.json — normalized routes. Each route has a primary type (metro, tram, trolley, bus) and may have a subtype (temporary, school, night).
-- stops.json — normalized stop model (code, coords, names). OpenStreetMap is authoritative when a matching public stop exists; official CGM GTFS fills codes not represented in OSM.
+- stops.json — normalized stop model (code, coords, names). OpenStreetMap is authoritative when a matching public stop exists; official CGM GTFS fills codes not represented in OSM. Passenger-facing destination names are resolved from these normalized stop names first, with GTFS headsign text only as a fallback.
 - trips.json — compact logical trips (id, cgm_id, direction, is_weekend).
 - directions.json — unique ordered stop patterns.
 - stop_times.json — timetable rows linked to logical trips (trip, numeric-minute times, stop_sequences, original_trip_id, service_id). No vehicle/car field is included.
