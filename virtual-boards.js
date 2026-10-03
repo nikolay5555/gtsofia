@@ -714,6 +714,13 @@ function findRealtimeStaticMatch(
   });
 
   const relationship = getRealtimeTripScheduleRelationship(realtimeRoute, realtimeTime);
+  if (relationship === 1) {
+    // ADDED is deprecated in current GTFS-Realtime and its behavior was
+    // explicitly unspecified. Do not reinterpret it as a scheduled trip or
+    // attach it to a static course. Producers should use DUPLICATED or NEW.
+    return null;
+  }
+
   if (relationship === 2 || relationship === 6 || relationship === 8) {
     // UNSCHEDULED, DUPLICATED and NEW have no ordinary static course to
     // consume. DUPLICATED references a static template but does not modify it.
