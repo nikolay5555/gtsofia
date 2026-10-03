@@ -639,13 +639,12 @@ function getRealtimeScheduledTimestamp(time) {
   const scheduledRaw = time?.scheduled_time;
   const scheduledTimestamp = optionalFiniteNumber(scheduledRaw);
 
-  // GTFS-RT scheduled_time is defined for NEW/REPLACEMENT/DUPLICATED
-  // StopTimeEvents. For normal scheduled trips the authoritative schedule
-  // anchor is time - delay because delay is relative to static GTFS.
+  // GTFS-RT scheduled_time is allowed only for NEW, REPLACEMENT, or
+  // DUPLICATED trips. ADDED and UNSCHEDULED have no usable static schedule
+  // anchor, so neither scheduled_time nor delay may be interpreted as one.
   if (
     (
-      relationship === 1
-      || relationship === 5
+      relationship === 5
       || relationship === 6
       || relationship === 8
     )
@@ -655,6 +654,10 @@ function getRealtimeScheduledTimestamp(time) {
     return scheduledTimestamp;
   }
 
+  if (relationship !== 0) return null;
+
+  // For a SCHEDULED trip, delay is relative to static GTFS. Therefore
+  // time - delay reconstructs the corresponding scheduled POSIX timestamp.
   const actualTimestamp = optionalFiniteNumber(time?.timestamp);
   const delay = optionalFiniteNumber(time?.delay);
   if (Number.isFinite(actualTimestamp) && Number.isFinite(delay)) {
