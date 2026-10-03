@@ -97,6 +97,34 @@ const noDataTrip = encodeTripUpdate({
   }]
 });
 
+const canceledTrip = encodeTripUpdate({
+  trip: {
+    tripId: 'REALTIME-CANCELED',
+    startTime: '08:55:00',
+    routeId: 'TB3'
+  },
+  stopUpdates: [{
+    stopId: '0605',
+    relationship: 0,
+    timestamp: now + 120,
+    scheduledTime: now + 120
+  }]
+});
+
+const deletedTrip = encodeTripUpdate({
+  trip: {
+    tripId: 'REALTIME-DELETED',
+    startTime: '09:05:00',
+    routeId: 'TB4'
+  },
+  stopUpdates: [{
+    stopId: '0605',
+    relationship: 0,
+    timestamp: now + 180,
+    scheduledTime: now + 180
+  }]
+});
+
 const normalTrip = encodeTripUpdate({
   trip: {
     tripId: 'REALTIME-NORMAL',
@@ -115,6 +143,8 @@ const feed = Buffer.concat([
   field(2, 2, encodeEntity('skipped', skippedTrip)),
   field(2, 2, encodeEntity('skipped-sequence', sequenceSkippedTrip)),
   field(2, 2, encodeEntity('no-data', noDataTrip)),
+  field(2, 2, encodeEntity('canceled', canceledTrip)),
+  field(2, 2, encodeEntity('deleted', deletedTrip)),
   field(2, 2, encodeEntity('normal', normalTrip))
 ]);
 
@@ -159,6 +189,11 @@ const res = {
     'NO_DATA must not become a suppression signal, and the normal realtime arrival must remain visible'
   );
   assert.equal(payload.routes[0].trip_id, 'REALTIME-NORMAL');
+  assert.deepEqual(
+    payload.realtime_route_ids.sort(),
+    ['TB2'],
+    'canceled/deleted routes must not count as realtime-supported fallback blockers'
+  );
 
   console.log('virtual-board-api: all tests passed');
 })().catch(error => {
