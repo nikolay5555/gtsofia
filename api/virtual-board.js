@@ -394,10 +394,14 @@ schedule_relationship: optionalFiniteNumber(update?.scheduleRelationship)
       continue;
     }
     const tripStartDate = String(
-      trip.startDate || tripUpdate.tripProperties?.startDate || ""
+      tripRelationship === TRIP_RELATIONSHIP.DUPLICATED
+        ? (tripUpdate.tripProperties?.startDate || trip.startDate || "")
+        : (trip.startDate || tripUpdate.tripProperties?.startDate || "")
     ).trim();
     const tripStartTime = String(
-      trip.startTime || tripUpdate.tripProperties?.startTime || ""
+      tripRelationship === TRIP_RELATIONSHIP.DUPLICATED
+        ? (tripUpdate.tripProperties?.startTime || trip.startTime || "")
+        : (trip.startTime || tripUpdate.tripProperties?.startTime || "")
     ).trim();
     const tripRouteId = String(trip.routeId || "").trim();
     const tripDirectionId = String(trip.directionId || "").trim();
