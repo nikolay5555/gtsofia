@@ -20,6 +20,7 @@ GENERATED_FILES = {
     "line-overrides.json",
     "metadata.json",
     "manifest.json",
+    "transport.json",
 }
 
 def main():
