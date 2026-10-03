@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+import json
+
 from lib.common import DATA_DIR, normalize, write_json
 from lib.gtfs import read_csv
 from lib.routes import build_model_routes
