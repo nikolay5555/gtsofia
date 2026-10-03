@@ -300,6 +300,17 @@ function stopIdsMatch(left, right) {
   return normalizeStopKey(left) === normalizeStopKey(right);
 }
 
+function optionalFiniteNumber(value) {
+  if (
+    value === null
+    || value === undefined
+    || String(value).trim() === ""
+  ) return null;
+
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
 function eventTimestamp(update) {
   if (Number.isFinite(update?.arrival?.time)) return update.arrival.time;
   if (Number.isFinite(update?.departure?.time)) return update.departure.time;
@@ -361,17 +372,12 @@ function buildBoard(updates, stopCode, feedTimestamp) {
       schedule_relationship: Number.isFinite(Number(update?.scheduleRelationship))
         ? Number(update.scheduleRelationship)
         : STOP_RELATIONSHIP.SCHEDULED,
-      delay: Number.isFinite(Number(eventDelay(update)))
-        ? Number(eventDelay(update))
-        : null,
-      timestamp: Number.isFinite(Number(eventTimestamp(update)))
-        ? Number(eventTimestamp(update))
-        : null,
-      scheduled_time: Number.isFinite(Number(update?.arrival?.scheduledTime))
-        ? Number(update.arrival.scheduledTime)
-        : Number.isFinite(Number(update?.departure?.scheduledTime))
-          ? Number(update.departure.scheduledTime)
-          : null
+      delay: optionalFiniteNumber(eventDelay(update)),
+      timestamp: optionalFiniteNumber(eventTimestamp(update)),
+      scheduled_time: optionalFiniteNumber(
+        update?.arrival?.scheduledTime
+        ?? update?.departure?.scheduledTime
+      )
     }));
   }
 
@@ -618,9 +624,7 @@ function buildBoard(updates, stopCode, feedTimestamp) {
       schedule_relationship: relationship,
       schedule_relationship_name: TRIP_RELATIONSHIP_NAME[relationship]
         || `UNKNOWN_${relationship}`,
-      trip_delay: Number.isFinite(Number(update?.delay))
-        ? Number(update.delay)
-        : null,
+      trip_delay: optionalFiniteNumber(update?.delay),
       delay_updates: serializeDelayUpdates(update.stopTimeUpdates)
     });
   }
