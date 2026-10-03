@@ -28,8 +28,12 @@ def build_stop_code_map(stops_data):
         gtfs_stop_id = normalize(row.get("stop_id"))
         if not gtfs_stop_id:
             continue
-        public_code = normalize_stop_id(
-            row.get("stop_code") or gtfs_stop_id
+        public_code = (
+            normalize_stop_id(gtfs_stop_id)
+            if gtfs_stop_id.upper().startswith("M")
+            else normalize_stop_id(
+                row.get("stop_code") or gtfs_stop_id
+            )
         )
         if public_code:
             result[gtfs_stop_id] = public_code
@@ -40,8 +44,12 @@ def build_stops(stops_data):
     result = []
     for row in stops_data:
         original_id = normalize(row.get("stop_id"))
-        normalized_id = normalize_stop_id(
-            row.get("stop_code") or original_id
+        normalized_id = (
+            normalize_stop_id(original_id)
+            if original_id.upper().startswith("M")
+            else normalize_stop_id(
+                row.get("stop_code") or original_id
+            )
         )
         if not normalized_id:
             continue
