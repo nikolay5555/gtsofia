@@ -1501,6 +1501,91 @@ function findRealtimeStaticMatchEntryAcrossDirections(
     });
   }
 
+  function isSkippedStaticSchedule(
+    schedule,
+    routeId,
+    directionKey,
+    selectedStopId,
+    stopIndex,
+    skippedTrips = []
+  ) {
+    if (!Array.isArray(skippedTrips) || !skippedTrips.length) return false;
+
+    const scheduleRouteId = String(routeId || "").trim();
+    const scheduleDirectionKey = String(directionKey || "").trim();
+    const scheduleOriginalTripId = String(schedule?.original_trip_id || "").trim();
+    const scheduleStartTime = parseGtfsTime(schedule?.start_time);
+    const scheduleServiceDate = normalizeGtfsDateKey(schedule?.service_date);
+
+    const stopSequences = Array.isArray(schedule?.stop_sequences)
+      ? schedule.stop_sequences
+      : [];
+    const selectedSequence = Number.isFinite(Number(stopSequences[stopIndex]))
+      ? Number(stopSequences[stopIndex])
+      : null;
+
+    return skippedTrips.some(skipped => {
+      if (!skipped) return false;
+
+      const skippedRouteId = String(skipped?.route_id || "").trim();
+      if (
+        skippedRouteId
+        && scheduleRouteId
+        && skippedRouteId !== scheduleRouteId
+      ) return false;
+
+      const skippedServiceDate = normalizeGtfsDateKey(skipped?.start_date);
+      if (
+        skippedServiceDate
+        && scheduleServiceDate
+        && skippedServiceDate !== scheduleServiceDate
+      ) return false;
+
+      const skippedStopId = String(skipped?.stop_id || "").trim();
+      if (skippedStopId) {
+        if (!stopIdsMatch(skippedStopId, selectedStopId)) return false;
+      } else {
+        const skippedSequence = Number(skipped?.stop_sequence);
+        if (
+          !Number.isFinite(skippedSequence)
+          || !Number.isFinite(selectedSequence)
+          || skippedSequence !== selectedSequence
+        ) return false;
+      }
+
+      const skippedTripId = String(
+        skipped?.trip_id || skipped?.source_trip_id || ""
+      ).trim();
+
+      if (
+        scheduleOriginalTripId
+        && skippedTripId
+        && scheduleOriginalTripId === skippedTripId
+      ) {
+        return true;
+      }
+
+      if (!skippedTripId || scheduleStartTime == null) return false;
+
+      const staticTrip = findStaticTrip(skippedTripId);
+      if (!staticTrip) return false;
+
+      const skippedDirection = getStaticDirectionForTrip(staticTrip);
+      if (
+        skippedDirection?.key
+        && scheduleDirectionKey
+        && String(skippedDirection.key) !== scheduleDirectionKey
+      ) {
+        return false;
+      }
+
+      const skippedStartTime = parseGtfsTime(skipped?.start_time);
+      if (skippedStartTime == null) return false;
+
+      return skippedStartTime === scheduleStartTime;
+    });
+  }
+
   function getStaticScheduleTimeValue(schedule, stopIndex) {
     const arrivalTimes = Array.isArray(schedule?.arrival_times)
       ? schedule.arrival_times

@@ -52,6 +52,12 @@ function loadInternals(storage) {
   return context.__testInternals;
 }
 
+assert.equal(
+  source.includes('function isSkippedStaticSchedule'),
+  true,
+  'SKIPPED suppression helper must remain part of the virtual-board pipeline'
+);
+
 const storage = createStorage();
 const internals = loadInternals(storage);
 
