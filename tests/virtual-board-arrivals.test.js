@@ -99,6 +99,23 @@ assert.equal(
 );
 
 assert.equal(
+  internals.getDuplicatedScheduleTimestamp(
+    {
+      schedule_relationship: 6,
+      start_date: '20261003',
+      start_time: '11:30:00'
+    },
+    {
+      service_date: '2026-10-03',
+      start_time: '10:00:00',
+      timestamp: new Date('2026-10-03T10:05:00+03:00').getTime() / 1000
+    }
+  ),
+  new Date('2026-10-03T11:35:00+03:00').getTime() / 1000,
+  'DUPLICATED trips must shift the static schedule by TripProperties.start_time'
+);
+
+assert.equal(
   internals.getRealtimeScheduledTimestamp({
     trip_schedule_relationship: 0,
     timestamp: 1_000_600,
