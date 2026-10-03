@@ -485,15 +485,20 @@ schedule_relationship: optionalFiniteNumber(update?.scheduleRelationship)
       const delay = stopDelay !== null
         ? stopDelay
         : (
-          tripRelationship === TRIP_RELATIONSHIP.SCHEDULED
+          (
+            tripRelationship === TRIP_RELATIONSHIP.SCHEDULED
+            || tripRelationship === TRIP_RELATIONSHIP.DUPLICATED
+          )
             ? optionalFiniteNumber(tripUpdate?.delay)
             : null
         );
 
       // GTFS-RT delay is meaningful only when the prediction is relative to
-      // an existing static GTFS schedule. NEW and REPLACEMENT trips must use
-      // absolute StopTimeEvent.time values instead; their optional
-      // scheduled_time is a separate replacement/new-trip schedule anchor.
+      // an existing or calculated schedule. SCHEDULED trips use static GTFS;
+      // DUPLICATED trips use the schedule calculated from the copied trip and
+      // TripProperties.start_time. NEW and REPLACEMENT trips must instead use
+      // absolute StopTimeEvent.time values, with optional scheduled_time as
+      // their separate new/replacement schedule anchor.
       if (!Number.isFinite(timestamp) && delay === null) continue;
 
       if (Number.isFinite(timestamp)) {
@@ -536,7 +541,10 @@ schedule_relationship: optionalFiniteNumber(update?.scheduleRelationship)
           schedule_relationship_name: TRIP_RELATIONSHIP_NAME[tripRelationship]
             || `UNKNOWN_${tripRelationship}`,
           destination_stop_id: terminalUpdate?.stopId || "",
-          trip_delay: tripRelationship === TRIP_RELATIONSHIP.SCHEDULED
+          trip_delay: (
+            tripRelationship === TRIP_RELATIONSHIP.SCHEDULED
+            || tripRelationship === TRIP_RELATIONSHIP.DUPLICATED
+          )
             ? optionalFiniteNumber(tripUpdate?.delay)
             : null,
           times: []
