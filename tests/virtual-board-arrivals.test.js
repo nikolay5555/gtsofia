@@ -414,6 +414,9 @@ assert.equal(
     'a coerced zero scheduled_time must still allow schedule reconstruction from delay'
   );
 
+  // Without a concrete trip identity, start time, or scheduled time there is
+  // no safe course to attach realtime to. Showing it separately is preferable
+  // to making it jump between nearby scheduled courses.
   assert.equal(
     internals.findRealtimeStaticMatchIndex(
       { trip_id: '', trip_start_time: '' },
@@ -421,24 +424,39 @@ assert.equal(
       staticTimes,
       new Set()
     ),
-    0,
-    'a one-minute early/late realtime record without identity must replace the nearby scheduled course'
+    -1,
+    'realtime without course identity must not be guessed from time proximity'
   );
 
-  const closeStaticTimes = [
-    { timestamp: 2_000_480, trip_id: 'STATIC-X', start_time: '13:00:00' },
-    { timestamp: 2_000_540, trip_id: 'STATIC-Y', start_time: '13:01:00' }
+  // The same realtime course keeps the same static slot across refreshes even
+  // when its actual arrival time changes.
+  const stableStaticTimes = [
+    { timestamp: 3_000_480, trip_id: 'LOGICAL-A', original_trip_id: 'GTFS-A', start_time: '14:00:00' },
+    { timestamp: 3_000_600, trip_id: 'LOGICAL-A', original_trip_id: 'GTFS-B', start_time: '14:10:00' }
   ];
+
   assert.equal(
     internals.findRealtimeStaticMatchIndex(
-      { trip_id: '', trip_start_time: '' },
-      { trip_id: '', timestamp: 2_000_510, scheduled_time: null, delay: null },
-      closeStaticTimes,
+      { trip_id: 'RT-A', trip_start_time: '14:00:00' },
+      { trip_id: 'RT-A', timestamp: 3_000_420, scheduled_time: null, delay: null },
+      stableStaticTimes,
       new Set()
     ),
-    -1,
-    'ambiguous nearby realtime arrivals must not hide a genuinely separate course'
+    0,
+    'first refresh must attach the realtime course to its start-time slot'
   );
+
+  assert.equal(
+    internals.findRealtimeStaticMatchIndex(
+      { trip_id: 'RT-A', trip_start_time: '14:00:00' },
+      { trip_id: 'RT-A', timestamp: 3_000_450, scheduled_time: null, delay: null },
+      stableStaticTimes,
+      new Set()
+    ),
+    0,
+    'later refresh must keep the same realtime course on the same static slot'
+  );
+
 }
 
   assert.equal(
@@ -451,7 +469,7 @@ assert.equal(
       },
       { timestamp: 1_000_480 }
     ),
-    'A181|181|D1|1000480',
+    'A181|D1|1000480',
     'matched static courses must have a stable route/direction/timestamp key'
   );
 
