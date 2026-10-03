@@ -1901,16 +1901,6 @@
       const data = await fetchVirtualBoard(stop);
       if (requestToken !== boardRenderToken || selectedStopId !== requestedStopId) return;
 
-      if (
-        !force
-        && Number.isFinite(displayedPrimaryArrival)
-        && displayedPrimaryArrival <= Date.now() / 1000
-      ) {
-        lastExpiredPrimaryArrival = displayedPrimaryArrival;
-        updateBoardCountdowns();
-        return;
-      }
-
       await renderStopBoard(stop, data);
     } catch (error) {
       if (requestToken !== boardRenderToken || selectedStopId !== requestedStopId) return;
