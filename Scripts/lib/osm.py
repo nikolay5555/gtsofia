@@ -84,15 +84,6 @@ def _build_model_stop(element):
 def fetch_osm_stops():
     query = build_osm_query()
     payload = urllib.parse.urlencode({"data": query}).encode("utf-8")
-    request = urllib.request.Request(
-        OSM_ENDPOINT,
-        data=payload,
-        headers={
-            "User-Agent": "github/nikolay5555/gtsofia",
-            "Content-Type": "application/x-www-form-urlencoded",
-        },
-    )
-
     last_error = None
 
     for endpoint in OSM_ENDPOINTS:
