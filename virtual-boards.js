@@ -1187,13 +1187,42 @@ const realtimeRoutes = Array.isArray(data?.routes)
         if (byScheduledTime >= 0) return byScheduledTime;
       }
 
-      // 4) If the feed only gives a live timestamp, use a conservative
+      // 4) A feed may expose the correct schedule through delay but differ by
+      // a few seconds from the generated static timestamp. Use a small
+      // tolerance around the reconstructed scheduled time before falling
+      // back to actual-time proximity.
+      if (Number.isFinite(realtimeScheduledTimestamp)) {
+        const candidates = [];
+        staticTimes.forEach((staticTime, index) => {
+          if (matchedStaticIndexes.has(index)) return;
+          const staticTimestamp = Number(staticTime?.timestamp);
+          if (!Number.isFinite(staticTimestamp)) return;
+          const difference = Math.abs(staticTimestamp - realtimeScheduledTimestamp);
+          if (difference <= 180) candidates.push({ index, difference });
+        });
+
+        candidates.sort((a, b) => a.difference - b.difference);
+        if (candidates.length) return candidates[0].index;
+      }
+
+      // 5) If the feed only gives a live timestamp, use a conservative
       // proximity fallback. This specifically handles the observed case where
       // one course is one minute early/late and the feed omitted its scheduled
       // time. Do not use this when a second scheduled course is equally close:
       // in that situation merging would risk hiding a real separate vehicle.
       const actualTimestamp = Number(realtimeTime?.timestamp);
       if (!Number.isFinite(actualTimestamp)) return -1;
+
+      const delay = Number(realtimeTime?.delay);
+      const inferredScheduledTimestamp = Number.isFinite(delay)
+        ? actualTimestamp - delay
+        : null;
+      const referenceTimestamps = [
+        Number.isFinite(inferredScheduledTimestamp)
+          ? inferredScheduledTimestamp
+          : null,
+        actualTimestamp
+      ].filter(Number.isFinite);
 
       const candidates = [];
       staticTimes.forEach((staticTime, index) => {
@@ -1202,8 +1231,10 @@ const realtimeRoutes = Array.isArray(data?.routes)
         const staticTimestamp = Number(staticTime?.timestamp);
         if (!Number.isFinite(staticTimestamp)) return;
 
-        const difference = Math.abs(staticTimestamp - actualTimestamp);
-        if (difference <= 120) {
+        const difference = Math.min(
+          ...referenceTimestamps.map(reference => Math.abs(staticTimestamp - reference))
+        );
+        if (difference <= 180) {
           candidates.push({ index, difference });
         }
       });
@@ -1234,11 +1265,24 @@ const realtimeRoutes = Array.isArray(data?.routes)
         // always contain the next few courses. Keep the static departures for
         // the same displayed direction behind it so all four are visible at
         // once.
-        const staticCandidates = scheduledSurfaceRoutes.filter(staticRoute =>
-          String(staticRoute?.route_id || '').trim() === routeId
-          && String(staticRoute?.route_ref || '').trim() === routeRef
-          && normalizeDirectionText(staticRoute?.destination || '') === destinationKey
-        );
+        const staticCandidates = scheduledSurfaceRoutes.filter(staticRoute => {
+          if (String(staticRoute?.route_id || '').trim() !== routeId) return false;
+
+          const staticRef = String(staticRoute?.route_ref || '').trim();
+          if (routeRef && staticRef && staticRef !== routeRef) return false;
+
+          const realtimeDirectionKey = String(route?.direction_key || '').trim();
+          const staticDirectionKey = String(staticRoute?.direction_key || '').trim();
+
+          // Logical direction is a stronger identity than passenger-facing
+          // destination text. The realtime feed can spell/resolve the same
+          // terminal differently from the static normalized direction.
+          if (realtimeDirectionKey && staticDirectionKey) {
+            return realtimeDirectionKey === staticDirectionKey;
+          }
+
+          return normalizeDirectionText(staticRoute?.destination || '') === destinationKey;
+        });
 
         const realtimeTimes = Array.isArray(route?.times) ? route.times : [];
         const staticTimes = staticCandidates.flatMap(staticRoute =>
