@@ -1105,6 +1105,24 @@ function findRealtimeStaticMatchEntryAcrossDirections(
     return normalizeStopKey(leftRaw) === normalizeStopKey(rightRaw);
   }
 
+
+  function realtimeSequenceMatchesStaticRoute(time, realtimeRoute, staticRoute) {
+    const sequence = Number(time?.stop_sequence);
+    if (!Number.isFinite(sequence)) return false;
+
+    if (String(staticRoute?.route_id || '').trim()
+      !== String(realtimeRoute?.route_id || '').trim()) return false;
+
+    const realtimeDirectionId = String(realtimeRoute?.direction_id || '').trim();
+    const staticDirectionId = String(staticRoute?.direction_id || '').trim();
+    if (realtimeDirectionId && staticDirectionId
+      && realtimeDirectionId !== staticDirectionId) return false;
+
+    return staticRoute.times?.some(staticTime =>
+      Number(staticTime?.stop_sequence) === sequence
+    );
+  }
+
   function isMetroStop(stop) {
     return /^M/i.test(String(stop?.stop_id || "").trim())
       || /^M/i.test(String(stop?.stop_code || "").trim());
@@ -2333,11 +2351,7 @@ function findRealtimeStaticMatchEntryAcrossDirections(
           if (!Number.isFinite(sequence)) return false;
 
           return scheduledSurfaceRoutes.some(staticRoute =>
-            String(staticRoute?.route_id || '').trim()
-              === String(route?.route_id || '').trim()
-            && staticRoute.times?.some(staticTime =>
-              Number(staticTime?.stop_sequence) === sequence
-            )
+            realtimeSequenceMatchesStaticRoute(time, route, staticRoute)
           );
         })
       }))
