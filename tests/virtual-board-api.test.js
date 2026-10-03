@@ -313,8 +313,8 @@ const res = {
 
   assert.equal(
     payload.routes.length,
-    2,
-    'NO_DATA must not become a suppression signal, and both normal and delay-only realtime arrivals must remain available'
+    3,
+    'NO_DATA must not become a suppression signal, and normal, delay-only scheduled, and duplicated realtime trips must remain available'
   );
   assert.equal(
     payload.routes.find(route => route.trip_id === 'REALTIME-NORMAL')?.times?.length,
