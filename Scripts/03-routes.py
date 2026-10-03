@@ -8,14 +8,11 @@ from lib.routes import build_model_routes
 def main():
     routes = read_csv("routes.txt")
     trips = read_csv("trips.txt")
-    active_service_ids = dict(
-        __import__("json").load(
-            (DATA_DIR / "active_service_ids.json").open(
-                "r",
-                encoding="utf-8",
-            )
-        )
-    )
+    with (DATA_DIR / "active_service_ids.json").open(
+        "r",
+        encoding="utf-8",
+    ) as file:
+        active_service_ids = dict(json.load(file))
 
     active_route_ids = {
         normalize(trip.get("route_id"))
