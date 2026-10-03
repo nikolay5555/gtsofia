@@ -659,32 +659,14 @@ function getLineDisplayNumber(route, type) {
 
 function getTransportIcon(
     type,
-    number
+    number,
+    subtype = ''
 ) {
-    const lineNumber =
-        String(number || '')
-            .trim()
-            .toUpperCase();
+    const normalizedSubtype = String(subtype || '')
+        .trim()
+        .toLowerCase();
 
-    if (
-        lineNumber === 'X43'
-    ) {
-        return 'Icons/Active icons/torist-bus.svg';
-    }
-
-    const nightBusLines =
-        new Set([
-            'N1',
-            'N2',
-            'N3',
-            'N4'
-        ]);
-
-    if (
-        nightBusLines.has(
-            lineNumber
-        )
-    ) {
+    if (normalizedSubtype === 'night') {
         return 'Icons/Active icons/night-bus.svg';
     }
 
@@ -713,14 +695,22 @@ function getTransportIcon(
 
 function getLineColor(
     route,
-    type
+    type,
+    subtype = ''
 ) {
     const override = getLineOverride(route);
+    const normalizedSubtype = String(
+        subtype || getLineSubtype(route) || ''
+    ).trim().toLowerCase();
 
     if (override?.color) {
         return String(override.color).startsWith('#')
             ? String(override.color)
             : `#${override.color}`;
+    }
+
+    if (normalizedSubtype === 'night') {
+        return '#111827';
     }
 
     // When the transport type is masked by an override, do not let
@@ -870,7 +860,8 @@ function convertGtfsRoutes(
                 color:
                     getLineColor(
                         route,
-                        type
+                        type,
+                        subtype
                     ),
 
                 textColor:
@@ -881,7 +872,8 @@ function convertGtfsRoutes(
                 icon:
                     getTransportIcon(
                         type,
-                        displayNumber
+                        displayNumber,
+                        subtype
                     ),
 
                 /*
