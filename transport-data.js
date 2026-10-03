@@ -918,6 +918,8 @@ function convertGtfsRoutes(
 
                 type,
 
+                subtype,
+
                 color:
                     getLineColor(
                         route,
