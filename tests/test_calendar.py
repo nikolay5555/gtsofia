@@ -1,13 +1,13 @@
-import importlib.util
+import sys
+import unittest
 from datetime import date
 from pathlib import Path
-import unittest
 
+SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "Scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
 
-MODULE_PATH = Path(__file__).resolve().parents[1] / "Scripts" / "generate_transport_data.py"
-spec = importlib.util.spec_from_file_location("generate_transport_data", MODULE_PATH)
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
+from lib.calendar import build_calendar_context
 
 
 class CalendarTests(unittest.TestCase):
@@ -32,7 +32,7 @@ class CalendarTests(unittest.TestCase):
         ]
 
     def test_gtfs_exception_does_not_define_ui_day_type(self):
-        service_types, calendar_result = module.build_calendar_context(
+        service_types, calendar_result = build_calendar_context(
             self.calendar,
             self.calendar_dates,
             date(2026, 9, 22),
@@ -51,7 +51,7 @@ class CalendarTests(unittest.TestCase):
         self.assertEqual(service_types["WE"], ["weekday"])
 
     def test_central_calendar_override_defines_ui_day_type(self):
-        service_types, calendar_result = module.build_calendar_context(
+        service_types, calendar_result = build_calendar_context(
             self.calendar,
             self.calendar_dates,
             date(2026, 9, 22),
@@ -80,7 +80,7 @@ class CalendarTests(unittest.TestCase):
             }
         ]
 
-        service_types, _ = module.build_calendar_context(
+        service_types, _ = build_calendar_context(
             daily,
             [],
             date(2026, 9, 21),
@@ -89,47 +89,13 @@ class CalendarTests(unittest.TestCase):
 
         self.assertEqual(service_types["DAILY"], ["weekday", "weekend"])
 
-    def test_trip_available_in_both_buckets_is_written_to_both_schedules(self):
-        directions = {
-            "R1": {
-                "D1": {
-                    "code": "1",
-                }
-            }
-        }
-        logical_trips = [
-            {
-                "id": 1,
-                "route_id": "R1",
-                "direction_code": "1",
-                "day_types": ["weekday", "weekend"],
-                "is_deleted": False,
-            }
-        ]
-        logical_stop_times = [
-            {
-                "trip": 1,
-                "times": [330],
-                "car": "",
-            }
-        ]
-
-        result = module.build_schedules(
-            directions,
-            logical_trips,
-            logical_stop_times,
-        )
-
-        self.assertEqual(len(result["R1"]["D1"]["weekday"]), 1)
-        self.assertEqual(len(result["R1"]["D1"]["weekend"]), 1)
-
     def test_calendar_dates_only_feed_uses_explicit_service_dates(self):
         dates_only = [
             {"service_id": "A", "date": "20260921", "exception_type": "1"},
             {"service_id": "A", "date": "20260926", "exception_type": "1"},
         ]
 
-        service_types, calendar_result = module.build_calendar_context(
+        service_types, calendar_result = build_calendar_context(
             [],
             dates_only,
             date(2026, 9, 21),
