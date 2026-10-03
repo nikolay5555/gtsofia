@@ -737,7 +737,8 @@ function findRealtimeStaticMatch(
       const dated = matches.filter(entry =>
         normalizeGtfsDateKey(entry?.time?.service_date) === realtimeStartDate
       );
-      if (dated.length) matches = dated;
+      if (!dated.length) return null;
+      matches = dated;
     }
 
     if (matches.length === 1) {
