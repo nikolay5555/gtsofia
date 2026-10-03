@@ -25,6 +25,18 @@ assert.equal(
 );
 
 assert.equal(
+  source.includes("original_trip_id: String(schedule?.original_trip_id || '').trim()"),
+  true,
+  'every static course must retain its concrete original GTFS trip identity'
+);
+
+assert.equal(
+  source.includes("existing.times.push({ timestamp, trip_id })"),
+  false,
+  'static course metadata must not be lost for later departures in the same direction'
+);
+
+assert.equal(
   source.includes('delay: Number.isFinite(Number(time?.delay)) ? Number(time?.delay) : null'),
   false,
   'missing realtime delay must not be coerced from null to zero'
@@ -469,7 +481,7 @@ assert.equal(
       },
       { timestamp: 1_000_480 }
     ),
-    'A181|D1|1000480',
+    'A181|D1||1000480',
     'matched static courses must have a stable route/direction/timestamp key'
   );
 
