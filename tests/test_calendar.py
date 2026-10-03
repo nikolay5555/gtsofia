@@ -89,6 +89,33 @@ class CalendarTests(unittest.TestCase):
 
         self.assertEqual(service_types["DAILY"], ["weekday", "weekend"])
 
+    def test_previous_service_date_is_retained_without_making_it_current(self):
+        calendar = [
+            {
+                "service_id": "YESTERDAY",
+                "monday": "1", "tuesday": "0", "wednesday": "0",
+                "thursday": "0", "friday": "0", "saturday": "0", "sunday": "0",
+                "start_date": "20260921", "end_date": "20260921",
+            },
+        ]
+
+        _, calendar_result = build_calendar_context(
+            calendar,
+            [],
+            date(2026, 9, 22),
+            horizon_days=0,
+            lookback_days=1,
+        )
+
+        self.assertEqual(
+            calendar_result["serviceIdsByDate"]["2026-09-21"],
+            ["YESTERDAY"],
+        )
+        self.assertEqual(
+            calendar_result["serviceIdsByDate"]["2026-09-22"],
+            [],
+        )
+
     def test_calendar_dates_only_feed_uses_explicit_service_dates(self):
         dates_only = [
             {"service_id": "A", "date": "20260921", "exception_type": "1"},
