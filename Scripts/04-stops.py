@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from lib.common import DATA_DIR, load_line_overrides, write_json
+from lib.common import DATA_DIR, write_json
 from lib.gtfs import read_csv
 from lib.osm import fetch_osm_stops, merge_stops
 from lib.stops import build_model_stops, build_stops
