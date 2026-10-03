@@ -849,10 +849,6 @@
         const stopIndex = pattern.findIndex(id => stopIdsMatch(id, selectedStop));
         if (stopIndex < 0) continue;
 
-        // The generated schedule keeps partial courses in the parent direction
-        // by padding the unused tail with nulls. Therefore the actual terminal
-        // of a particular course must be derived from that course's own times,
-        // not from direction.pattern alone.
         const daySchedules = scheduleSet?.[directionKey]?.[dayType];
         if (!Array.isArray(daySchedules)) continue;
 
@@ -864,9 +860,8 @@
           const seconds = parseGtfsTime(rawTime);
           if (seconds == null) continue;
 
-          // Find the last actually served stop for THIS course. A partial course
-          // has nulls after its final stop, while a full course reaches the end
-          // of the parent direction.
+          // Derive the actual terminal for THIS course. Partial courses keep
+          // the parent direction but have nulls after their own terminal.
           let terminalIndex = -1;
           for (let i = Math.min(times.length, pattern.length) - 1; i >= 0; i--) {
             if (parseGtfsTime(times[i]) != null) {
@@ -881,20 +876,12 @@
           ).trim();
           if (!terminalStopId) continue;
 
-          // A course whose actual terminal is the selected stop is still a
-          // terminal arrival and should not appear on the board. This check is
-          // per COURSE, which is the crucial difference from the old logic.
           if (stopIdsMatch(terminalStopId, selectedStop)) continue;
 
           let timestamp = gtfsSecondsToTodayTimestamp(seconds);
           if (timestamp < nowTimestamp) timestamp += 86400;
           if (timestamp < nowTimestamp || timestamp > horizonTimestamp) continue;
 
-          // A realtime course can be a few minutes early/late compared with
-          // the timetable. Once that realtime arrival has passed the stop, the
-          // same scheduled timestamp must not come back through the static
-          // fallback. Only this specific course is skipped; later scheduled
-          // courses remain eligible.
           const destination = normalizeDirectionText(
             direction?.destination || direction?.headsign || terminalStopId
           );
@@ -910,18 +897,28 @@
             timestamp
           )) continue;
 
+          const tripId = String(schedule?.trip_id ?? '').trim();
           const existing = rowsByTerminal.get(terminalStopId);
           if (!existing) {
             rowsByTerminal.set(terminalStopId, {
-              timestamp,
-              terminalStopId
+              terminalStopId,
+              times: [{ timestamp, trip_id: tripId }]
             });
-          } else if (timestamp < existing.timestamp) {
-            existing.timestamp = timestamp;
+          } else {
+            existing.times.push({ timestamp, trip_id: tripId });
           }
         }
 
-        for (const { timestamp, terminalStopId } of rowsByTerminal.values()) {
+        for (const { times: terminalTimes, terminalStopId } of rowsByTerminal.values()) {
+          const nextTimes = terminalTimes
+            .sort((a, b) => a.timestamp - b.timestamp)
+            .filter((time, index, list) =>
+              index === 0 || Number(time.timestamp) !== Number(list[index - 1].timestamp)
+            )
+            .slice(0, 4);
+
+          if (!nextTimes.length) continue;
+
           const isPartialCourse = !stopIdsMatch(terminalStopId, getDirectionTerminalStopId(direction));
           const terminalStop = getStopById(terminalStopId);
           const destination = isPartialCourse
@@ -935,7 +932,13 @@
             terminal_stop_id: terminalStopId,
             route_ref: meta.number || route.route_short_name || '—',
             destination,
-            times: [{ timestamp, delay: null, scheduled: true }],
+            times: nextTimes.map(time => ({
+              timestamp: time.timestamp,
+              trip_id: time.trip_id,
+              delay: null,
+              scheduled: true,
+              source: 'static'
+            })),
             meta,
             scheduled: true,
             source: 'static'
@@ -1041,7 +1044,8 @@ const realtimeRoutes = Array.isArray(data?.routes)
               times: route.times
                 .map(time => ({
                   timestamp: Number(time?.timestamp),
-                  delay: Number.isFinite(Number(time?.delay)) ? Number(time.delay) : null,
+                  trip_id: String(time?.trip_id || route.trip_id || '').trim(),
+                  delay: Number.isFinite(Number(time?.delay)) ? Number(time?.delay) : null,
                   scheduled: false,
                   source: 'realtime',
                   stop_schedule_relationship: Number(time?.stop_schedule_relationship),
@@ -1112,19 +1116,72 @@ const realtimeRoutes = Array.isArray(data?.routes)
           times: []
         });
       }
-      mergedRealtime.get(key).times.push(...(route.times || []));
+      mergedRealtime.get(key).times.push(
+        ...(route.times || []).map(time => ({
+          ...time,
+          trip_id: String(time?.trip_id || route.trip_id || '').trim()
+        }))
+      );
     }
 
     const mergedSurfaceRoutes = [...mergedRealtime.values()]
-      .map(route => ({
-        ...route,
-        times: route.times
-          .sort((a, b) => Number(a.timestamp) - Number(b.timestamp))
-          .filter((time, index, list) =>
-            index === 0 || Number(time.timestamp) !== Number(list[index - 1].timestamp)
-          )
-          .slice(0, 4)
-      }))
+      .map(route => {
+        const routeId = String(route?.route_id || '').trim();
+        const routeRef = String(route?.route_ref || '').trim();
+        const destinationKey = normalizeDirectionText(route?.destination || '');
+
+        // Realtime is authoritative for a concrete course, but it does not
+        // always contain the next few courses. Keep the static departures for
+        // the same displayed direction behind it so all four are visible at
+        // once.
+        const staticCandidates = scheduledSurfaceRoutes.filter(staticRoute =>
+          String(staticRoute?.route_id || '').trim() === routeId
+          && String(staticRoute?.route_ref || '').trim() === routeRef
+          && normalizeDirectionText(staticRoute?.destination || '') === destinationKey
+        );
+
+        const realtimeTimes = Array.isArray(route?.times) ? route.times : [];
+        const staticTimes = staticCandidates.flatMap(staticRoute =>
+          Array.isArray(staticRoute?.times) ? staticRoute.times : []
+        );
+
+        const combinedTimes = [...realtimeTimes];
+        for (const staticTime of staticTimes) {
+          const staticTimestamp = Number(staticTime?.timestamp);
+          const staticTripId = String(staticTime?.trip_id || '').trim();
+
+          const alreadyRepresented = realtimeTimes.some(realtimeTime => {
+            const realtimeTripId = String(realtimeTime?.trip_id || '').trim();
+            const scheduledTimestamp = Number(realtimeTime?.scheduled_time);
+
+            if (staticTripId && realtimeTripId && staticTripId === realtimeTripId) {
+              return true;
+            }
+
+            return Number.isFinite(scheduledTimestamp)
+              && Number.isFinite(staticTimestamp)
+              && scheduledTimestamp === staticTimestamp;
+          });
+
+          if (alreadyRepresented) continue;
+
+          combinedTimes.push({
+            ...staticTime,
+            scheduled: true,
+            source: 'static'
+          });
+        }
+
+        return {
+          ...route,
+          times: combinedTimes
+            .sort((a, b) => Number(a.timestamp) - Number(b.timestamp))
+            .filter((time, index, list) =>
+              index === 0 || Number(time.timestamp) !== Number(list[index - 1].timestamp)
+            )
+            .slice(0, 4)
+        };
+      })
       .filter(route => route.times.length);
 
     // Preserve the scheduled course behind a realtime arrival that has just
@@ -1132,10 +1189,11 @@ const realtimeRoutes = Array.isArray(data?.routes)
     // instead of showing the timetable time of the already completed one.
     rememberConsumedRealtimeArrivals(stop, mergedSurfaceRoutes);
 
-    // For surface transport, use the static timetable as a fallback during
-    // the two hours before the next scheduled course when CGM has not yet
-    // published realtime data for that line/direction. Once realtime appears,
-    // it wins and replaces the static fallback.
+    // For surface transport, keep the static timetable behind realtime
+    // arrivals. When realtime exists for one course, its concrete arrival
+    // replaces the matching static course, while the next scheduled courses
+    // remain visible immediately. This mirrors the multi-time board behavior
+    // without requiring access to Dimitar's private proxy backend.
     const scheduledSurfaceRoutes = isMetroStop(stop) ? [] : getSurfaceScheduledArrivals(stop, skippedTrips);
     function directionPatternsShareLongPrefix(shortDirection, longDirection, selectedStopId) {
       const shortPattern = Array.isArray(shortDirection?.pattern)
