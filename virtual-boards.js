@@ -2135,9 +2135,13 @@ function findRealtimeStaticMatchEntryAcrossDirections(
 
     for (const activeTrip of Array.isArray(activeTrips) ? activeTrips : []) {
       const relationship = Number(activeTrip?.schedule_relationship);
-      if (relationship !== 0) continue;
+      if (relationship !== 0 && relationship !== 6) continue;
 
-      const tripId = String(activeTrip?.trip_id || "").trim();
+      const tripId = String(
+        relationship === 6
+          ? (activeTrip?.source_trip_id || "")
+          : (activeTrip?.trip_id || "")
+      ).trim();
       if (!tripId) continue;
 
       for (const staticRoute of scheduledSurfaceRoutes || []) {
@@ -2159,9 +2163,10 @@ function findRealtimeStaticMatchEntryAcrossDirections(
           if (!Number.isFinite(delay)) continue;
 
           const baseTimestamp = relationship === 6
-        ? getDuplicatedScheduleTimestamp(activeTrip, staticTime)
-        : Number(staticTime.timestamp);
-      const timestamp = Number(baseTimestamp) + delay;
+            ? getDuplicatedScheduleTimestamp(activeTrip, staticTime)
+            : Number(staticTime.timestamp);
+          if (!Number.isFinite(baseTimestamp)) continue;
+          const timestamp = baseTimestamp + delay;
           if (!Number.isFinite(timestamp)) continue;
 
           result.push({
