@@ -1154,121 +1154,109 @@ const realtimeRoutes = Array.isArray(data?.routes)
                 route.destination || '',
                 route.direction_id || route.directionId || ''
               );
-            const rostamp;
+            const routeMeta = getLineMeta(
+              routeId,
+              route.route_ref || ''
+            );
 
-      const actualTimestamp = Number(time?.timestamp);
-      const delay = Number(time?.delay);
-      if (Number.isFinite(actualTimestamp) && Number.isFinite(delay)) {
-        return actualTimestamp - delay;
-      }
+            return {
+              ...route,
+              source: 'realtime',
+              realtime: true,
+              schedule_relationship: Number(route?.schedule_relationship),
+              schedule_relationship_name: String(route?.schedule_relationship_name || 'SCHEDULED'),
+              route_id: route.route_id || staticTrip?.route_id || '',
+              route_ref: route.route_ref || routeMeta.number || '—',
+              direction_key: staticDirection?.key || '',
+              destination_stop_id: route.destination_stop_id || '',
+              destination: getStopById(route.destination_stop_id)?.stop_name
+                || staticDirection?.destination
+                || staticDirection?.headsign
+                || route.destination
+                || staticTrip?.trip_headsign
+                || '',
+              times: route.times
+                .map(time => ({
+                  timestamp: Number(time?.timestamp),
+                  trip_id: String(time?.trip_id || route.trip_id || '').trim(),
+                  delay: Number.isFinite(Number(time?.delay)) ? Number(time?.delay) : null,
+                  scheduled: false,
+                  source: 'realtime',
+                  stop_schedule_relationship: Number(time?.stop_schedule_relationship),
+                  stop_schedule_relationship_name: String(time?.stop_schedule_relationship_name || 'SCHEDULED'),
+                  scheduled_time: Number.isFinite(Number(time?.scheduled_time)) ? Number(time.scheduled_time) : null
+                }))
+                .filter(time => Number.isFinite(time.timestamp))
+            };
+          })
+          .filter(route => route.times.length)
+      : [];
 
-      return null;
-    }
+    const realtime = {
+      status: data?.status || 'empty',
+      generatedAt,
+      routes: isMetroStop(stop) ? [] : realtimeRoutes
+    };
+    const metroRoutes = getMetroScheduledArrivals(stop);
+    const scheduledSurfaceRoutes = isMetroStop(stop) ? [] : getSurfaceScheduledArrivals(stop, skippedTrips);
 
-    function findRealtimeStaticMatchIndex(realtimeRoute, realtimeTime, staticTimes, matchedStaticIndexes) {
-      const realtimeTripId = String(realtimeTime?.trip_id || realtimeRoute?.trip_id || '').trim();
-
-      // 1) Exact trip identity is the strongest possible match.
-      if (realtimeTripId) {
-        const byTripId = staticTimes.findIndex((staticTime, index) =>
-          !matchedStaticIndexes.has(index)
-          && (
-            String(staticTime?.trip_id || '').trim() === realtimeTripId
-            || String(staticTime?.original_trip_id || '').trim() === realtimeTripId
-          )
+    // Realtime rows are kept per trip by the API because Sofia's feed often
+    // does not populate direction_id. Merge them back by line + destination
+    // here, after terminal-direction filtering, so opposite directions never
+    // get mixed into the same row.
+    const mergedRealtime = new Map();
+    for (const route of realtime.routes) {
+      const staticTrip = findStaticTrip(route.trip_id);
+      const realtimeRouteId = String(route.route_id || staticTrip?.route_id || '').trim();
+      const staticDirection = getStaticDirectionForTrip(staticTrip)
+        || resolveDirectionForRealtimeRoute(
+          realtimeRouteId,
+          stop.stop_id,
+          staticTrip,
+          route.destination || '',
+          route.direction_id || route.directionId || ''
         );
-        if (byTripId >= 0) return byTripId;
-      }
+      const staticTerminalId = getDirectionTerminalStopId(staticDirection);
+      const realtimeTerminalId = String(route.destination_stop_id || '').trim();
+      const isPartialRealtime = !!realtimeTerminalId
+        && !stopIdsMatch(realtimeTerminalId, staticTerminalId);
+      const realtimeTerminal = isPartialRealtime ? getStopById(realtimeTerminalId) : null;
+      const destination = isPartialRealtime
+        ? (realtimeTerminal?.stop_name
+          || staticDirection?.destination
+          || staticDirection?.headsign
+          || route.destination
+          || staticTrip?.trip_headsign
+          || '')
+        : (getStopById(realtimeTerminalId)?.stop_name
+          || staticDirection?.destination
+          || staticDirection?.headsign
+          || route.destination
+          || staticTrip?.trip_headsign
+          || '');
+      // The board row is a displayed line + destination, not a raw GTFS
+      // stop_id. The same physical terminal can have multiple GTFS stop IDs
+      // (platforms / approaches), which previously split one direction into
+      // two rows. Partial courses still remain separate because their
+      // displayed destination is their actual terminal stop name.
+      const directionIdentity = normalizeDirectionText(destination);
+      const key = `${String(route.route_id || staticTrip?.route_id || '')}|${directionIdentity}|${String(route.route_ref || '')}`;
 
-      // 2) Some GTFS-RT generations use a different trip_id namespace from
-      // the static export, but keep the same GTFS trip start time.
-      const realtimeStartSeconds = parseRealtimeTripStartTimestamp(realtimeRoute);
-      if (realtimeStartSeconds != null) {
-        const byStartTime = staticTimes.findIndex((staticTime, index) =>
-          !matchedStaticIndexes.has(index)
-          && parseGtfsTime(staticTime?.start_time) === realtimeStartSeconds
-        );
-        if (byStartTime >= 0) return byStartTime;
-      }
-
-      const realtimeScheduledTimestamp = getRealtimeScheduledTimestamp(realtimeTime);
-
-      // 3) Exact scheduled arrival time. This catches normal realtime
-      // departures as well as vehicles running early/late.
-      if (Number.isFinite(realtimeScheduledTimestamp)) {
-        const byScheduledTime = staticTimes.findIndex((staticTime, index) =>
-          !matchedStaticIndexes.has(index)
-          && Number(staticTime?.timestamp) === realtimeScheduledTimestamp
-        );
-        if (byScheduledTime >= 0) return byScheduledTime;
-      }
-
-      // 4) A feed may expose the correct schedule through delay but differ by
-      // a few seconds from the generated static timestamp. Use a small
-      // tolerance around the reconstructed scheduled time before falling
-      // back to actual-time proximity.
-      if (Number.isFinite(realtimeScheduledTimestamp)) {
-        const candidates = [];
-        staticTimes.forEach((staticTime, index) => {
-          if (matchedStaticIndexes.has(index)) return;
-          const staticTimestamp = Number(staticTime?.timestamp);
-          if (!Number.isFinite(staticTimestamp)) return;
-          const difference = Math.abs(staticTimestamp - realtimeScheduledTimestamp);
-          if (difference <= 180) candidates.push({ index, difference });
+      if (!mergedRealtime.has(key)) {
+        mergedRealtime.set(key, {
+          ...route,
+          source: 'realtime',
+          realtime: true,
+          destination,
+          times: []
         });
-
-        candidates.sort((a, b) => a.difference - b.difference);
-        if (candidates.length) return candidates[0].index;
       }
-
-      // 5) If the feed only gives a live timestamp, use a conservative
-      // proximity fallback. This specifically handles the observed case where
-      // one course is one minute early/late and the feed omitted its scheduled
-      // time. Do not use this when a second scheduled course is equally close:
-      // in that situation merging would risk hiding a real separate vehicle.
-      const actualTimestamp = Number(realtimeTime?.timestamp);
-      if (!Number.isFinite(actualTimestamp)) return -1;
-
-      const delay = Number(realtimeTime?.delay);
-      const inferredScheduledTimestamp = Number.isFinite(delay)
-        ? actualTimestamp - delay
-        : null;
-      const referenceTimestamps = [
-        Number.isFinite(inferredScheduledTimestamp)
-          ? inferredScheduledTimestamp
-          : null,
-        actualTimestamp
-      ].filter(Number.isFinite);
-
-      const candidates = [];
-      staticTimes.forEach((staticTime, index) => {
-        if (matchedStaticIndexes.has(index)) return;
-
-        const staticTimestamp = Number(staticTime?.timestamp);
-        if (!Number.isFinite(staticTimestamp)) return;
-
-        const difference = Math.min(
-          ...referenceTimestamps.map(reference => Math.abs(staticTimestamp - reference))
-        );
-        if (difference <= 180) {
-          candidates.push({ index, difference });
-        }
-      });
-
-      if (!candidates.length) return -1;
-
-      candidates.sort((a, b) => a.difference - b.difference);
-
-      // One clear nearby course is safe to replace. When two courses are
-      // similarly close, keep both rather than guessing which one is realtime.
-      if (
-        candidates.length > 1
-        && candidates[1].difference - candidates[0].difference < 30
-      ) {
-        return -1;
-      }
-
-      return candidates[0].index;
+      mergedRealtime.get(key).times.push(
+        ...(route.times || []).map(time => ({
+          ...time,
+          trip_id: String(time?.trip_id || route.trip_id || '').trim()
+        }))
+      );
     }
 
     const mergedSurfaceRoutes = [...mergedRealtime.values()]
