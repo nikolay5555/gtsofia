@@ -188,6 +188,23 @@ const delayOnlyTrip = encodeTripUpdate({
   }]
 });
 
+const replacementDelayOnlyTrip = encodeTripUpdate({
+  trip: {
+    tripId: 'REALTIME-REPLACEMENT-DELAY',
+    startTime: '08:50:00',
+    routeId: 'TB2',
+    scheduleRelationship: 5
+  },
+  delay: 120,
+  stopUpdates: [{
+    stopId: '0605',
+    relationship: 0,
+    timestamp: null,
+    scheduledTime: null,
+    delay: null
+  }]
+});
+
 const feed = Buffer.concat([
   field(2, 2, encodeEntity('skipped', skippedTrip)),
   field(2, 2, encodeEntity('skipped-sequence', sequenceSkippedTrip)),
@@ -195,7 +212,8 @@ const feed = Buffer.concat([
   field(2, 2, encodeEntity('canceled', canceledTrip)),
   field(2, 2, encodeEntity('deleted', deletedTrip)),
   field(2, 2, encodeEntity('normal', normalTrip)),
-  field(2, 2, encodeEntity('delay-only', delayOnlyTrip))
+  field(2, 2, encodeEntity('delay-only', delayOnlyTrip)),
+  field(2, 2, encodeEntity('replacement-delay-only', replacementDelayOnlyTrip))
 ]);
 
 global.fetch = async () => ({
@@ -244,6 +262,14 @@ const res = {
     'canceled/deleted trip ids must be retained for exact static suppression'
   );
 
+  const replacementDelayOnly = payload.routes.find(
+    route => route.trip_id === 'REALTIME-REPLACEMENT-DELAY'
+  );
+  assert.equal(
+    replacementDelayOnly,
+    undefined,
+    'NEW/REPLACEMENT trips must not derive realtime timing from delay-only data'
+  );
   const delayOnly = payload.routes.find(route => route.trip_id === 'REALTIME-DELAY-ONLY');
   assert.ok(delayOnly, 'delay-only scheduled StopTimeUpdate must be preserved');
   assert.equal(delayOnly.times[0].timestamp, null);
@@ -276,6 +302,19 @@ const res = {
     normalActiveTrip?.delay_updates?.[0]?.stop_sequence,
     null,
     'an omitted StopTimeUpdate.stop_sequence must remain unknown'
+  );
+
+  const replacementDelayOnlyActiveTrip = payload.active_trips.find(
+    item => item.trip_id === 'REALTIME-REPLACEMENT-DELAY'
+  );
+  assert.ok(
+    replacementDelayOnlyActiveTrip,
+    'replacement trip identity may remain active even without valid stop timing'
+  );
+  assert.equal(
+    replacementDelayOnlyActiveTrip.trip_delay,
+    null,
+    'NEW/REPLACEMENT trips must not expose TripUpdate.delay as static schedule deviation'
   );
 
   const delayOnlyActiveTrip = payload.active_trips.find(
