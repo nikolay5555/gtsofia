@@ -257,6 +257,12 @@
     );
 
     realtimeCourseStates.set(key, {
+      // Keep the concrete static course that this realtime trip replaced.
+      // This is more reliable than destination text + timestamp because
+      // destinations can differ between GTFS variants while the course
+      // identity remains stable.
+      stop_id: stopId,
+      static_course_key: getStaticCourseKey(staticRoute, staticTime),
       consumed_key: consumedKey,
       last_actual_timestamp: actualTimestamp,
       consumed: actualTimestamp <= Date.now() / 1000,
@@ -305,6 +311,27 @@
     if (!key) return false;
 
     return realtimeCourseStates.get(key)?.consumed === true;
+  }
+
+  function isStaticCourseConsumed(stopId, staticRoute, staticTime) {
+    pruneRealtimeCourseStates();
+
+    const wantedStopId = normalizeStopKey(stopId);
+    const courseKey = getStaticCourseKey(staticRoute, staticTime);
+    if (!wantedStopId || !courseKey) return false;
+
+    for (const state of realtimeCourseStates.values()) {
+      if (state?.consumed !== true) continue;
+
+      const stateStopId = normalizeStopKey(state?.stop_id);
+      if (stateStopId !== wantedStopId) continue;
+
+      if (String(state?.static_course_key || '').trim() === courseKey) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   function getFavoriteStops() {
@@ -1746,7 +1773,18 @@ function findRealtimeStaticMatchIndex(realtimeRoute, realtimeTime, staticTimes, 
         // A static course that was explicitly matched to a realtime arrival
         // must never be reintroduced by the later fallback path.
         const remainingTimes = (Array.isArray(route?.times) ? route.times : [])
-          .filter(time => !matchedStaticCourseKeys.has(getStaticCourseKey(route, time)));
+          .filter(time => {
+            const courseKey = getStaticCourseKey(route, time);
+
+            // A matched realtime course remains consumed even after its
+            // realtime update disappears from the feed. This prevents the
+            // static timetable from resurrecting the same course while the
+            // next scheduled course is still ahead.
+            return (
+              !matchedStaticCourseKeys.has(courseKey)
+              && !isStaticCourseConsumed(stop.stop_id, route, time)
+            );
+          });
 
         if (!remainingTimes.length) return null;
 
