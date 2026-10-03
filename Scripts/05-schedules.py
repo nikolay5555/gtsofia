@@ -2,9 +2,8 @@
 
 import json
 
-from lib.common import DATA_DIR, write_json, normalize
+from lib.common import DATA_DIR, write_json
 from lib.gtfs import read_csv
-from lib.calendar import build_calendar_context
 from lib.stops import build_stop_code_map, build_stops
 from lib.schedules import (
     build_compact_schedule_model,
@@ -21,9 +20,6 @@ def main():
     stops_data = read_csv("stops.txt")
     trips_data = read_csv("trips.txt")
     stop_times_data = read_csv("stop_times.txt")
-    calendar = read_csv("calendar.txt") if (DATA_DIR.parent / ".gtfs" / "calendar.txt").exists() else []
-    calendar_dates = read_csv("calendar_dates.txt") if (DATA_DIR.parent / ".gtfs" / "calendar_dates.txt").exists() else []
-
     calendar_result = json.loads(
         (DATA_DIR / "calendar.json").read_text(encoding="utf-8")
     )
