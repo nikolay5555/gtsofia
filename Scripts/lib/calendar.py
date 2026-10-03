@@ -45,8 +45,10 @@ def build_calendar_context(
     calendar_dates,
     today,
     horizon_days=15,
+    lookback_days=2,
     calendar_config=None,
 ):
+    start_date = today - timedelta(days=lookback_days)
     end_date = today + timedelta(days=horizon_days)
     calendar_config = calendar_config or {"dateOverrides": {}}
     date_overrides = calendar_config.get("dateOverrides", {})
@@ -72,7 +74,7 @@ def build_calendar_context(
     service_ids_by_date = {}
     service_day_types = defaultdict(set)
 
-    current = today
+    current = start_date
     while current <= end_date:
         base_service_ids = {
             service_id
@@ -115,7 +117,9 @@ def build_calendar_context(
 
     calendar_result = {
         "referenceDate": today.isoformat(),
+        "startDate": start_date.isoformat(),
         "endDate": end_date.isoformat(),
+        "lookbackDays": lookback_days,
         "servicePatterns": [dict(row) for row in calendar],
         "exceptions": [dict(row) for row in calendar_dates],
         "serviceIdsByDate": service_ids_by_date,
@@ -131,9 +135,14 @@ def build_active_service_ids(calendar_result):
     stats = defaultdict(
         lambda: {"weekday_count": 0, "weekend_count": 0}
     )
+
+    reference_date = calendar_result.get("referenceDate")
     for date_key, service_ids in calendar_result.get(
         "serviceIdsByDate", {}
     ).items():
+        if reference_date and date_key < reference_date:
+            continue
+
         day_type = calendar_result.get("dateTypes", {}).get(date_key)
         if day_type not in {"weekday", "weekend"}:
             continue
