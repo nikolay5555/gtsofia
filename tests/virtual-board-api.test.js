@@ -264,6 +264,20 @@ const res = {
     'canceled/deleted routes must not count as realtime-supported fallback blockers'
   );
 
+  const normalActiveTrip = payload.active_trips.find(
+    item => item.trip_id === 'REALTIME-NORMAL'
+  );
+  assert.equal(
+    normalActiveTrip?.trip_delay,
+    null,
+    'an omitted TripUpdate.delay must remain unknown rather than becoming zero'
+  );
+  assert.equal(
+    normalActiveTrip?.delay_updates?.[0]?.stop_sequence,
+    null,
+    'an omitted StopTimeUpdate.stop_sequence must remain unknown'
+  );
+
   const delayOnlyActiveTrip = payload.active_trips.find(
     item => item.trip_id === 'REALTIME-DELAY-ONLY'
   );
