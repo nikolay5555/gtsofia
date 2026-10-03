@@ -85,8 +85,7 @@
   {
     "cgm_id": "TB43",
     "route_ref": "288",
-    "type": "bus",
-    "subtype": "temporary"
+    "type": "bus"
   },
   {
     "cgm_id": "A275",
@@ -179,8 +178,7 @@
   {
     "cgm_id": "TB39",
     "route_ref": "73",
-    "type": "bus",
-    "subtype": "temporary"
+    "type": "bus"
   },
   {
     "cgm_id": "A252",
@@ -205,8 +203,7 @@
   {
     "cgm_id": "TB35",
     "route_ref": "60",
-    "type": "bus",
-    "subtype": "temporary"
+    "type": "bus"
   },
   {
     "cgm_id": "A259",
@@ -366,8 +363,7 @@
   {
     "cgm_id": "TB46",
     "route_ref": "186",
-    "type": "bus",
-    "subtype": "temporary"
+    "type": "bus"
   },
   {
     "cgm_id": "A49",
@@ -442,8 +438,7 @@
   {
     "cgm_id": "TB36",
     "route_ref": "74",
-    "type": "bus",
-    "subtype": "temporary"
+    "type": "bus"
   },
   {
     "cgm_id": "A253",
@@ -637,8 +632,7 @@
   {
     "cgm_id": "TB24",
     "route_ref": "123",
-    "type": "bus",
-    "subtype": "temporary"
+    "type": "bus"
   },
   {
     "cgm_id": "TB1",
@@ -678,8 +672,7 @@
   {
     "cgm_id": "TB41",
     "route_ref": "801",
-    "type": "bus",
-    "subtype": "temporary"
+    "type": "bus"
   },
   {
     "cgm_id": "A46",
