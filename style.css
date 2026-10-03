@@ -1239,21 +1239,6 @@ VIRTUAL BOARDS
   white-space: nowrap;
 }
 
-.vb-arrival-extras {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: #6b7280;
-  font-size: 15px;
-  line-height: 1;
-}
-
-.vb-arrival-extras i {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
 .vb-arrival {
   display: inline-flex;
   align-items: center;
