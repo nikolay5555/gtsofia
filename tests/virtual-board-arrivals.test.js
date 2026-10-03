@@ -69,7 +69,7 @@ function createStorage(initialEntries = []) {
 function loadInternals(storage) {
   const exportedSource = source.replace(
     /\n\}\)\(\);\s*$/,
-    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    getRealtimeScheduledTimestamp,\n    findRealtimeStaticMatchIndex,\n    getStaticCourseKey,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
+    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    getRealtimeScheduledTimestamp,\n    findRealtimeStaticMatchIndex,\n    getStaticCourseKey,\n    getRealtimeCourseStateKey,\n    rememberRealtimeCourseAssignment,\n    promotePassedRealtimeCourseStates,\n    isRealtimeCourseConsumed,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
   );
 
   const context = {
@@ -490,5 +490,101 @@ assert.equal(
     'A181|D1||1000480',
     'matched static courses must have a stable route/direction/timestamp key'
   );
+
+  // Lifecycle regression: an early realtime course must remain attached to
+  // its static course after the realtime update disappears just after passing.
+  {
+    const lifecycleStop = { stop_id: '0687' };
+    const lifecycleStaticRoute = {
+      route_id: 'ROUTE-9',
+      direction_key: 'D1',
+      destination: 'Тестова посока'
+    };
+    const lifecycleStaticTime = {
+      timestamp: nowSeconds + 120,
+      original_trip_id: 'STATIC-9-1842',
+      trip_id: 'LOGICAL-9',
+      start_time: '18:00:00'
+    };
+    const lifecycleRealtimeRoute = {
+      route_id: 'ROUTE-9',
+      direction_key: 'D1',
+      trip_id: 'REALTIME-9',
+      trip_start_date: '20261003',
+      trip_start_time: '18:00:00',
+      destination: 'Тестова посока'
+    };
+    const lifecycleRealtimeTime = {
+      trip_id: 'REALTIME-9',
+      trip_start_time: '18:00:00',
+      timestamp: nowSeconds + 60,
+      scheduled_time: lifecycleStaticTime.timestamp
+    };
+
+    internals.rememberRealtimeCourseAssignment(
+      lifecycleStop,
+      lifecycleRealtimeRoute,
+      lifecycleRealtimeTime,
+      lifecycleStaticRoute,
+      lifecycleStaticTime
+    );
+
+    assert.equal(
+      internals.isRealtimeCourseConsumed(
+        lifecycleStop,
+        lifecycleRealtimeRoute,
+        lifecycleRealtimeTime
+      ),
+      false,
+      'an early realtime course must not be consumed before its actual arrival'
+    );
+
+    // Simulate the next refresh after the vehicle has passed the stop. The
+    // realtime update itself is absent; only the persisted course state remains.
+    internals.promotePassedRealtimeCourseStates(nowSeconds + 61);
+
+    assert.equal(
+      internals.isConsumedRealtimeScheduledArrival(
+        '0687',
+        'ROUTE-9',
+        'Тестова посока',
+        lifecycleStaticTime.timestamp
+      ),
+      true,
+      'the passed realtime course must consume its anchored static time even after the feed disappears'
+    );
+
+    assert.equal(
+      internals.isRealtimeCourseConsumed(
+        lifecycleStop,
+        lifecycleRealtimeRoute,
+        lifecycleRealtimeTime
+      ),
+      true,
+      'the same concrete realtime course must stay consumed after it passes'
+    );
+
+    assert.equal(
+      internals.isConsumedRealtimeScheduledArrival(
+        '0687',
+        'ROUTE-9',
+        'Тестова посока',
+        lifecycleStaticTime.timestamp + 900
+      ),
+      false,
+      'the following static course must remain available'
+    );
+
+    const reloadedLifecycleInternals = loadInternals(storage);
+    assert.equal(
+      reloadedLifecycleInternals.isRealtimeCourseConsumed(
+        lifecycleStop,
+        lifecycleRealtimeRoute,
+        lifecycleRealtimeTime
+      ),
+      true,
+      'consumed realtime course identity must survive a page refresh'
+    );
+  }
 
 console.log('virtual-board-arrivals: all tests passed');
