@@ -2332,7 +2332,7 @@ def build_model_active_service_ids(calendar_result):
         stats = service_stats[service_id]
 
         # Mirrors Dimitar's compact active_service_ids model. The exact
-        # GTFS date evaluation remains in transport.json/calendar.
+        # GTFS date evaluation remains in calendar.json.
         is_weekend = (
             stats["weekend_count"]
             >= stats["weekday_count"]
