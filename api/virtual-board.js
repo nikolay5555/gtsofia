@@ -348,9 +348,7 @@ function buildBoard(updates, stopCode, feedTimestamp) {
       .map((update, index) => ({
         update,
         index,
-        sequence: Number.isFinite(Number(update?.stopSequence))
-          ? Number(update.stopSequence)
-          : null
+        sequence: optionalFiniteNumber(update?.stopSequence)
       }))
       .sort((left, right) => {
         if (left.sequence != null && right.sequence != null) {
@@ -366,12 +364,9 @@ function buildBoard(updates, stopCode, feedTimestamp) {
   function serializeDelayUpdates(stopTimeUpdates) {
     return normalizeStopTimeUpdates(stopTimeUpdates).map(update => ({
       stop_id: String(update?.stopId || "").trim(),
-      stop_sequence: Number.isFinite(Number(update?.stopSequence))
-        ? Number(update.stopSequence)
-        : null,
-      schedule_relationship: Number.isFinite(Number(update?.scheduleRelationship))
-        ? Number(update.scheduleRelationship)
-        : STOP_RELATIONSHIP.SCHEDULED,
+      stop_sequence: optionalFiniteNumber(update?.stopSequence),
+schedule_relationship: optionalFiniteNumber(update?.scheduleRelationship)
+        ?? STOP_RELATIONSHIP.SCHEDULED,
       delay: optionalFiniteNumber(eventDelay(update)),
       timestamp: optionalFiniteNumber(eventTimestamp(update)),
       scheduled_time: optionalFiniteNumber(
@@ -428,13 +423,10 @@ function buildBoard(updates, stopCode, feedTimestamp) {
     }
 
     for (const stopUpdate of normalizeStopTimeUpdates(tripUpdate.stopTimeUpdates)) {
-      const stopRelationship = Number.isFinite(Number(stopUpdate.scheduleRelationship))
-        ? Number(stopUpdate.scheduleRelationship)
-        : STOP_RELATIONSHIP.SCHEDULED;
+      const stopRelationship = optionalFiniteNumber(stopUpdate?.scheduleRelationship)
+        ?? STOP_RELATIONSHIP.SCHEDULED;
 
-      const stopSequence = Number.isFinite(Number(stopUpdate.stopSequence))
-        ? Number(stopUpdate.stopSequence)
-        : null;
+      const stopSequence = optionalFiniteNumber(stopUpdate?.stopSequence);
 
       // SKIPPED is useful even when the producer identifies the stop only by
       // stop_sequence. Keep it as an exact suppression signal for the frontend.
@@ -519,15 +511,14 @@ function buildBoard(updates, stopCode, feedTimestamp) {
         const terminalUpdate = (tripUpdate.stopTimeUpdates || [])
           .filter(item => {
             if (!item?.stopId) return false;
-            const relationship = Number.isFinite(Number(item.scheduleRelationship))
-              ? Number(item.scheduleRelationship)
-              : STOP_RELATIONSHIP.SCHEDULED;
+            const relationship = optionalFiniteNumber(item?.scheduleRelationship)
+              ?? STOP_RELATIONSHIP.SCHEDULED;
             return relationship !== STOP_RELATIONSHIP.SKIPPED
               && relationship !== STOP_RELATIONSHIP.NO_DATA;
           })
           .sort((a, b) => {
-            const sa = Number.isFinite(Number(a?.stopSequence)) ? Number(a.stopSequence) : -1;
-            const sb = Number.isFinite(Number(b?.stopSequence)) ? Number(b.stopSequence) : -1;
+            const sa = optionalFiniteNumber(a?.stopSequence) ?? -1;
+            const sb = optionalFiniteNumber(b?.stopSequence) ?? -1;
             return sb - sa;
           })[0] || null;
 
@@ -558,11 +549,10 @@ function buildBoard(updates, stopCode, feedTimestamp) {
         stop_schedule_relationship: stopRelationship,
         stop_schedule_relationship_name: STOP_RELATIONSHIP_NAME[stopRelationship]
           || `UNKNOWN_${stopRelationship}`,
-        scheduled_time: Number.isFinite(Number(stopUpdate?.arrival?.scheduledTime))
-          ? Number(stopUpdate.arrival.scheduledTime)
-          : Number.isFinite(Number(stopUpdate?.departure?.scheduledTime))
-            ? Number(stopUpdate.departure.scheduledTime)
-            : null
+        scheduled_time: optionalFiniteNumber(
+          stopUpdate?.arrival?.scheduledTime
+          ?? stopUpdate?.departure?.scheduledTime
+        )
       });
     }
   }
