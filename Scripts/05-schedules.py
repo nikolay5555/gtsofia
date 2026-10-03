@@ -24,7 +24,10 @@ def main():
         (DATA_DIR / "calendar.json").read_text(encoding="utf-8")
     )
 
-    service_day_types = calendar_result.get("serviceDayTypes", {})
+    service_day_types = calendar_result.get(
+        "generationServiceDayTypes",
+        calendar_result.get("serviceDayTypes", {}),
+    )
     trips_by_id = build_trips(trips_data, service_day_types)
 
     stop_code_by_gtfs_id = build_stop_code_map(stops_data)
