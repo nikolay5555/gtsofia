@@ -282,24 +282,32 @@
     const route = id ? routeById.get(id) : null;
     const number = ref || route?.route_short_name || "—";
     if (!route) {
+      const fallbackType = "bus";
+      const fallbackSubtype = /^N/i.test(number) ? "night" : "";
       return {
         id,
         number,
-        type: "bus",
-        subtype: /^N/i.test(number) ? "night" : "",
-        icon: "",
-        color: "#BE1E2D",
+        type: fallbackType,
+        subtype: fallbackSubtype,
+        icon: typeof getTransportIcon === "function"
+          ? getTransportIcon(fallbackType, number, fallbackSubtype)
+          : "",
+        color: typeof getLineColor === "function"
+          ? getLineColor(null, fallbackType, fallbackSubtype)
+          : "#BE1E2D",
         textColor: "#FFFFFF"
       };
     }
 
     const type = typeof getLineType === "function" ? getLineType(route) : "bus";
-    const icon = typeof getTransportIcon === "function" ? getTransportIcon(type, number) : "";
-    const color = typeof getLineColor === "function" ? getLineColor(route, type) : "#BE1E2D";
+    const subtype = typeof getLineSubtype === "function" ? getLineSubtype(route) : "";
+    const icon = typeof getTransportIcon === "function" ? getTransportIcon(type, number, subtype) : "";
+    const color = typeof getLineColor === "function" ? getLineColor(route, type, subtype) : "#BE1E2D";
     return {
       id: route.route_id,
       number,
       type,
+      subtype,
       icon,
       color,
       textColor: route.route_text_color ? `#${route.route_text_color}` : "#FFFFFF"
