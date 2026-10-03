@@ -29,6 +29,14 @@
   const consumedRealtimeArrivals = new Map();
   let consumedRealtimeArrivalsLoaded = false;
 
+  // Remember which concrete realtime course replaced which static course.
+  // The realtime update may disappear immediately after passing the stop, so
+  // the next refresh must still know which static course has been consumed.
+  const REALTIME_COURSE_STATE_KEY = "gtsofia.virtualBoard.realtimeCourseStates.v1";
+  const REALTIME_COURSE_STATE_TTL_MS = 2 * 60 * 60 * 1000;
+  const realtimeCourseStates = new Map();
+  let realtimeCourseStatesLoaded = false;
+
   const boardPanel = () => document.getElementById("virtualBoardBody");
 
 
@@ -141,6 +149,188 @@
     pruneConsumedRealtimeArrivals();
     const key = getConsumedRealtimeArrivalKey(stopId, routeId, destination, scheduledTimestamp);
     return !!key && consumedRealtimeArrivals.has(key);
+  }
+
+  function loadRealtimeCourseStates() {
+    if (realtimeCourseStatesLoaded) return;
+    realtimeCourseStatesLoaded = true;
+
+    try {
+      const raw = sessionStorage.getItem(REALTIME_COURSE_STATE_KEY);
+      const stored = JSON.parse(raw || "[]");
+      if (!Array.isArray(stored)) return;
+
+      const now = Date.now();
+      for (const state of stored) {
+        const key = String(state?.key || "").trim();
+        const expiresAt = Number(state?.expiresAt);
+        if (key && Number.isFinite(expiresAt) && expiresAt > now) {
+          realtimeCourseStates.set(key, {
+            ...state,
+            expiresAt
+          });
+        }
+      }
+    } catch {
+      // Keep the in-memory state when sessionStorage is unavailable.
+    }
+  }
+
+  function persistRealtimeCourseStates() {
+    try {
+      sessionStorage.setItem(
+        REALTIME_COURSE_STATE_KEY,
+        JSON.stringify([...realtimeCourseStates.entries()].map(([key, state]) => ({
+          ...state,
+          key
+        })))
+      );
+    } catch {
+      // Keep working with the in-memory state.
+    }
+  }
+
+  function pruneRealtimeCourseStates() {
+    loadRealtimeCourseStates();
+    const now = Date.now();
+    let changed = false;
+
+    for (const [key, state] of realtimeCourseStates) {
+      if (!Number.isFinite(Number(state?.expiresAt)) || Number(state.expiresAt) <= now) {
+        realtimeCourseStates.delete(key);
+        changed = true;
+      }
+    }
+
+    if (changed) persistRealtimeCourseStates();
+  }
+
+  function getRealtimeCourseStateKey(stopId, route, time) {
+    const stopKey = normalizeStopKey(stopId);
+    const routeId = String(route?.route_id || "").trim();
+    const directionKey = String(route?.direction_key || "").trim();
+    const tripId = String(time?.trip_id || route?.trip_id || "").trim();
+    const startDate = String(
+      time?.trip_start_date
+      || route?.trip_start_date
+      || route?.start_date
+      || ""
+    ).trim();
+    const startTime = String(
+      time?.trip_start_time
+      || route?.trip_start_time
+      || route?.start_time
+      || ""
+    ).trim();
+
+    if (!stopKey || !routeId || (!tripId && !startTime)) return "";
+
+    return [
+      stopKey,
+      routeId,
+      directionKey,
+      tripId,
+      startDate,
+      startTime
+    ].join("|");
+  }
+
+  function rememberRealtimeCourseAssignment(stop, realtimeRoute, realtimeTime, staticRoute, staticTime) {
+    const key = getRealtimeCourseStateKey(
+      stop?.stop_id || stop?.stop_code,
+      realtimeRoute,
+      realtimeTime
+    );
+    const scheduledTimestamp = Number(staticTime?.timestamp);
+    const actualTimestamp = Number(realtimeTime?.timestamp);
+    if (
+      !key
+      || !Number.isFinite(scheduledTimestamp)
+      || !Number.isFinite(actualTimestamp)
+    ) return;
+
+    const stopId = String(stop?.stop_id || stop?.stop_code || "").trim();
+    const routeId = String(realtimeRoute?.route_id || "").trim();
+    const destination = String(realtimeRoute?.destination || staticRoute?.destination || "").trim();
+    const consumedKey = getConsumedRealtimeArrivalKey(
+      stopId,
+      routeId,
+      destination,
+      scheduledTimestamp
+    );
+
+    realtimeCourseStates.set(key, {
+      stop_id: stopId,
+      route_id: routeId,
+      direction_key: String(
+        realtimeRoute?.direction_key
+        || staticRoute?.direction_key
+        || ""
+      ).trim(),
+      trip_id: String(realtimeTime?.trip_id || realtimeRoute?.trip_id || "").trim(),
+      trip_start_date: String(
+        realtimeTime?.trip_start_date
+        || realtimeRoute?.trip_start_date
+        || realtimeRoute?.start_date
+        || ""
+      ).trim(),
+      trip_start_time: String(
+        realtimeTime?.trip_start_time
+        || realtimeRoute?.trip_start_time
+        || realtimeRoute?.start_time
+        || ""
+      ).trim(),
+      destination,
+      static_course_key: getStaticCourseKey(staticRoute, staticTime),
+      scheduled_timestamp: scheduledTimestamp,
+      last_actual_timestamp: actualTimestamp,
+      consumed_key: consumedKey,
+      consumed: actualTimestamp <= Date.now() / 1000,
+      expiresAt: Date.now() + REALTIME_COURSE_STATE_TTL_MS
+    });
+
+    persistRealtimeCourseStates();
+  }
+
+  function promotePassedRealtimeCourseStates(nowSeconds = Date.now() / 1000) {
+    pruneRealtimeCourseStates();
+    let stateChanged = false;
+
+    for (const state of realtimeCourseStates.values()) {
+      if (state?.consumed) continue;
+
+      const lastActualTimestamp = Number(state?.last_actual_timestamp);
+      if (!Number.isFinite(lastActualTimestamp) || lastActualTimestamp > nowSeconds) continue;
+
+      const consumedKey = String(state?.consumed_key || "").trim();
+      if (consumedKey) {
+        consumedRealtimeArrivals.set(
+          consumedKey,
+          Date.now() + CONSUMED_REALTIME_ARRIVAL_TTL_MS
+        );
+      }
+
+      state.consumed = true;
+      state.expiresAt = Date.now() + REALTIME_COURSE_STATE_TTL_MS;
+      stateChanged = true;
+    }
+
+    if (stateChanged) {
+      persistRealtimeCourseStates();
+      persistConsumedRealtimeArrivals();
+    }
+  }
+
+  function isRealtimeCourseConsumed(stop, route, time) {
+    pruneRealtimeCourseStates();
+    const key = getRealtimeCourseStateKey(
+      stop?.stop_id || stop?.stop_code,
+      route,
+      time
+    );
+    if (!key) return false;
+
+    return realtimeCourseStates.get(key)?.consumed === true;
   }
 
   function getFavoriteStops() {
@@ -1095,7 +1285,13 @@ function findRealtimeStaticMatchIndex(realtimeRoute, realtimeTime, staticTimes, 
     }
     const generatedAt = data?.generated_at || Date.now();
     const skippedTrips = Array.isArray(data?.skipped_trips) ? data.skipped_trips : [];
-const realtimeRoutes = Array.isArray(data?.routes)
+
+    // Promote courses whose last known realtime arrival has already passed
+    // before building static fallback rows. This closes the gap where the
+    // realtime update disappears between two refreshes.
+    promotePassedRealtimeCourseStates();
+
+    const realtimeRoutes = Array.isArray(data?.routes)
       ? data.routes
           .filter(route => route && Array.isArray(route.times))
           .filter(route => {
@@ -1193,6 +1389,14 @@ const realtimeRoutes = Array.isArray(data?.routes)
           })
           .filter(route => route.times.length)
       : [];
+
+    // GTFS-RT may keep a passed stop update for a short period. Once that
+    // concrete course is consumed, do not render the stale realtime row again.
+    for (const route of realtimeRoutes) {
+      route.times = route.times.filter(time =>
+        !isRealtimeCourseConsumed(stop, route, time)
+      );
+    }
 
     const realtime = {
       status: data?.status || 'empty',
@@ -1313,6 +1517,16 @@ const realtimeRoutes = Array.isArray(data?.routes)
             ? getStaticCourseKey(entry.staticRoute, entry.time)
             : '';
           if (courseKey) matchedStaticCourseKeys.add(courseKey);
+
+          if (entry) {
+            rememberRealtimeCourseAssignment(
+              stop,
+              route,
+              realtimeTime,
+              entry.staticRoute,
+              entry.time
+            );
+          }
         }
 
         for (let index = 0; index < staticTimes.length; index++) {
