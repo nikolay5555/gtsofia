@@ -2,7 +2,9 @@
 
 import csv
 import io
+import hashlib
 import json
+import re
 import shutil
 import urllib.request
 import zipfile
@@ -1017,30 +1019,6 @@ def build_reference_directions(
         directions,
         logical_trips,
         logical_stop_times
-    )
-
-
-def extract_car_number(
-    trip_id
-):
-    parts = trip_id.split(
-        "-"
-    )
-
-    if trip_id.startswith(
-        "M"
-    ):
-
-        return (
-            parts[2]
-            if len(parts) > 2
-            else ""
-        )
-
-    return (
-        parts[-3]
-        if len(parts) >= 3
-        else ""
     )
 
 
@@ -2138,6 +2116,420 @@ def load_shapes(
 
 
 # ============================================================
+# Canonical schedule/data model
+# ============================================================
+
+def determine_model_route_ref(ref):
+    ref = normalize(ref).upper()
+    number = re.sub(r"[A-ZА-Я]", "", ref)
+
+    if ref.startswith("E") or ref.startswith("Е"):
+        return number
+
+    if ref.startswith("N"):
+        return f"N{number}"
+
+    if ref.startswith("Y"):
+        return f"У{number}"
+
+    if ref.endswith(("ТБ", "TB")):
+        return f"{number}ТБ"
+
+    if ref.endswith(("ТМ", "TM", "Т", "T")):
+        return f"{number}ТМ"
+
+    return ref
+
+
+def determine_model_route_type(route_ref, route_type):
+    route_ref = normalize(route_ref).upper()
+    type_mapping = {
+        "0": "tram",
+        "1": "metro",
+        "3": "bus",
+        "11": "trolley",
+    }
+
+    model_type = type_mapping.get(normalize(route_type), "other")
+
+    if (
+        route_ref.endswith(("ТБ", "ТМ"))
+        or (route_ref.startswith("М") and model_type == "bus")
+    ):
+        model_type = "bus"
+
+    digits = re.sub(r"[A-ZА-Я]", "", route_ref)
+    try:
+        sort_ref = int(digits)
+    except ValueError:
+        sort_ref = 0
+
+    if sort_ref >= 50 and model_type == "trolley":
+        model_type = "bus"
+
+    return model_type
+
+
+def build_model_routes(routes_data, active_route_ids):
+    result = []
+
+    for route in routes_data:
+        route_id = normalize(route.get("route_id"))
+        if route_id not in active_route_ids:
+            continue
+
+        route_ref = determine_model_route_ref(
+            route.get("route_short_name", "")
+        )
+        route_type = determine_model_route_type(
+            route_ref,
+            route.get("route_type", "")
+        )
+
+        model_route = {
+            "cgm_id": route_id,
+            "route_ref": route_ref,
+            "type": route_type,
+        }
+
+        if route_type == "metro":
+            text_color = normalize(route.get("route_text_color"))
+            bg_color = normalize(route.get("route_color"))
+
+            if text_color:
+                model_route["text_color"] = text_color
+
+            if bg_color:
+                model_route["bg_color"] = bg_color
+
+        result.append(model_route)
+
+    return result
+
+
+CYRILLIC_TO_LATIN = dict(
+    zip(
+        "АБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЬЮЯ",
+        [
+            "A", "B", "V", "G", "D", "E", "ZH", "Z", "I", "Y",
+            "K", "L", "M", "N", "O", "P", "R", "S", "T", "U",
+            "F", "H", "TS", "CH", "SH", "SHT", "A", "A", "YU", "YA"
+        ],
+    )
+)
+
+
+def transliterate_bulgarian(text):
+    text = normalize(text)
+    result = []
+
+    for char in text:
+        upper = char.upper()
+        replacement = CYRILLIC_TO_LATIN.get(upper)
+
+        if replacement is None:
+            result.append(char)
+            continue
+
+        result.append(
+            replacement.lower()
+            if char == char.lower()
+            else replacement
+        )
+
+    return "".join(result)
+
+
+def round_coordinate(value):
+    try:
+        return round(float(value), 5)
+    except (TypeError, ValueError):
+        return None
+
+
+def build_model_stops(output_stops, used_stop_ids):
+    result = []
+
+    for stop in output_stops:
+        stop_id = normalize(stop.get("stop_id"))
+        if stop_id not in used_stop_ids:
+            continue
+
+        lat = round_coordinate(stop.get("stop_lat"))
+        lon = round_coordinate(stop.get("stop_lon"))
+
+        if lat is None or lon is None:
+            continue
+
+        bg_name = normalize(stop.get("stop_name"))
+        en_name = transliterate_bulgarian(bg_name)
+
+        result.append({
+            "code": stop_id,
+            "coords": [lat, lon],
+            "names": {
+                "bg": bg_name,
+                "en": en_name,
+            },
+        })
+
+    return result
+
+
+def build_model_active_service_ids(calendar_result):
+    service_stats = defaultdict(
+        lambda: {
+            "weekday_count": 0,
+            "weekend_count": 0,
+        }
+    )
+
+    service_ids_by_date = calendar_result.get(
+        "serviceIdsByDate",
+        {}
+    )
+    date_types = calendar_result.get(
+        "dateTypes",
+        {}
+    )
+
+    for date_key, service_ids in service_ids_by_date.items():
+        day_type = date_types.get(date_key)
+        if day_type not in {"weekday", "weekend"}:
+            continue
+
+        for service_id in service_ids:
+            if day_type == "weekend":
+                service_stats[service_id]["weekend_count"] += 1
+            else:
+                service_stats[service_id]["weekday_count"] += 1
+
+    result = []
+
+    for service_id in sorted(service_stats):
+        stats = service_stats[service_id]
+
+        # Mirrors Dimitar's compact active_service_ids model. The exact
+        # GTFS date evaluation remains in transport.json/calendar.
+        is_weekend = (
+            stats["weekend_count"]
+            >= stats["weekday_count"]
+        )
+
+        result.append([
+            service_id,
+            is_weekend,
+        ])
+
+    return result
+
+
+def build_model_schedule_data(
+    routes_data,
+    output_stops,
+    directions,
+    logical_trips,
+    logical_stop_times,
+    trips_by_id,
+    calendar_result,
+):
+    active_service_ids = build_model_active_service_ids(
+        calendar_result
+    )
+    active_service_map = dict(
+        active_service_ids
+    )
+
+    active_route_ids = {
+        normalize(trip.get("route_id"))
+        for trip in logical_trips
+        if normalize(trip.get("route_id"))
+        and not trip.get("is_deleted", False)
+    }
+
+    model_routes = build_model_routes(
+        routes_data,
+        active_route_ids,
+    )
+
+    surviving_directions = [
+        direction
+        for direction in directions
+        if not direction.get("is_deleted", False)
+    ]
+
+    model_directions = [
+        {
+            "code": int(direction["code"]),
+            "stops": list(direction.get("stops", [])),
+        }
+        for direction in surviving_directions
+    ]
+
+    used_stop_ids = {
+        stop_id
+        for direction in model_directions
+        for stop_id in direction["stops"]
+    }
+
+    model_stops = build_model_stops(
+        output_stops,
+        used_stop_ids,
+    )
+
+    # Dimitar's trips.json intentionally collapses source GTFS trips into a
+    # logical trip keyed by route + direction + weekday/weekend.
+    canonical_groups = {}
+    logical_to_model = {}
+    model_trips = []
+
+    for logical_trip in logical_trips:
+        if logical_trip.get("is_deleted", False):
+            continue
+
+        original_ids = logical_trip.get(
+            "original_trip_ids",
+            []
+        )
+
+        weekend_votes = []
+        for original_id in original_ids:
+            source_trip = trips_by_id.get(original_id)
+            if source_trip is None:
+                continue
+
+            service_id = normalize(
+                source_trip.get("service_id")
+            )
+
+            if service_id in active_service_map:
+                weekend_votes.append(
+                    bool(active_service_map[service_id])
+                )
+
+        if weekend_votes:
+            is_weekend = (
+                sum(weekend_votes)
+                >= (len(weekend_votes) / 2)
+            )
+        else:
+            day_types = logical_trip.get(
+                "day_types",
+                []
+            )
+            is_weekend = day_types == ["weekend"]
+
+        key = (
+            normalize(logical_trip.get("route_id")),
+            int(logical_trip["direction_code"]),
+            bool(is_weekend),
+        )
+
+        model_trip_id = canonical_groups.get(key)
+        if model_trip_id is None:
+            model_trip_id = len(model_trips) + 1
+            canonical_groups[key] = model_trip_id
+
+            model_trips.append({
+                "id": model_trip_id,
+                "cgm_id": normalize(
+                    logical_trip.get("route_id")
+                ),
+                "direction": int(
+                    logical_trip["direction_code"]
+                ),
+                "is_weekend": bool(is_weekend),
+            })
+
+        logical_to_model[
+            logical_trip["id"]
+        ] = model_trip_id
+
+    model_stop_times = []
+
+    for item in logical_stop_times:
+        logical_trip_id = item.get("trip")
+        model_trip_id = logical_to_model.get(
+            logical_trip_id
+        )
+
+        if model_trip_id is None:
+            continue
+
+        model_stop_times.append({
+            "trip": model_trip_id,
+            "times": list(
+                item.get("times", [])
+            ),
+        })
+
+    return {
+        "routes": model_routes,
+        "stops": model_stops,
+        "trips": model_trips,
+        "directions": model_directions,
+        "stop_times": model_stop_times,
+        "active_service_ids": active_service_ids,
+    }
+
+
+def write_model_json(path, data):
+    DATA_DIR.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    with path.open(
+        "w",
+        encoding="utf-8"
+    ) as file:
+        json.dump(
+            data,
+            file,
+            ensure_ascii=False,
+            indent=2
+        )
+        file.write("\n")
+
+
+def write_canonical_data_model(model):
+    files = {
+        "routes": model["routes"],
+        "stops": model["stops"],
+        "trips": model["trips"],
+        "directions": model["directions"],
+        "stop_times": model["stop_times"],
+        "active_service_ids": model["active_service_ids"],
+    }
+
+    written = []
+
+    for name, data in files.items():
+        path = DATA_DIR / f"{name}.json"
+        write_model_json(path, data)
+        written.append(path)
+
+    metadata = {
+        "app_version": "gtsofia-data-model-v1",
+        "retrieval_date": get_today().isoformat(),
+        "hashes": {},
+    }
+
+    for path in written:
+        payload = path.read_bytes()
+        metadata["hashes"][
+            path.stem
+        ] = hashlib.sha256(payload).hexdigest()
+
+    write_model_json(
+        DATA_DIR / "metadata.json",
+        metadata
+    )
+
+    return metadata
+
+
+# ============================================================
 # Main
 # ============================================================
 
@@ -2356,6 +2748,20 @@ def main():
         # Final output
         # --------------------------------------------------------
 
+        canonical_model = build_model_schedule_data(
+            routes_data,
+            output_stops,
+            directions,
+            logical_trips,
+            logical_stop_times,
+            trips_by_id,
+            calendar_result,
+        )
+
+        canonical_metadata = write_canonical_data_model(
+            canonical_model
+        )
+
         result = {
 
             "updatedAt":
@@ -2373,6 +2779,9 @@ def main():
             "calendar":
                 calendar_result,
 
+            # Keep transport.json compatible with the existing frontend.
+            # The canonical Dimitar-style schedule model lives in the
+            # separate data/*.json files.
             "routes":
                 [
                     dict(row)
@@ -2449,6 +2858,20 @@ def main():
         print(
             "Shapes: "
             f"{len(shapes_result)}"
+        )
+
+        print(
+            "Canonical data model: "
+            f"routes={len(canonical_model['routes'])}, "
+            f"stops={len(canonical_model['stops'])}, "
+            f"trips={len(canonical_model['trips'])}, "
+            f"directions={len(canonical_model['directions'])}, "
+            f"stop_times={len(canonical_model['stop_times'])}"
+        )
+
+        print(
+            "Canonical metadata hashes: "
+            f"{len(canonical_metadata['hashes'])}"
         )
 
         # --------------------------------------------------------
