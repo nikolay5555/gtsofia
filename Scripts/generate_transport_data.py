@@ -1930,11 +1930,6 @@ def build_schedules(
                                 for value in values
                             ],
 
-                        "car":
-                            item.get(
-                                "car",
-                                ""
-                            )
                     }
 
                     if "weekday" in trip_day_types:
@@ -2251,7 +2246,10 @@ def build_model_stops(output_stops, used_stop_ids):
     result = []
 
     for stop in output_stops:
-        stop_id = normalize(stop.get("stop_id"))
+        stop_id = normalize_stop_id(
+            stop.get("stop_code")
+            or stop.get("stop_id")
+        )
         if stop_id not in used_stop_ids:
             continue
 
