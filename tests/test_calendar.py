@@ -7,7 +7,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "Scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from lib.calendar import build_calendar_context
+from lib.calendar import build_active_service_ids, build_calendar_context
 
 
 class CalendarTests(unittest.TestCase):
@@ -115,6 +115,12 @@ class CalendarTests(unittest.TestCase):
             calendar_result["serviceIdsByDate"]["2026-09-22"],
             [],
         )
+
+        self.assertEqual(
+            calendar_result["generationServiceDayTypes"]["YESTERDAY"],
+            ["weekday"],
+        )
+        self.assertNotIn("YESTERDAY", build_active_service_ids(calendar_result))
 
     def test_calendar_dates_only_feed_uses_explicit_service_dates(self):
         dates_only = [
