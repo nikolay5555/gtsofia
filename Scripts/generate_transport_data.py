@@ -996,11 +996,6 @@ def build_reference_directions(
                 for item in trip_stop_times
             ],
 
-            "car":
-                extract_car_number(
-                    trip_id
-                ),
-
             "original_trip_id":
                 trip_id,
 
