@@ -1493,6 +1493,11 @@ const realtimeRoutes = Array.isArray(data?.routes)
     // suppress a longer scheduled direction when the realtime course belongs
     // to a shorter direction whose stop pattern is a true prefix of that
     // longer route (an operational short-turn such as trolley 3).
+    // Persist a passed realtime course before static fallback is built. The API
+    // keeps the passed stop update briefly, so this records the exact static
+    // course it replaced and prevents that course from resurrecting afterwards.
+    rememberConsumedRealtimeArrivals(stop, mergedSurfaceRoutes);
+
     const realtimeLogicalRoutes = mergedSurfaceRoutes.filter(route =>
       String(route.direction_key || '').trim()
     );
