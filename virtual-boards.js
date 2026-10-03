@@ -1467,8 +1467,98 @@
     };
   }
 
+  async function fetchDimitarVirtualBoardExtras(stop) {
+    if (isMetroStop(stop)) return [];
+
+    const stopCode = String(stop?.stop_code || stop?.stop_id || '').trim();
+    if (!stopCode) return [];
+
+    const url = `https://sofiatraffic-proxy.onrender.com/v2/virtual-board?stop_code=${encodeURIComponent(stopCode.padStart(4, "0"))}`;
+
+    try {
+      const { response, data } = await fetchJsonWithTimeout(url, {
+        headers: {
+          Accept: 'application/json'
+        }
+      }, 2500);
+
+      if (!response.ok || data?.error || !Array.isArray(data?.routes)) return [];
+      return data.routes;
+    } catch (error) {
+      console.warn("Данните за екстрите на превозните средства не са налични:", error);
+      return [];
+    }
+  }
+
+  function enrichFirstArrivalExtras(routes, extrasRoutes) {
+    if (!Array.isArray(extrasRoutes) || !extrasRoutes.length) return routes;
+
+    return routes.map(route => {
+      const firstTime = route?.times?.[0];
+      const timestamp = Number(firstTime?.timestamp);
+      if (!Number.isFinite(timestamp)) return route;
+
+      const relativeMinutes = Math.floor(Math.max(
+        0,
+        (timestamp - Date.now() / 1000) / 60
+      ));
+
+      const routeRef = String(route?.route_ref || '').trim();
+      const destinationKey = normalizeDirectionText(route?.destination || '');
+      const candidates = extrasRoutes.filter(extraRoute => {
+        const extraRef = String(extraRoute?.route_ref || '').trim();
+        if (!routeRef || extraRef !== routeRef) return false;
+
+        const extraDestination = normalizeDirectionText(extraRoute?.destination || '');
+        return !destinationKey || !extraDestination || extraDestination === destinationKey;
+      });
+
+      let best = null;
+      let bestDifference = Infinity;
+      for (const candidate of candidates) {
+        const values = Array.isArray(candidate?.times) ? candidate.times : [];
+        for (const time of values) {
+          const candidateMinutes = Number(time?.t);
+          if (!Number.isFinite(candidateMinutes)) continue;
+
+          const difference = Math.abs(candidateMinutes - relativeMinutes);
+          if (difference > 2 || difference >= bestDifference) continue;
+
+          best = candidate;
+          bestDifference = difference;
+        }
+      }
+
+      if (!best) return route;
+
+      const extrasTime = best.times.find(time => {
+        const candidateMinutes = Number(time?.t);
+        return Number.isFinite(candidateMinutes)
+          && Math.abs(candidateMinutes - relativeMinutes) <= 2;
+      });
+
+      if (!extrasTime) return route;
+
+      return {
+        ...route,
+        times: route.times.map((time, index) =>
+          index === 0
+            ? { ...time, extras: normalizeArrivalExtras(extrasTime.extras) }
+            : time
+        )
+      };
+    });
+  }
+
   async function fetchVirtualBoard(stop) {
-    return fetchVirtualBoardViaServer(stop);
+    const board = await fetchVirtualBoardViaServer(stop);
+    if (!board?.routes?.length || isMetroStop(stop)) return board;
+
+    const extrasRoutes = await fetchDimitarVirtualBoardExtras(stop);
+    return {
+      ...board,
+      routes: enrichFirstArrivalExtras(board.routes, extrasRoutes)
+    };
   }
 
   async function renderStopBoard(stop, boardData = null) {
