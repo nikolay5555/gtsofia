@@ -19,7 +19,6 @@ GTFS_URL = "https://gtfs.sofiatraffic.bg/api/v1/static"
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
 GTFS_DIR = ROOT / ".gtfs"
-OUTPUT_FILE = DATA_DIR / "transport.json"
 CALENDAR_CONFIG_FILE = ROOT / "config" / "calendar.json"
 LINE_OVERRIDES_CONFIG_FILE = ROOT / "config" / "line-overrides.json"
 
@@ -2781,39 +2780,23 @@ def main():
         )
 
         # --------------------------------------------------------
-        # Schedules
-        # --------------------------------------------------------
-
-        schedules_result = (
-            build_schedules(
-                directions_result,
-                logical_trips,
-                logical_stop_times
-            )
-        )
-
-        # --------------------------------------------------------
         # Shapes
         # --------------------------------------------------------
 
         selected_shape_ids = set()
 
-        for route_directions in (
-            directions_result.values()
-        ):
+        for direction in directions:
 
-            for direction in (
-                route_directions.values()
+            for shape_id in direction.get(
+                "shape_ids",
+                []
             ):
 
                 shape_id = normalize(
-                    direction.get(
-                        "shape_id"
-                    )
+                    shape_id
                 )
 
                 if shape_id:
-
                     selected_shape_ids.add(
                         shape_id
                     )
@@ -2850,70 +2833,8 @@ def main():
             today.isoformat(),
         )
 
-        result = {
-
-            "updatedAt":
-                today.isoformat(),
-
-            "source":
-                "CGM Sofia official GTFS",
-
-            # Presentation-only mappings. The original GTFS routes above
-            # remain untouched; the frontend applies these overrides when
-            # displaying line metadata.
-            "lineOverrides":
-                line_overrides,
-
-            "calendar":
-                calendar_result,
-
-            # Keep transport.json compatible with the existing frontend.
-            # The canonical Dimitar-style schedule model lives in the
-            # separate data/*.json files.
-            "routes":
-                [
-                    dict(row)
-                    for row in routes_data
-                ],
-
-            "stops":
-                output_stops,
-
-            "trips":
-                [
-                    dict(row)
-                    for row in trips_data
-                ],
-
-            "directions":
-                directions_result,
-
-            "shapes":
-                shapes_result,
-
-            "schedules":
-                schedules_result
-        }
-
-        DATA_DIR.mkdir(
-            parents=True,
-            exist_ok=True
-        )
-
-        with OUTPUT_FILE.open(
-            "w",
-            encoding="utf-8"
-        ) as file:
-
-            json.dump(
-                result,
-                file,
-                ensure_ascii=False,
-                separators=(
-                    ",",
-                    ":"
-                )
-            )
+        # transport.json is intentionally no longer generated. The frontend
+        # consumes the normalized split files through transport-data.js.
 
         print(
             ""
@@ -2935,12 +2856,7 @@ def main():
 
         print(
             "Directions: "
-            f"{sum(len(value) for value in directions_result.values())}"
-        )
-
-        print(
-            "Schedule routes: "
-            f"{len(schedules_result)}"
+            f"{len(canonical_model['directions'])}"
         )
 
         print(
