@@ -94,9 +94,9 @@ assert.equal(
   '2 minutes 59 seconds remaining must display two minutes'
 );
 
-assert.deepEqual(
-  internals.normalizeArrivalExtras([1, "1", 0]),
-  ["1", "1", "0"],
+assert.equal(
+  JSON.stringify(internals.normalizeArrivalExtras([1, "1", 0])),
+  JSON.stringify(["1", "1", "0"]),
   'vehicle extras must normalize numeric and string flags'
 );
 assert.equal(
