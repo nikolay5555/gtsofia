@@ -18,6 +18,18 @@ assert.equal(
   'a realtime trip elsewhere on the line must not suppress static departures at this stop'
 );
 
+assert.equal(
+  source.includes('scheduled_time: Number.isFinite(Number(time?.scheduled_time))'),
+  false,
+  'missing realtime scheduled_time must not be coerced from null to zero'
+);
+
+assert.equal(
+  source.includes('delay: Number.isFinite(Number(time?.delay)) ? Number(time?.delay) : null'),
+  false,
+  'missing realtime delay must not be coerced from null to zero'
+);
+
 function createStorage(initialEntries = []) {
   const store = new Map(initialEntries);
   return {
@@ -390,6 +402,16 @@ assert.equal(
     }),
     null,
     'missing realtime timing fields must remain unavailable, not become timestamp zero'
+  );
+
+  assert.equal(
+    internals.getRealtimeScheduledTimestamp({
+      timestamp: 1_000_410,
+      scheduled_time: 0,
+      delay: -70
+    }),
+    1_000_480,
+    'a coerced zero scheduled_time must still allow schedule reconstruction from delay'
   );
 
   assert.equal(
