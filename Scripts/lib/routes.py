@@ -110,6 +110,12 @@ def build_model_routes(
             route_ref,
             route_type,
         )
+        if (
+            not subtype
+            and route_type == "bus"
+            and route_id.upper().startswith(("TB", "TM"))
+        ):
+            subtype = "temporary"
         if subtype:
             model_route["subtype"] = subtype
 
