@@ -27,12 +27,22 @@ jobs:
       - name: Generate transport data from official CGM GTFS
         run: python Scripts/generate_transport_data.py
 
+      - name: Validate generator syntax
+        run: python -m py_compile Scripts/generate_transport_data.py
+
       - name: Commit changes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add data/transport.json
+          git add data/transport.json \
+            data/routes.json \
+            data/stops.json \
+            data/trips.json \
+            data/directions.json \
+            data/stop_times.json \
+            data/active_service_ids.json \
+            data/metadata.json
 
           if git diff --cached --quiet; then
             echo "No changes"
