@@ -343,7 +343,7 @@ assert.equal(
   assert.equal(
     internals.findRealtimeStaticMatchIndex(
       { trip_id: '', trip_start_time: '' },
-      { trip_id: '', timestamp: 1_000_480 + 60, scheduled_time: null, delay: null },
+      { trip_id: '', timestamp: 1_000_420, scheduled_time: null, delay: null },
       staticTimes,
       new Set()
     ),
