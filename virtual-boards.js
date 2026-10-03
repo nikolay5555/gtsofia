@@ -1957,6 +1957,93 @@ function findRealtimeStaticMatchEntryAcrossDirections(
     );
   }
 
+  function getDuplicatedScheduleTimestamp(activeTrip, staticTime) {
+    const duplicateDate = normalizeGtfsDateKey(activeTrip?.start_date);
+    const duplicateStart = parseGtfsTime(activeTrip?.start_time);
+    const originalDate = normalizeGtfsDateKey(staticTime?.service_date);
+    const originalStart = parseGtfsTime(staticTime?.start_time);
+
+    if (
+      !duplicateDate
+      || duplicateStart == null
+      || !originalDate
+      || originalStart == null
+    ) return null;
+
+    const originalMidnight = gtfsSecondsToServiceDateTimestamp(originalDate, 0);
+    const duplicateMidnight = gtfsSecondsToServiceDateTimestamp(duplicateDate, 0);
+    const staticTimestamp = Number(staticTime?.timestamp);
+
+    if (
+      !Number.isFinite(originalMidnight)
+      || !Number.isFinite(duplicateMidnight)
+      || !Number.isFinite(staticTimestamp)
+    ) return null;
+
+    const offsetFromOriginalStart = staticTimestamp
+      - (originalMidnight + originalStart);
+
+    return duplicateMidnight + duplicateStart + offsetFromOriginalStart;
+  }
+
+  function getRealtimeScheduleAnchorTimestamp(activeTrip, staticTime, sequence) {
+    const targetSequence = Number(sequence);
+    if (!Number.isFinite(targetSequence)) return null;
+
+    if (targetSequence === Number(staticTime?.stop_sequence)) {
+      const duplicated = Number(
+        getDuplicatedScheduleTimestamp(activeTrip, staticTime)
+      );
+      if (Number.isFinite(duplicated)) return duplicated;
+    }
+
+    const courseSequences = Array.isArray(staticTime?.course_stop_sequences)
+      ? staticTime.course_stop_sequences
+      : [];
+    const anchorIndex = courseSequences.findIndex(value =>
+      Number(value) === targetSequence
+    );
+    if (anchorIndex < 0) return null;
+
+    const anchorRaw =
+      staticTime?.course_arrival_times?.[anchorIndex]
+      || staticTime?.course_departure_times?.[anchorIndex]
+      || staticTime?.course_times?.[anchorIndex]
+      || "";
+    const anchorSeconds = parseGtfsTime(anchorRaw);
+    const serviceDate = normalizeGtfsDateKey(staticTime?.service_date);
+    const anchorTimestamp = gtfsSecondsToServiceDateTimestamp(
+      serviceDate,
+      anchorSeconds
+    );
+    if (!Number.isFinite(anchorTimestamp)) return null;
+
+    if (Number(activeTrip?.schedule_relationship) !== 6) {
+      return anchorTimestamp;
+    }
+
+    const originalStart = parseGtfsTime(staticTime?.start_time);
+    const duplicateStart = parseGtfsTime(activeTrip?.start_time);
+    const duplicateDate = normalizeGtfsDateKey(activeTrip?.start_date);
+    const originalDate = normalizeGtfsDateKey(staticTime?.service_date);
+    if (
+      originalStart == null
+      || duplicateStart == null
+      || !duplicateDate
+      || !originalDate
+    ) return null;
+
+    const originalMidnight = gtfsSecondsToServiceDateTimestamp(originalDate, 0);
+    const duplicateMidnight = gtfsSecondsToServiceDateTimestamp(duplicateDate, 0);
+    if (!Number.isFinite(originalMidnight) || !Number.isFinite(duplicateMidnight)) {
+      return null;
+    }
+
+    const offsetFromOriginalStart = anchorTimestamp
+      - (originalMidnight + originalStart);
+    return duplicateMidnight + duplicateStart + offsetFromOriginalStart;
+  }
+
   function getPropagatedRealtimeDelay(activeTrip, staticTime) {
     const targetSequence = Number(staticTime?.stop_sequence);
     if (!Number.isFinite(targetSequence)) return null;
@@ -2028,7 +2115,14 @@ function findRealtimeStaticMatchEntryAcrossDirections(
       );
 
       if (Number.isFinite(anchorTimestamp)) {
-        effectiveDelay = predictionTime - anchorTimestamp;
+        const realtimeAnchor = getRealtimeScheduleAnchorTimestamp(
+          activeTrip,
+          staticTime,
+          sequence
+        );
+        if (Number.isFinite(realtimeAnchor)) {
+          effectiveDelay = predictionTime - realtimeAnchor;
+        }
       }
     }
 
@@ -2064,7 +2158,10 @@ function findRealtimeStaticMatchEntryAcrossDirections(
           const delay = getPropagatedRealtimeDelay(activeTrip, staticTime);
           if (!Number.isFinite(delay)) continue;
 
-          const timestamp = Number(staticTime.timestamp) + delay;
+          const baseTimestamp = relationship === 6
+        ? getDuplicatedScheduleTimestamp(activeTrip, staticTime)
+        : Number(staticTime.timestamp);
+      const timestamp = Number(baseTimestamp) + delay;
           if (!Number.isFinite(timestamp)) continue;
 
           result.push({
