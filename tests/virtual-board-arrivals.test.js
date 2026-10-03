@@ -407,6 +407,27 @@ assert.equal(
   );
 
   assert.equal(
+    internals.findRealtimeStaticMatchIndex(
+      {
+        trip_id: 'RT-ADDED',
+        trip_start_time: '12:10:00',
+        schedule_relationship: 1
+      },
+      {
+        trip_id: 'RT-ADDED',
+        timestamp: 1_000_690,
+        scheduled_time: 1_000_600,
+        delay: 90,
+        trip_schedule_relationship: 1
+      },
+      staticTimes,
+      new Set()
+    ),
+    -1,
+    'deprecated ADDED trips must not be reinterpreted as scheduled static trips'
+  );
+
+  assert.equal(
     internals.getRealtimeScheduledTimestamp({
       timestamp: 1_000_410,
       scheduled_time: null,
