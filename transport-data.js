@@ -584,7 +584,7 @@ function getTransportType(routeType) {
             return 'bus';
 
         case '11':
-            return 'trolleybus';
+            return 'trolley';
 
         default:
             return 'other';
@@ -610,39 +610,72 @@ function getLineOverride(route) {
 
 
 function getLineType(route) {
-    const number =
-        String(
-            route.route_short_name || ''
-        )
-            .trim()
-            .toUpperCase();
+    const modelType = String(route?.type || '').trim().toLowerCase();
 
-    const nightBusLines =
-        new Set([
-            'N1',
-            'N2',
-            'N3',
-            'N4'
-        ]);
+    if (modelType === 'bus') {
+        return 'bus';
+    }
 
-    if (
-        nightBusLines.has(
-            number
-        )
-    ) {
-        return 'night';
+    if (modelType === 'trolley') {
+        return 'trolley';
+    }
+
+    if (modelType === 'tram') {
+        return 'tram';
+    }
+
+    if (modelType === 'metro') {
+        return 'metro';
     }
 
     const override = getLineOverride(route);
 
     if (override?.type) {
-        return override.type;
+        return String(override.type).trim().toLowerCase() === 'trolleybus'
+            ? 'trolley'
+            : String(override.type).trim().toLowerCase();
     }
 
     return getTransportType(
         route.route_type
     );
 }
+
+
+function getLineSubtype(route) {
+    const subtype = String(route?.subtype || '').trim().toLowerCase();
+    if (subtype) {
+        return subtype;
+    }
+
+    const number = String(
+        route?.route_short_name || route?.route_ref || ''
+    ).trim().toUpperCase();
+
+    if (number.startsWith('N')) {
+        return 'night';
+    }
+
+    if (number.startsWith('У') || number.startsWith('Y')) {
+        return 'school';
+    }
+
+    const baseType = getLineType(route);
+    if (
+        baseType === 'bus' &&
+        (
+            number.endsWith('ТБ') ||
+            number.endsWith('ТМ') ||
+            number.startsWith('М') ||
+            number.startsWith('M')
+        )
+    ) {
+        return 'temporary';
+    }
+
+    return '';
+}
+
 
 
 function getLineDisplayNumber(route, type) {
@@ -698,6 +731,7 @@ function getTransportIcon(
         case 'night':
             return 'Icons/Active icons/night-bus.svg';
 
+        case 'trolley':
         case 'trolleybus':
             return 'Icons/Active icons/trolley.svg';
 
@@ -742,6 +776,7 @@ function getLineColor(
         case 'tram':
             return '#F7941D';
 
+        case 'trolley':
         case 'trolleybus':
             return '#27AAE1';
 
@@ -815,6 +850,11 @@ function convertGtfsRoutes(
 
             const type =
                 getLineType(
+                    route
+                );
+
+            const subtype =
+                getLineSubtype(
                     route
                 );
 
@@ -938,6 +978,7 @@ function convertGtfsRoutes(
 
 window.getLineOverride = getLineOverride;
 window.getLineDisplayNumber = getLineDisplayNumber;
+window.getLineSubtype = getLineSubtype;
 window.getLineType = getLineType;
 window.getLineColor = getLineColor;
 window.getTransportIcon = getTransportIcon;
