@@ -246,7 +246,23 @@ function formatScheduleMinute(value) {
     const hours = Math.floor(minutes / 60);
     const remainder = minutes - hours * 60;
 
-    return `${String(hours).padStart(2, '0')}:${String(remainder).padStart(2, '0')}:00`;
+    return String(hours).padStart(2, '0') + ':'
+        + String(remainder).padStart(2, '0') + ':00';
+}
+
+function formatScheduleSeconds(value) {
+    if (value === null || value === undefined || !Number.isFinite(Number(value))) {
+        return null;
+    }
+
+    const seconds = Math.max(0, Math.trunc(Number(value)));
+    const hours = Math.floor(seconds / 3600);
+    const minute = Math.floor((seconds % 3600) / 60);
+    const second = seconds % 60;
+
+    return String(hours).padStart(2, '0') + ':'
+        + String(minute).padStart(2, '0') + ':'
+        + String(second).padStart(2, '0');
 }
 
 function buildRuntimeSchedules(
@@ -303,12 +319,12 @@ function buildRuntimeSchedules(
         );
         const arrivalTimes = (
             Array.isArray(item?.arrival_times)
-                ? item.arrival_times.map(formatScheduleMinute)
+                ? item.arrival_times.map(formatScheduleSeconds)
                 : []
         );
         const departureTimes = (
             Array.isArray(item?.departure_times)
-                ? item.departure_times.map(formatScheduleMinute)
+                ? item.departure_times.map(formatScheduleSeconds)
                 : []
         );
 

@@ -12,10 +12,17 @@ assert.equal(
   'automatic refresh must not reference the removed displayedPrimaryArrival state'
 );
 
-assert.equal(
-  (source.match(/rememberConsumedRealtimeArrivals\(stop, mergedSurfaceRoutes\);/g) || []).length,
-  1,
+const rememberConsumedIndex = source.indexOf('rememberConsumedRealtimeArrivals(stop, [{');
+const staticFallbackIndex = source.indexOf('const surfaceFallbackRoutes');
+assert.ok(
+  rememberConsumedIndex >= 0 && rememberConsumedIndex < staticFallbackIndex,
   'a passed realtime course must be persisted before static fallback is evaluated'
+);
+
+assert.equal(
+  source.includes('timestamp += 86400'),
+  false,
+  'a past GTFS service-day time must not be blindly rolled into the next day'
 );
 
 assert.equal(
@@ -81,7 +88,7 @@ function createStorage(initialEntries = []) {
 function loadInternals(storage) {
   const exportedSource = source.replace(
     /\n\}\)\(\);\s*$/,
-    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    getRealtimeScheduledTimestamp,\n    findRealtimeStaticMatchIndex,\n    getStaticCourseKey,\n    getRealtimeCourseStateKey,\n    rememberRealtimeCourseAssignment,\n    promotePassedRealtimeCourseStates,\n    isRealtimeCourseConsumed,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
+    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    getRealtimeScheduledTimestamp,\n    findRealtimeStaticMatchIndex,\n    findRealtimeStaticMatch,\n    findRealtimeStaticMatchEntryAcrossDirections,\n    getStaticCourseKey,\n    getStaticScheduleTimeValue,\n    gtfsSecondsToServiceDateTimestamp,\n    getRealtimeCourseStateKey,\n    rememberRealtimeCourseAssignment,\n    promotePassedRealtimeCourseStates,\n    isRealtimeCourseConsumed,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
   );
 
   const context = {
@@ -104,6 +111,52 @@ function loadInternals(storage) {
 
 const storage = createStorage();
 const internals = loadInternals(storage);
+
+assert.equal(
+  internals.getStaticScheduleTimeValue(
+    {
+      arrival_times: ['08:01:30'],
+      departure_times: ['08:02:00'],
+      times: ['08:02:00']
+    },
+    0
+  ),
+  '08:01:30',
+  'virtual board must prefer GTFS arrival_time at the selected stop'
+);
+
+assert.equal(
+  internals.getStaticScheduleTimeValue(
+    {
+      arrival_times: [null],
+      departure_times: ['08:02:00'],
+      times: ['08:02:00']
+    },
+    0
+  ),
+  '08:02:00',
+  'virtual board must fall back to departure_time when arrival_time is missing'
+);
+
+assert.equal(
+  internals.gtfsSecondsToServiceDateTimestamp(
+    '2026-10-03',
+    25 * 3600 + 30 * 60
+  ),
+  new Date('2026-10-04T01:30:00+03:00').getTime() / 1000,
+  'GTFS service-day time after midnight must stay attached to the service date'
+);
+
+assert.equal(
+  internals.getRealtimeScheduledTimestamp({
+    trip_schedule_relationship: 0,
+    timestamp: 1_000_600,
+    scheduled_time: 1_000_500,
+    delay: 100
+  }),
+  1_000_500,
+  'scheduled trip anchor must come from time minus delay, not forbidden scheduled_time'
+);
 
 const countdownNow = 1_000;
 assert.equal(
@@ -515,11 +568,132 @@ assert.equal(
       },
       { timestamp: 1_000_480 }
     ),
-    'A181|D1||1000480',
+    'A181||D1||1000480',
     'matched static courses must have a stable route/direction/timestamp key'
   );
 
-    // When the realtime direction key is wrong or temporarily unavailable,
+    // Scheduled trips use the same static course for early, on-time and
+  // late predictions. Delay may be negative, zero, or positive.
+  {
+    const staticRoute = {
+      route_id: 'ROUTE-LIFECYCLE',
+      route_ref: '9',
+      direction_key: 'D1',
+      destination: 'Тестова посока',
+      direction_id: '0'
+    };
+    const staticTime = {
+      timestamp: 5_000_100,
+      service_date: '2026-10-03',
+      original_trip_id: 'STATIC-LIFECYCLE',
+      start_time: '18:00:00',
+      direction_id: '0'
+    };
+
+    for (const scenario of [
+      { label: 'early', actual: 5_000_040, delay: -60 },
+      { label: 'on-time', actual: 5_000_100, delay: 0 },
+      { label: 'late', actual: 5_000_220, delay: 120 }
+    ]) {
+      const match = internals.findRealtimeStaticMatch(
+        {
+          route_id: 'ROUTE-LIFECYCLE',
+          route_ref: '9',
+          trip_id: 'STATIC-LIFECYCLE',
+          trip_start_date: '20261003',
+          trip_start_time: '18:00:00',
+          direction_id: '0',
+          schedule_relationship: 0
+        },
+        {
+          trip_id: 'STATIC-LIFECYCLE',
+          trip_start_date: '20261003',
+          trip_start_time: '18:00:00',
+          timestamp: scenario.actual,
+          delay: scenario.delay,
+          trip_schedule_relationship: 0
+        },
+        [{ staticRoute, time: staticTime }],
+        new Set()
+      );
+
+      assert.equal(
+        match?.entry?.time?.original_trip_id,
+        'STATIC-LIFECYCLE',
+        `${scenario.label} realtime must match the same static course`
+      );
+      assert.equal(
+        match?.strength,
+        100,
+        `${scenario.label} realtime must use exact trip identity`
+      );
+    }
+  }
+
+  // A later weaker snapshot must not replace a stronger consumed course mapping,
+  // even if its direction label changes.
+  {
+    const storage2 = createStorage();
+    const isolated = loadInternals(storage2);
+    const stop = { stop_id: '0700' };
+    const realtimeRoute = {
+      route_id: 'ROUTE-STATE',
+      trip_id: 'RT-STATE',
+      trip_start_date: '20261003',
+      trip_start_time: '19:00:00',
+      direction_key: 'D1'
+    };
+    const realtimeTime = {
+      trip_id: 'RT-STATE',
+      trip_start_date: '20261003',
+      trip_start_time: '19:00:00',
+      timestamp: 6_000_000 + 60
+    };
+
+    isolated.rememberRealtimeCourseAssignment(
+      stop,
+      realtimeRoute,
+      realtimeTime,
+      { route_id: 'ROUTE-STATE', direction_key: 'D1', destination: 'A' },
+      {
+        original_trip_id: 'STATIC-STATE',
+        service_date: '2026-10-03',
+        timestamp: 6_000_000
+      },
+      100
+    );
+
+    isolated.promotePassedRealtimeCourseStates(6_000_000 + 61);
+
+    isolated.rememberRealtimeCourseAssignment(
+      stop,
+      { ...realtimeRoute, direction_key: 'D2' },
+      { ...realtimeTime, timestamp: 6_000_000 + 62 },
+      { route_id: 'ROUTE-STATE', direction_key: 'D2', destination: 'B' },
+      {
+        original_trip_id: 'OTHER-STATIC',
+        service_date: '2026-10-03',
+        timestamp: 6_000_090
+      },
+      60
+    );
+
+    assert.equal(
+      isolated.isStaticCourseConsumed(
+        '0700',
+        { route_id: 'ROUTE-STATE', direction_key: 'D1', destination: 'A' },
+        {
+          original_trip_id: 'STATIC-STATE',
+          service_date: '2026-10-03',
+          timestamp: 6_000_000
+        }
+      ),
+      true,
+      'weaker later realtime metadata must not resurrect the old static course'
+    );
+  }
+
+  // When the realtime direction key is wrong or temporarily unavailable,
   // an exact unique scheduled timestamp must still recover the correct static
   // course across the line's directions.
   {

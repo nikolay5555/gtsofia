@@ -99,7 +99,7 @@
       normalizeStopKey(stopId),
       String(routeId || "").trim(),
       normalizeDirectionText(destination),
-      Math.floor(timestamp / 60)
+      Math.floor(timestamp)
     ].join("|");
   }
 
@@ -120,6 +120,7 @@
         const scheduledTimestamp = Number(
           time?.matched_scheduled_timestamp
           ?? time?.scheduled_time
+          ?? getRealtimeScheduledTimestamp(time)
         );
         if (!Number.isFinite(actualTimestamp) || !Number.isFinite(scheduledTimestamp)) continue;
 
@@ -327,6 +328,20 @@
     const previousStrength = Number(previous?.match_strength || 0);
     const currentStrength = Number(matchStrength || 0);
 
+    const consumed = previous?.consumed === true
+      || actualTimestamp <= Date.now() / 1000;
+    const consumedCourseKeys = [
+      ...new Set([
+        ...(Array.isArray(previous?.consumed_static_course_keys)
+          ? previous.consumed_static_course_keys
+          : []),
+        ...(previous?.consumed === true && previous?.static_course_key
+          ? [String(previous.static_course_key).trim()]
+          : []),
+        ...(consumed ? [staticCourseKey] : [])
+      ].filter(Boolean))
+    ];
+
     const nextState = {
       ...(previous || {}),
       stop_id: stopId,
@@ -351,8 +366,9 @@
         || ""
       ).trim(),
       consumed_key: previous?.consumed_key || consumedKey,
+      consumed_static_course_keys: consumedCourseKeys,
       last_actual_timestamp: actualTimestamp,
-      consumed: previous?.consumed === true || actualTimestamp <= Date.now() / 1000,
+      consumed,
       expiresAt: Date.now() + REALTIME_COURSE_STATE_TTL_MS
     };
 
@@ -425,6 +441,15 @@
       if (stateStopId !== wantedStopId) continue;
 
       if (String(state?.static_course_key || "").trim() === courseKey) {
+        return true;
+      }
+
+      if (
+        Array.isArray(state?.consumed_static_course_keys)
+        && state.consumed_static_course_keys.some(
+          key => String(key || "").trim() === courseKey
+        )
+      ) {
         return true;
       }
     }
@@ -712,7 +737,8 @@ function findRealtimeStaticMatch(
       const dated = matches.filter(entry =>
         normalizeGtfsDateKey(entry?.time?.service_date) === realtimeStartDate
       );
-      if (dated.length) matches = dated;
+      if (!dated.length) return null;
+      matches = dated;
     }
 
     if (matches.length === 1) {
@@ -723,9 +749,36 @@ function findRealtimeStaticMatch(
       };
     }
 
+    if (matches.length > 1) {
+      // The same static trip_id can have multiple service-date instances in
+      // the board window (especially around midnight). GTFS-RT start_date is
+      // authoritative when present; otherwise choose the nearest static stop
+      // time to the realtime scheduled anchor (time - delay), and finally to
+      // the current instant. Do not reject a valid non-frequency trip merely
+      // because another date instance is also visible in the window.
+      const anchor = getRealtimeScheduledTimestamp(realtimeTime);
+      const actual = Number(realtimeTime?.timestamp);
+      const target = Number.isFinite(anchor)
+        ? anchor
+        : (Number.isFinite(actual) ? actual : Date.now() / 1000);
+
+      matches.sort((left, right) =>
+        Math.abs(Number(left.time?.timestamp) - target)
+        - Math.abs(Number(right.time?.timestamp) - target)
+      );
+
+      if (Number.isFinite(Number(matches[0]?.time?.timestamp))) {
+        return {
+          entry: matches[0],
+          strength: REALTIME_MATCH_STRENGTH.TRIP_ID,
+          method: "trip_id_nearest_service_date"
+        };
+      }
+    }
+
     // For REPLACEMENT the descriptor trip_id is explicitly the static trip
-    // being replaced. Do not guess by timing if the exact static trip cannot
-    // be resolved.
+    // being replaced. Without an exact/dated course it is not safe to guess
+    // a different static trip.
     if (relationship === 5) return null;
   }
 
@@ -833,13 +886,16 @@ function findRealtimeStaticMatchIndex(
   matchedStaticIndexes
 ) {
   const entries = (staticTimes || []).map(time => ({
-    staticRoute: {},
+    staticRoute: { route_id: '__TEST_ROUTE__', direction_key: 'D1' },
     time
   }));
   const matchedKeys = new Set(
     (matchedStaticIndexes || []).size
       ? [...(matchedStaticIndexes || [])]
-        .map(index => getStaticCourseKey({}, staticTimes[index]))
+        .map(index => getStaticCourseKey(
+          { route_id: '__TEST_ROUTE__', direction_key: 'D1' },
+          staticTimes[index]
+        ))
         .filter(Boolean)
       : []
   );
@@ -1794,6 +1850,7 @@ function findRealtimeStaticMatchEntryAcrossDirections(
     }
     const generatedAt = data?.generated_at || Date.now();
     const skippedTrips = Array.isArray(data?.skipped_trips) ? data.skipped_trips : [];
+    const suppressedTrips = Array.isArray(data?.suppressed_trips) ? data.suppressed_trips : [];
 
     // Promote courses whose last known realtime arrival has already passed
     // before building static fallback rows. This closes the gap where the
@@ -1864,8 +1921,23 @@ function findRealtimeStaticMatchEntryAcrossDirections(
                 || '',
               times: route.times
                 .map(time => ({
-                  timestamp: Number(time?.timestamp),
+                  timestamp: Number.isFinite(Number(time?.timestamp))
+                    ? Number(time.timestamp)
+                    : null,
                   trip_id: String(time?.trip_id || route.trip_id || '').trim(),
+                  trip_instance_id: String(
+                    time?.trip_instance_id
+                    || route?.trip_instance_id
+                    || time?.trip_id
+                    || route?.trip_id
+                    || ''
+                  ).trim(),
+                  trip_start_date: String(
+                    time?.trip_start_date
+                    || route?.trip_start_date
+                    || route?.start_date
+                    || ''
+                  ).trim(),
                   trip_start_time: String(
                     time?.trip_start_time
                     || route?.trip_start_time
@@ -1879,6 +1951,33 @@ function findRealtimeStaticMatchEntryAcrossDirections(
                     && Number.isFinite(Number(time?.delay))
                   )
                     ? Number(time.delay)
+                    : (
+                      route?.trip_delay !== null
+                      && route?.trip_delay !== undefined
+                      && Number.isFinite(Number(route.trip_delay))
+                        ? Number(route.trip_delay)
+                        : null
+                    ),
+                  trip_delay: (
+                    time?.trip_delay !== null
+                    && time?.trip_delay !== undefined
+                    && Number.isFinite(Number(time?.trip_delay))
+                  )
+                    ? Number(time.trip_delay)
+                    : (
+                      route?.trip_delay !== null
+                      && route?.trip_delay !== undefined
+                      && Number.isFinite(Number(route.trip_delay))
+                        ? Number(route.trip_delay)
+                        : null
+                    ),
+                  trip_schedule_relationship: Number(
+                    time?.trip_schedule_relationship
+                    ?? route?.schedule_relationship
+                  ),
+                  stop_id: String(time?.stop_id || '').trim(),
+                  stop_sequence: Number.isFinite(Number(time?.stop_sequence))
+                    ? Number(time.stop_sequence)
                     : null,
                   scheduled: false,
                   source: 'realtime',
@@ -1893,7 +1992,10 @@ function findRealtimeStaticMatchEntryAcrossDirections(
                     ? Number(time.scheduled_time)
                     : null
                 }))
-                .filter(time => Number.isFinite(time.timestamp))
+                .filter(time =>
+                  Number.isFinite(Number(time.timestamp))
+                  || Number.isFinite(Number(time.delay))
+                )
             };
           })
           .filter(route => route.times.length)
@@ -1907,13 +2009,38 @@ function findRealtimeStaticMatchEntryAcrossDirections(
       );
     }
 
+    const metroRoutes = getMetroScheduledArrivals(stop);
+    const scheduledSurfaceRoutes = isMetroStop(stop)
+      ? []
+      : getSurfaceScheduledArrivals(stop, skippedTrips, suppressedTrips);
+
+    const realtimeRoutesForSelectedStop = realtimeRoutes
+      .map(route => ({
+        ...route,
+        times: (route.times || []).filter(time => {
+          if (time.stop_id) {
+            return stopIdsMatch(time.stop_id, stop.stop_id);
+          }
+
+          const sequence = Number(time.stop_sequence);
+          if (!Number.isFinite(sequence)) return false;
+
+          return scheduledSurfaceRoutes.some(staticRoute =>
+            String(staticRoute?.route_id || '').trim()
+              === String(route?.route_id || '').trim()
+            && staticRoute.times?.some(staticTime =>
+              Number(staticTime?.stop_sequence) === sequence
+            )
+          );
+        })
+      }))
+      .filter(route => route.times.length);
+
     const realtime = {
       status: data?.status || 'empty',
       generatedAt,
-      routes: isMetroStop(stop) ? [] : realtimeRoutes
+      routes: isMetroStop(stop) ? [] : realtimeRoutesForSelectedStop
     };
-    const metroRoutes = getMetroScheduledArrivals(stop);
-    const scheduledSurfaceRoutes = isMetroStop(stop) ? [] : getSurfaceScheduledArrivals(stop, skippedTrips);
 
     const mergedRealtime = new Map();
 
@@ -1966,12 +2093,42 @@ function findRealtimeStaticMatchEntryAcrossDirections(
         ...(route.times || []).map(time => ({
           ...time,
           trip_id: String(time?.trip_id || route.trip_id || '').trim(),
+          trip_instance_id: String(
+            time?.trip_instance_id
+            || route?.trip_instance_id
+            || time?.trip_id
+            || route?.trip_id
+            || ''
+          ).trim(),
+          trip_start_date: String(
+            time?.trip_start_date
+            || route?.trip_start_date
+            || route?.start_date
+            || ''
+          ).trim(),
           trip_start_time: String(
             time?.trip_start_time
             || route?.trip_start_time
             || route?.start_time
             || ''
-          ).trim()
+          ).trim(),
+          trip_schedule_relationship: Number(
+            time?.trip_schedule_relationship
+            ?? route?.schedule_relationship
+          ),
+          trip_delay: (
+            time?.trip_delay !== null
+            && time?.trip_delay !== undefined
+            && Number.isFinite(Number(time.trip_delay))
+          )
+            ? Number(time.trip_delay)
+            : (
+              route?.trip_delay !== null
+              && route?.trip_delay !== undefined
+              && Number.isFinite(Number(route.trip_delay))
+                ? Number(route.trip_delay)
+                : null
+            )
         }))
       );
     }
@@ -1986,7 +2143,6 @@ function findRealtimeStaticMatchEntryAcrossDirections(
         const allRouteStaticEntries = scheduledSurfaceRoutes
           .filter(staticRoute => {
             if (String(staticRoute?.route_id || '').trim() !== routeId) return false;
-
             const staticRef = String(staticRoute?.route_ref || '').trim();
             return !routeRef || !staticRef || staticRef === routeRef;
           })
@@ -1994,10 +2150,6 @@ function findRealtimeStaticMatchEntryAcrossDirections(
             (staticRoute.times || []).map(time => ({ staticRoute, time }))
           );
 
-        // This is the set of static rows that may be displayed alongside this
-        // realtime group after matching. We deliberately derive it from the
-        // final matched direction rather than trusting an unstable realtime
-        // destination/direction field.
         let displayDirectionKey = String(route?.direction_key || '').trim();
         const matchedDirections = new Map();
         const combinedTimes = [];
@@ -2011,10 +2163,6 @@ function findRealtimeStaticMatchEntryAcrossDirections(
           );
 
           if (!match?.entry) {
-            // Delay-only scheduled StopTimeEvents cannot be materialized until
-            // they are matched to static GTFS. NEW/UNSCHEDULED require an
-            // absolute time, while an unmatched standard trip is not safe to
-            // duplicate against the timetable.
             if (Number.isFinite(Number(realtimeTime?.timestamp))) {
               combinedTimes.push(realtimeTime);
             }
@@ -2026,7 +2174,6 @@ function findRealtimeStaticMatchEntryAcrossDirections(
           const courseKey = getStaticCourseKey(entry.staticRoute, staticTime);
           if (!courseKey) continue;
 
-          // The same static course can only be represented once in the board.
           matchedStaticCourseKeys.add(courseKey);
 
           realtimeTime.matched_scheduled_timestamp = Number(staticTime.timestamp);
@@ -2040,9 +2187,12 @@ function findRealtimeStaticMatchEntryAcrossDirections(
 
           combinedTimes.push(realtimeTime);
 
-          const key = String(entry.staticRoute?.direction_key || '').trim();
-          if (key) {
-            matchedDirections.set(key, (matchedDirections.get(key) || 0) + 1);
+          const matchedDirection = String(entry.staticRoute?.direction_key || '').trim();
+          if (matchedDirection) {
+            matchedDirections.set(
+              matchedDirection,
+              (matchedDirections.get(matchedDirection) || 0) + 1
+            );
           }
 
           rememberRealtimeCourseAssignment(
@@ -2054,6 +2204,14 @@ function findRealtimeStaticMatchEntryAcrossDirections(
             match.strength
           );
         }
+
+        // Persist the exact static anchors before any static rows are appended
+        // to this same realtime group. This makes the merge atomic: a course
+        // cannot be rendered once as realtime and again as static in one fetch.
+        rememberConsumedRealtimeArrivals(stop, [{
+          ...route,
+          times: route.times || []
+        }]);
 
         if (matchedDirections.size) {
           displayDirectionKey = [...matchedDirections.entries()]
@@ -2077,6 +2235,26 @@ function findRealtimeStaticMatchEntryAcrossDirections(
           for (const staticTime of staticRoute.times || []) {
             const courseKey = getStaticCourseKey(staticRoute, staticTime);
             if (!courseKey || matchedStaticCourseKeys.has(courseKey)) continue;
+
+            const staticDestination = String(
+              staticRoute?.destination || route?.destination || ''
+            ).trim();
+
+            // A course consumed in an earlier snapshot or by the legacy exact
+            // timestamp anchor must never be reintroduced into the realtime
+            // group while the next arrival is still pending.
+            if (
+              isStaticCourseConsumed(stop.stop_id, staticRoute, staticTime)
+              || isConsumedRealtimeScheduledArrival(
+                stop.stop_id,
+                routeId,
+                staticDestination,
+                staticTime.timestamp
+              )
+            ) {
+              continue;
+            }
+
             combinedTimes.push(staticTime);
           }
         }
@@ -2091,7 +2269,8 @@ function findRealtimeStaticMatchEntryAcrossDirections(
             ...route,
             direction_key: displayDirectionKey,
             destination: displayStaticRoute.destination || route.destination,
-            terminal_stop_id: displayStaticRoute.terminal_stop_id || route.terminal_stop_id
+            terminal_stop_id: displayStaticRoute.terminal_stop_id || route.terminal_stop_id,
+            direction_id: displayStaticRoute.direction_id || route.direction_id
           };
         }
 
@@ -2103,6 +2282,7 @@ function findRealtimeStaticMatchEntryAcrossDirections(
         };
       })
       .filter(route => route.times.length);
+
 
     function directionPatternsShareLongPrefix(shortDirection, longDirection, selectedStopId) {
 
@@ -2264,15 +2444,9 @@ function findRealtimeStaticMatchEntryAcrossDirections(
       return false;
     }
 
-    // A realtime row suppresses its own logical direction. It may also
-    // suppress a longer scheduled direction when the realtime course belongs
-    // to a shorter direction whose stop pattern is a true prefix of that
-    // longer route (an operational short-turn such as trolley 3).
-    // Persist a passed realtime course before static fallback is built. The API
-    // keeps the passed stop update briefly, so this records the exact static
-    // course it replaced and prevents that course from resurrecting afterwards.
-    rememberConsumedRealtimeArrivals(stop, mergedSurfaceRoutes);
-
+    // The realtime/static merge above persists course anchors before it
+    // appends static rows. Static fallback below therefore sees one consistent
+    // course state for the whole fetch.
     const realtimeLogicalRoutes = mergedSurfaceRoutes.filter(route =>
       String(route.direction_key || '').trim()
     );
@@ -2343,6 +2517,12 @@ function findRealtimeStaticMatchEntryAcrossDirections(
             return (
               !matchedStaticCourseKeys.has(courseKey)
               && !isStaticCourseConsumed(stop.stop_id, route, time)
+              && !isConsumedRealtimeScheduledArrival(
+                stop.stop_id,
+                route.route_id,
+                route.destination,
+                time.timestamp
+              )
             );
           });
 

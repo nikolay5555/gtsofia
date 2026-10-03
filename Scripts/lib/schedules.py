@@ -438,6 +438,9 @@ def build_reference_directions(
                 else arrival
             )
 
+            # Keep the legacy compact 'times' field in minutes for existing
+            # schedule-page consumers, but preserve exact GTFS seconds in the
+            # dedicated arrival/departure arrays used by the virtual board.
             times.append(
                 None
                 if effective is None
@@ -446,12 +449,12 @@ def build_reference_directions(
             arrival_times.append(
                 None
                 if arrival is None
-                else arrival // 60
+                else arrival
             )
             departure_times.append(
                 None
                 if departure is None
-                else departure // 60
+                else departure
             )
 
         logical_stop_times.append({

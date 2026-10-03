@@ -1,6 +1,10 @@
 name: Update transport data
 
 on:
+  push:
+    branches:
+      - main
+
   schedule:
     # GitHub schedules are delayed occasionally under load. Use a non-round
     # minute and pin the schedule to Sofia time so DST is handled for us.
