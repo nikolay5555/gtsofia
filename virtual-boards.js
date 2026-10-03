@@ -1982,118 +1982,130 @@ function findRealtimeStaticMatchEntryAcrossDirections(
       .map(route => {
         const routeId = String(route?.route_id || '').trim();
         const routeRef = String(route?.route_ref || '').trim();
-        const realtimeDirectionKey = String(route?.direction_key || '').trim();
 
-        const staticCandidates = scheduledSurfaceRoutes.filter(staticRoute => {
-          if (String(staticRoute?.route_id || '').trim() !== routeId) return false;
-
-          const staticRef = String(staticRoute?.route_ref || '').trim();
-          if (routeRef && staticRef && staticRef !== routeRef) return false;
-
-          const staticDirectionKey = String(staticRoute?.direction_key || '').trim();
-          if (realtimeDirectionKey && staticDirectionKey) {
-            return realtimeDirectionKey === staticDirectionKey;
-          }
-
-          return normalizeDirectionText(staticRoute?.destination || '')
-            === normalizeDirectionText(route?.destination || '');
-        });
-
-        const staticEntries = staticCandidates.flatMap(staticRoute =>
-          (staticRoute.times || []).map(time => ({ staticRoute, time }))
-        );
         const allRouteStaticEntries = scheduledSurfaceRoutes
           .filter(staticRoute => {
             if (String(staticRoute?.route_id || '').trim() !== routeId) return false;
+
             const staticRef = String(staticRoute?.route_ref || '').trim();
             return !routeRef || !staticRef || staticRef === routeRef;
           })
           .flatMap(staticRoute =>
             (staticRoute.times || []).map(time => ({ staticRoute, time }))
           );
-        const staticTimes = staticEntries.map(entry => entry.time);
-        const matchedStaticIndexes = new Set();
-        const combinedTimes = [...(route.times || [])];
+
+        // This is the set of static rows that may be displayed alongside this
+        // realtime group after matching. We deliberately derive it from the
+        // final matched direction rather than trusting an unstable realtime
+        // destination/direction field.
+        let displayDirectionKey = String(route?.direction_key || '').trim();
+        const matchedDirections = new Map();
+        const combinedTimes = [];
 
         for (const realtimeTime of route.times || []) {
-          const matchIndex = findRealtimeStaticMatchIndex(
-            route,
-            realtimeTime,
-            staticTimes,
-            matchedStaticIndexes
-          );
-
-          if (matchIndex >= 0) {
-            matchedStaticIndexes.add(matchIndex);
-
-            const staticTime = staticTimes[matchIndex];
-            realtimeTime.matched_scheduled_timestamp = Number(staticTime.timestamp);
-
-            const entry = staticEntries[matchIndex];
-            const courseKey = entry
-              ? getStaticCourseKey(entry.staticRoute, entry.time)
-              : '';
-            if (courseKey) matchedStaticCourseKeys.add(courseKey);
-
-            if (entry) {
-              rememberRealtimeCourseAssignment(
-                stop,
-                route,
-                realtimeTime,
-                entry.staticRoute,
-                entry.time
-              );
-            }
-            continue;
-          }
-
-          // Direction metadata in GTFS-RT can be temporarily missing or can
-          // resolve to a different static pattern between feed snapshots.
-          // Recover only from exact course identity, never from nearby time.
-          const crossDirectionEntry = findRealtimeStaticMatchEntryAcrossDirections(
+          const match = findRealtimeStaticMatch(
             route,
             realtimeTime,
             allRouteStaticEntries,
             matchedStaticCourseKeys
           );
 
-          if (!crossDirectionEntry) continue;
+          if (!match?.entry) {
+            // Delay-only scheduled StopTimeEvents cannot be materialized until
+            // they are matched to static GTFS. NEW/UNSCHEDULED require an
+            // absolute time, while an unmatched standard trip is not safe to
+            // duplicate against the timetable.
+            if (Number.isFinite(Number(realtimeTime?.timestamp))) {
+              combinedTimes.push(realtimeTime);
+            }
+            continue;
+          }
 
-          const crossDirectionTime = crossDirectionEntry.time;
-          const crossDirectionKey = getStaticCourseKey(
-            crossDirectionEntry.staticRoute,
-            crossDirectionTime
-          );
-          if (!crossDirectionKey) continue;
+          const entry = match.entry;
+          const staticTime = entry.time;
+          const courseKey = getStaticCourseKey(entry.staticRoute, staticTime);
+          if (!courseKey) continue;
 
-          realtimeTime.matched_scheduled_timestamp = Number(crossDirectionTime.timestamp);
-          matchedStaticCourseKeys.add(crossDirectionKey);
+          // The same static course can only be represented once in the board.
+          matchedStaticCourseKeys.add(courseKey);
+
+          realtimeTime.matched_scheduled_timestamp = Number(staticTime.timestamp);
+          realtimeTime.matched_static_course_key = courseKey;
+          realtimeTime.match_strength = match.strength;
+
+          if (!Number.isFinite(Number(realtimeTime.timestamp))) {
+            const materialized = materializeRealtimeTimestamp(realtimeTime, staticTime);
+            if (!Number.isFinite(materialized)) continue;
+          }
+
+          combinedTimes.push(realtimeTime);
+
+          const key = String(entry.staticRoute?.direction_key || '').trim();
+          if (key) {
+            matchedDirections.set(key, (matchedDirections.get(key) || 0) + 1);
+          }
 
           rememberRealtimeCourseAssignment(
             stop,
             route,
             realtimeTime,
-            crossDirectionEntry.staticRoute,
-            crossDirectionTime
+            entry.staticRoute,
+            staticTime,
+            match.strength
           );
         }
 
-        for (let index = 0; index < staticTimes.length; index++) {
-          if (!matchedStaticIndexes.has(index)) {
-            combinedTimes.push(staticTimes[index]);
+        if (matchedDirections.size) {
+          displayDirectionKey = [...matchedDirections.entries()]
+            .sort((left, right) => right[1] - left[1])[0][0];
+        }
+
+        const displayStaticRoutes = scheduledSurfaceRoutes.filter(staticRoute =>
+          String(staticRoute?.route_id || '').trim() === routeId
+          && (
+            !displayDirectionKey
+            || String(staticRoute?.direction_key || '').trim() === displayDirectionKey
+          )
+          && (
+            !routeRef
+            || !String(staticRoute?.route_ref || '').trim()
+            || String(staticRoute?.route_ref || '').trim() === routeRef
+          )
+        );
+
+        for (const staticRoute of displayStaticRoutes) {
+          for (const staticTime of staticRoute.times || []) {
+            const courseKey = getStaticCourseKey(staticRoute, staticTime);
+            if (!courseKey || matchedStaticCourseKeys.has(courseKey)) continue;
+            combinedTimes.push(staticTime);
           }
         }
 
+        let displayRoute = route;
+        const displayStaticRoute = displayStaticRoutes.find(staticRoute =>
+          String(staticRoute?.direction_key || '').trim() === displayDirectionKey
+        );
+
+        if (displayStaticRoute && displayDirectionKey !== String(route?.direction_key || '').trim()) {
+          displayRoute = {
+            ...route,
+            direction_key: displayDirectionKey,
+            destination: displayStaticRoute.destination || route.destination,
+            terminal_stop_id: displayStaticRoute.terminal_stop_id || route.terminal_stop_id
+          };
+        }
+
         return {
-          ...route,
+          ...displayRoute,
           times: combinedTimes
-            .sort((a, b) => Number(a.timestamp) - Number(b.timestamp))
-            .slice(0, 4)
+            .filter(time => Number.isFinite(Number(time?.timestamp)))
+            .sort((left, right) => Number(left.timestamp) - Number(right.timestamp))
         };
       })
       .filter(route => route.times.length);
 
     function directionPatternsShareLongPrefix(shortDirection, longDirection, selectedStopId) {
+
       const shortPattern = Array.isArray(shortDirection?.pattern)
         ? shortDirection.pattern.map(String)
         : [];
