@@ -21,37 +21,66 @@ function field(number, wireType, value) {
 
 const text = value => Buffer.from(String(value), 'utf8');
 
-function encodeTripDescriptor({ tripId, startTime, routeId, scheduleRelationship = 0 }) {
-  return Buffer.concat([
+function encodeTripDescriptor({
+  tripId,
+  startTime,
+  routeId,
+  scheduleRelationship = 0,
+  startDate = '20260930',
+  directionId = null
+}) {
+  const fields = [
     field(1, 2, text(tripId)),
     field(2, 2, text(startTime)),
-    field(3, 2, text('20260930')),
+    field(3, 2, text(startDate)),
     field(4, 0, varint(scheduleRelationship)),
     field(5, 2, text(routeId))
-  ]);
+  ];
+  if (directionId != null) fields.push(field(6, 0, varint(directionId)));
+  return Buffer.concat(fields);
 }
 
-function encodeStopTimeUpdate({ stopId = null, stopSequence = null, relationship, timestamp = null, scheduledTime = null }) {
+function encodeStopTimeUpdate({
+  stopId = null,
+  stopSequence = null,
+  relationship,
+  timestamp = null,
+  scheduledTime = null,
+  delay = null,
+  useDeparture = false
+}) {
   const fields = [];
   if (stopSequence != null) fields.push(field(1, 0, varint(stopSequence)));
   if (stopId != null) fields.push(field(4, 2, text(stopId)));
   fields.push(field(5, 0, varint(relationship)));
 
-  if (timestamp != null || scheduledTime != null) {
+  if (
+    timestamp != null
+    || scheduledTime != null
+    || delay != null
+  ) {
     const eventFields = [];
+    if (delay != null) eventFields.push(field(1, 0, varint(delay < 0 ? (1n << 32n) + BigInt(delay) : delay)));
     if (timestamp != null) eventFields.push(field(2, 0, varint(timestamp)));
     if (scheduledTime != null) eventFields.push(field(3, 0, varint(scheduledTime)));
-    fields.push(field(2, 2, Buffer.concat(eventFields)));
+    fields.push(field(useDeparture ? 3 : 2, 2, Buffer.concat(eventFields)));
   }
 
   return Buffer.concat(fields);
 }
 
-function encodeTripUpdate({ trip, stopUpdates }) {
-  return Buffer.concat([
-    field(1, 2, encodeTripDescriptor(trip)),
-    ...stopUpdates.map(stopUpdate => field(2, 2, encodeStopTimeUpdate(stopUpdate)))
-  ]);
+function encodeTripUpdate({ trip, stopUpdates, delay = null, tripProperties = null }) {
+  const fields = [field(1, 2, encodeTripDescriptor(trip))];
+  fields.push(...stopUpdates.map(stopUpdate => field(2, 2, encodeStopTimeUpdate(stopUpdate))));
+  if (delay != null) fields.push(field(5, 0, varint(delay < 0 ? (1n << 32n) + BigInt(delay) : delay)));
+  if (tripProperties) {
+    const properties = [];
+    if (tripProperties.tripId != null) properties.push(field(1, 2, text(tripProperties.tripId)));
+    if (tripProperties.startDate != null) properties.push(field(2, 2, text(tripProperties.startDate)));
+    if (tripProperties.startTime != null) properties.push(field(3, 2, text(tripProperties.startTime)));
+    fields.push(field(6, 2, Buffer.concat(properties)));
+  }
+  return Buffer.concat(fields);
 }
 
 function encodeEntity(id, tripUpdate) {
@@ -142,13 +171,31 @@ const normalTrip = encodeTripUpdate({
   }]
 });
 
+
+const delayOnlyTrip = encodeTripUpdate({
+  trip: {
+    tripId: 'REALTIME-DELAY-ONLY',
+    startTime: '08:45:00',
+    routeId: 'TB2'
+  },
+  delay: 90,
+  stopUpdates: [{
+    stopId: '0605',
+    relationship: 0,
+    timestamp: null,
+    scheduledTime: null,
+    delay: null
+  }]
+});
+
 const feed = Buffer.concat([
   field(2, 2, encodeEntity('skipped', skippedTrip)),
   field(2, 2, encodeEntity('skipped-sequence', sequenceSkippedTrip)),
   field(2, 2, encodeEntity('no-data', noDataTrip)),
   field(2, 2, encodeEntity('canceled', canceledTrip)),
   field(2, 2, encodeEntity('deleted', deletedTrip)),
-  field(2, 2, encodeEntity('normal', normalTrip))
+  field(2, 2, encodeEntity('normal', normalTrip)),
+  field(2, 2, encodeEntity('delay-only', delayOnlyTrip))
 ]);
 
 global.fetch = async () => ({
@@ -185,6 +232,22 @@ const res = {
   assert.equal(payload.skipped_trips[1].trip_id, 'REALTIME-SKIPPED-SEQUENCE');
   assert.equal(payload.skipped_trips[1].stop_id, '');
   assert.equal(payload.skipped_trips[1].stop_sequence, 24);
+
+  assert.equal(
+    payload.suppressed_trips.length,
+    2,
+    'CANCELED and DELETED trips must be exposed as static suppression signals'
+  );
+  assert.deepEqual(
+    payload.suppressed_trips.map(item => item.trip_id).sort(),
+    ['REALTIME-CANCELED', 'REALTIME-DELETED'],
+    'canceled/deleted trip ids must be retained for exact static suppression'
+  );
+
+  const delayOnly = payload.routes.find(route => route.trip_id === 'REALTIME-DELAY-ONLY');
+  assert.ok(delayOnly, 'delay-only scheduled StopTimeUpdate must be preserved');
+  assert.equal(delayOnly.times[0].timestamp, null);
+  assert.equal(delayOnly.times[0].delay, 90);
 
   assert.equal(
     payload.routes.length,
