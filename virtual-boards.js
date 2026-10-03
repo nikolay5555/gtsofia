@@ -1064,6 +1064,7 @@ const realtimeRoutes = Array.isArray(data?.routes)
       routes: isMetroStop(stop) ? [] : realtimeRoutes
     };
     const metroRoutes = getMetroScheduledArrivals(stop);
+    const scheduledSurfaceRoutes = isMetroStop(stop) ? [] : getSurfaceScheduledArrivals(stop, skippedTrips);
 
     // Realtime rows are kept per trip by the API because Sofia's feed often
     // does not populate direction_id. Merge them back by line + destination
@@ -1194,7 +1195,6 @@ const realtimeRoutes = Array.isArray(data?.routes)
     // replaces the matching static course, while the next scheduled courses
     // remain visible immediately. This mirrors the multi-time board behavior
     // without requiring access to Dimitar's private proxy backend.
-    const scheduledSurfaceRoutes = isMetroStop(stop) ? [] : getSurfaceScheduledArrivals(stop, skippedTrips);
     function directionPatternsShareLongPrefix(shortDirection, longDirection, selectedStopId) {
       const shortPattern = Array.isArray(shortDirection?.pattern)
         ? shortDirection.pattern.map(String)
