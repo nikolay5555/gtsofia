@@ -905,6 +905,7 @@
               times: [{
                 timestamp,
                 trip_id: tripId,
+                original_trip_id: String(schedule?.original_trip_id || '').trim(),
                 start_time: String(schedule?.start_time || '').trim()
               }]
             });
@@ -1155,7 +1156,10 @@ const realtimeRoutes = Array.isArray(data?.routes)
       if (realtimeTripId) {
         const byTripId = staticTimes.findIndex((staticTime, index) =>
           !matchedStaticIndexes.has(index)
-          && String(staticTime?.trip_id || '').trim() === realtimeTripId
+          && (
+            String(staticTime?.trip_id || '').trim() === realtimeTripId
+            || String(staticTime?.original_trip_id || '').trim() === realtimeTripId
+          )
         );
         if (byTripId >= 0) return byTripId;
       }
