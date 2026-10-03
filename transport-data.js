@@ -25,7 +25,6 @@ function modelRouteTypeToGtfs(type) {
         case 'metro':
             return '1';
         case 'bus':
-        case 'night':
             return '3';
         case 'trolley':
         case 'trolleybus':
@@ -610,70 +609,35 @@ function getLineOverride(route) {
 
 
 function getLineType(route) {
-    const modelType = String(route?.type || '').trim().toLowerCase();
+    const type = String(
+        route?.type || ''
+    ).trim().toLowerCase();
 
-    if (modelType === 'bus') {
-        return 'bus';
+    if (
+        type === 'metro' ||
+        type === 'tram' ||
+        type === 'trolley' ||
+        type === 'bus'
+    ) {
+        return type;
     }
 
-    if (modelType === 'trolley') {
-        return 'trolley';
-    }
-
-    if (modelType === 'tram') {
-        return 'tram';
-    }
-
-    if (modelType === 'metro') {
-        return 'metro';
-    }
-
-    const override = getLineOverride(route);
-
-    if (override?.type) {
-        return String(override.type).trim().toLowerCase() === 'trolleybus'
-            ? 'trolley'
-            : String(override.type).trim().toLowerCase();
-    }
-
-    return getTransportType(
-        route.route_type
-    );
+    return 'other';
 }
 
 
 function getLineSubtype(route) {
-    const subtype = String(route?.subtype || '').trim().toLowerCase();
-    if (subtype) {
-        return subtype;
-    }
+    const subtype = String(
+        route?.subtype || ''
+    ).trim().toLowerCase();
 
-    const number = String(
-        route?.route_short_name || route?.route_ref || ''
-    ).trim().toUpperCase();
-
-    if (number.startsWith('N')) {
-        return 'night';
-    }
-
-    if (number.startsWith('У') || number.startsWith('Y')) {
-        return 'school';
-    }
-
-    const baseType = getLineType(route);
-    if (
-        baseType === 'bus' &&
-        (
-            number.endsWith('ТБ') ||
-            number.endsWith('ТМ') ||
-            number.startsWith('М') ||
-            number.startsWith('M')
-        )
-    ) {
-        return 'temporary';
-    }
-
-    return '';
+    return (
+        subtype === 'temporary' ||
+        subtype === 'school' ||
+        subtype === 'night'
+    )
+        ? subtype
+        : '';
 }
 
 
@@ -821,26 +785,9 @@ function convertGtfsRoutes(
     trips,
     directionsData
 ) {
-    const activeRouteIds =
-        new Set(
-            trips
-                .map(
-                    trip =>
-                        String(
-                            trip.route_id || ''
-                        ).trim()
-                )
-                .filter(Boolean)
-        );
-
+    // routes.json is already filtered and normalized by the generator.
+    // Do not derive route activity or transport types again in the browser.
     return routes
-        .filter(route =>
-            activeRouteIds.has(
-                String(
-                    route.route_id || ''
-                ).trim()
-            )
-        )
         .map(route => {
 
             const routeId =
