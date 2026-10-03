@@ -489,6 +489,22 @@ assert.equal(
 
 }
 
+  // Exact scheduled arrival time must outrank an ambiguous shared trip start
+  // time, otherwise a realtime course can be bound to the wrong direction.
+  assert.equal(
+    internals.findRealtimeStaticMatchIndex(
+      { trip_id: 'RT-SAME-START', trip_start_time: '12:00:00' },
+      { trip_id: 'RT-SAME-START', timestamp: 1_001_050, scheduled_time: 1_001_000, delay: 50 },
+      [
+        { original_trip_id: 'WRONG-DIRECTION', timestamp: 1_000_940, start_time: '12:00:00' },
+        { original_trip_id: 'RIGHT-DIRECTION', timestamp: 1_001_000, start_time: '12:00:00' }
+      ],
+      new Set()
+    ),
+    1,
+    'exact scheduled arrival timestamp must beat an ambiguous shared trip start time'
+  );
+
   assert.equal(
     internals.getStaticCourseKey(
       {
@@ -503,7 +519,41 @@ assert.equal(
     'matched static courses must have a stable route/direction/timestamp key'
   );
 
-  // Lifecycle regression: an early realtime course must remain attached to
+    // When the realtime direction key is wrong or temporarily unavailable,
+  // an exact unique scheduled timestamp must still recover the correct static
+  // course across the line's directions.
+  {
+    const entries = [
+      {
+        staticRoute: { route_id: 'ROUTE-X', route_ref: '9', direction_key: 'D1', destination: 'A' },
+        time: { original_trip_id: 'STATIC-X', timestamp: 4_000_100, start_time: '18:00:00' }
+      },
+      {
+        staticRoute: { route_id: 'ROUTE-X', route_ref: '9', direction_key: 'D2', destination: 'B' },
+        time: { original_trip_id: 'STATIC-Y', timestamp: 4_000_200, start_time: '18:00:00' }
+      }
+    ];
+
+    const matched = internals.findRealtimeStaticMatchEntryAcrossDirections(
+      { route_id: 'ROUTE-X', route_ref: '9' },
+      {
+        trip_id: 'REALTIME-X',
+        timestamp: 3_999_990,
+        scheduled_time: 4_000_200,
+        delay: -210
+      },
+      entries,
+      new Set()
+    );
+
+    assert.equal(
+      matched?.time?.original_trip_id,
+      'STATIC-Y',
+      'a unique exact scheduled timestamp must recover a course despite wrong direction metadata'
+    );
+  }
+
+// Lifecycle regression: an early realtime course must remain attached to
   // its static course after the realtime update disappears just after passing.
   {
     const lifecycleStop = { stop_id: '0687' };

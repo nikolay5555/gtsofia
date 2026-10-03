@@ -508,6 +508,7 @@ function findRealtimeStaticMatchIndex(realtimeRoute, realtimeTime, staticTimes, 
     realtimeTime?.trip_id || realtimeRoute?.trip_id || ''
   ).trim();
 
+  // Concrete GTFS trip identity is the strongest match.
   if (realtimeTripId) {
     const index = staticTimes.findIndex((staticTime, i) =>
       !matchedStaticIndexes.has(i)
@@ -516,6 +517,20 @@ function findRealtimeStaticMatchIndex(realtimeRoute, realtimeTime, staticTimes, 
     if (index >= 0) return index;
   }
 
+  // The scheduled arrival timestamp is the exact course anchor at this stop.
+  // Prefer it over trip_start_time: two directions can legitimately start at
+  // the same time, while their arrival timestamps at the selected stop differ.
+  const realtimeScheduledTimestamp = getRealtimeScheduledTimestamp(realtimeTime);
+  if (Number.isFinite(realtimeScheduledTimestamp)) {
+    const index = staticTimes.findIndex((staticTime, i) =>
+      !matchedStaticIndexes.has(i)
+      && Number(staticTime?.timestamp) === realtimeScheduledTimestamp
+    );
+    if (index >= 0) return index;
+  }
+
+  // Finally fall back to the trip's GTFS start time when the feed does not
+  // expose a usable scheduled stop timestamp.
   const realtimeStartTime = String(
     realtimeTime?.trip_start_time
     || realtimeTime?.start_time
@@ -533,15 +548,45 @@ function findRealtimeStaticMatchIndex(realtimeRoute, realtimeTime, staticTimes, 
     if (index >= 0) return index;
   }
 
-  const realtimeScheduledTimestamp = getRealtimeScheduledTimestamp(realtimeTime);
-  if (Number.isFinite(realtimeScheduledTimestamp)) {
-    return staticTimes.findIndex((staticTime, i) =>
-      !matchedStaticIndexes.has(i)
-      && Number(staticTime?.timestamp) === realtimeScheduledTimestamp
+  return -1;
+}
+
+function findRealtimeStaticMatchEntryAcrossDirections(
+  realtimeRoute,
+  realtimeTime,
+  staticEntries,
+  matchedStaticCourseKeys
+) {
+  const realtimeTripId = String(
+    realtimeTime?.trip_id || realtimeRoute?.trip_id || ''
+  ).trim();
+
+  const candidates = (staticEntries || []).filter(entry => {
+    const courseKey = getStaticCourseKey(entry?.staticRoute, entry?.time);
+    return courseKey && !matchedStaticCourseKeys.has(courseKey);
+  });
+
+  // If direction metadata was temporarily incomplete or wrong, concrete trip
+  // identity can still bind the realtime course to the correct static row.
+  if (realtimeTripId) {
+    const tripMatches = candidates.filter(entry =>
+      String(entry?.time?.original_trip_id || '').trim() === realtimeTripId
     );
+    if (tripMatches.length === 1) return tripMatches[0];
   }
 
-  return -1;
+  // An exact scheduled timestamp at the selected stop is also safe across
+  // directions. Require uniqueness so simultaneous directions are never
+  // guessed into one another.
+  const scheduledTimestamp = getRealtimeScheduledTimestamp(realtimeTime);
+  if (Number.isFinite(scheduledTimestamp)) {
+    const timestampMatches = candidates.filter(entry =>
+      Number(entry?.time?.timestamp) === scheduledTimestamp
+    );
+    if (timestampMatches.length === 1) return timestampMatches[0];
+  }
+
+  return null;
 }
 
   function normalizeProxyStopCode(stop) {
@@ -1494,6 +1539,15 @@ function findRealtimeStaticMatchIndex(realtimeRoute, realtimeTime, staticTimes, 
         const staticEntries = staticCandidates.flatMap(staticRoute =>
           (staticRoute.times || []).map(time => ({ staticRoute, time }))
         );
+        const allRouteStaticEntries = scheduledSurfaceRoutes
+          .filter(staticRoute => {
+            if (String(staticRoute?.route_id || '').trim() !== routeId) return false;
+            const staticRef = String(staticRoute?.route_ref || '').trim();
+            return !routeRef || !staticRef || staticRef === routeRef;
+          })
+          .flatMap(staticRoute =>
+            (staticRoute.times || []).map(time => ({ staticRoute, time }))
+          );
         const staticTimes = staticEntries.map(entry => entry.time);
         const matchedStaticIndexes = new Set();
         const combinedTimes = [...(route.times || [])];
@@ -1506,28 +1560,59 @@ function findRealtimeStaticMatchIndex(realtimeRoute, realtimeTime, staticTimes, 
             matchedStaticIndexes
           );
 
-          if (matchIndex < 0) continue;
+          if (matchIndex >= 0) {
+            matchedStaticIndexes.add(matchIndex);
 
-          matchedStaticIndexes.add(matchIndex);
+            const staticTime = staticTimes[matchIndex];
+            realtimeTime.matched_scheduled_timestamp = Number(staticTime.timestamp);
 
-          const staticTime = staticTimes[matchIndex];
-          realtimeTime.matched_scheduled_timestamp = Number(staticTime.timestamp);
+            const entry = staticEntries[matchIndex];
+            const courseKey = entry
+              ? getStaticCourseKey(entry.staticRoute, entry.time)
+              : '';
+            if (courseKey) matchedStaticCourseKeys.add(courseKey);
 
-          const entry = staticEntries[matchIndex];
-          const courseKey = entry
-            ? getStaticCourseKey(entry.staticRoute, entry.time)
-            : '';
-          if (courseKey) matchedStaticCourseKeys.add(courseKey);
-
-          if (entry) {
-            rememberRealtimeCourseAssignment(
-              stop,
-              route,
-              realtimeTime,
-              entry.staticRoute,
-              entry.time
-            );
+            if (entry) {
+              rememberRealtimeCourseAssignment(
+                stop,
+                route,
+                realtimeTime,
+                entry.staticRoute,
+                entry.time
+              );
+            }
+            continue;
           }
+
+          // Direction metadata in GTFS-RT can be temporarily missing or can
+          // resolve to a different static pattern between feed snapshots.
+          // Recover only from exact course identity, never from nearby time.
+          const crossDirectionEntry = findRealtimeStaticMatchEntryAcrossDirections(
+            route,
+            realtimeTime,
+            allRouteStaticEntries,
+            matchedStaticCourseKeys
+          );
+
+          if (!crossDirectionEntry) continue;
+
+          const crossDirectionTime = crossDirectionEntry.time;
+          const crossDirectionKey = getStaticCourseKey(
+            crossDirectionEntry.staticRoute,
+            crossDirectionTime
+          );
+          if (!crossDirectionKey) continue;
+
+          realtimeTime.matched_scheduled_timestamp = Number(crossDirectionTime.timestamp);
+          matchedStaticCourseKeys.add(crossDirectionKey);
+
+          rememberRealtimeCourseAssignment(
+            stop,
+            route,
+            realtimeTime,
+            crossDirectionEntry.staticRoute,
+            crossDirectionTime
+          );
         }
 
         for (let index = 0; index < staticTimes.length; index++) {
