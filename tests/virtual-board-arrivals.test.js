@@ -13,6 +13,12 @@ assert.equal(
 );
 
 assert.equal(
+  (source.match(/rememberConsumedRealtimeArrivals\(stop, mergedSurfaceRoutes\);/g) || []).length,
+  1,
+  'a passed realtime course must be persisted before static fallback is evaluated'
+);
+
+assert.equal(
   source.includes('realtimeSupportedRouteIds.has(routeId)'),
   false,
   'a realtime trip elsewhere on the line must not suppress static departures at this stop'
