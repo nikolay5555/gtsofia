@@ -285,7 +285,8 @@
       return {
         id,
         number,
-        type: /^N/i.test(number) ? "night" : "bus",
+        type: "bus",
+        subtype: /^N/i.test(number) ? "night" : "",
         icon: "",
         color: "#BE1E2D",
         textColor: "#FFFFFF"
