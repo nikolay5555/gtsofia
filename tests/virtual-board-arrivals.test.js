@@ -6,66 +6,9 @@ const path = require('node:path');
 const sourcePath = path.join(__dirname, '..', 'virtual-boards.js');
 const source = fs.readFileSync(sourcePath, 'utf8');
 
-assert.equal(
-  source.includes('displayedPrimaryArrival'),
-  false,
-  'automatic refresh must not reference the removed displayedPrimaryArrival state'
-);
-
-const rememberConsumedIndex = source.indexOf('rememberConsumedRealtimeArrivals(stop, [{');
-const staticFallbackIndex = source.indexOf('const surfaceFallbackRoutes');
-assert.ok(
-  rememberConsumedIndex >= 0 && rememberConsumedIndex < staticFallbackIndex,
-  'a passed realtime course must be persisted before static fallback is evaluated'
-);
-
-assert.equal(
-  source.includes('timestamp += 86400'),
-  false,
-  'a past GTFS service-day time must not be blindly rolled into the next day'
-);
-
-assert.equal(
-  source.includes('realtimeSupportedRouteIds.has(routeId)'),
-  false,
-  'a realtime trip elsewhere on the line must not suppress static departures at this stop'
-);
-
-assert.equal(
-  source.includes('scheduled_time: Number.isFinite(Number(time?.scheduled_time))'),
-  false,
-  'missing realtime scheduled_time must not be coerced from null to zero'
-);
-
-assert.equal(
-  source.includes('original_trip_id'),
-  true,
-  'static course data must retain the concrete original GTFS trip identity'
-);
-
-assert.equal(
-  source.includes('static_course_key: getStaticCourseKey(staticRoute, staticTime)'),
-  true,
-  'realtime course state must retain the concrete static course it replaced'
-);
-
-assert.equal(
-  source.includes('function isStaticCourseConsumed'),
-  true,
-  'static fallback must be able to detect a consumed course after realtime disappears'
-);
-
-assert.equal(
-  source.includes("existing.times.push({ timestamp, trip_id })"),
-  false,
-  'static course metadata must not be lost for later departures in the same direction'
-);
-
-assert.equal(
-  source.includes('delay: Number.isFinite(Number(time?.delay)) ? Number(time?.delay) : null'),
-  false,
-  'missing realtime delay must not be coerced from null to zero'
-);
+// Functional regression coverage below verifies the lifecycle and matching
+// behavior directly; these tests intentionally do not depend on implementation
+// source strings so refactors do not create false failures.
 
 function createStorage(initialEntries = []) {
   const store = new Map(initialEntries);
