@@ -424,7 +424,7 @@
     const live = showLive ? '<span class="vb-arrival-live" aria-hidden="true"></span>' : '';
     const countdown = formatArrivalCountdown(timestamp);
 
-    return `<div class="vb-arrival-main">${live}<span class="vb-arrival-clock">${escapeHtml(clock)}</span><span class="vb-arrival-separator" aria-hidden="true">·</span><span class="vb-arrival-minutes" data-arrival-timestamp="${timestamp}">${escapeHtml(countdown)}</span></div>`;
+    return `<div class="vb-arrival-main">${live}<span class="vb-arrival-clock">${escapeHtml(clock)}</span><span class="vb-arrival-separator" aria-hidden="true">·</span><span class="vb-arrival-minutes" data-arrival-timestamp="${timestamp}">${escapeHtml(countdown)}</span>${dimitarExtrasIconHtml(arrival?.extras)}</div>`;
   }
 
   function normalizeStopKey(value) {
