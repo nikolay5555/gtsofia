@@ -116,8 +116,8 @@
 
       const destination = String(route?.destination || "").trim();
       for (const time of route?.times || []) {
-        const actualTimestamp = Number(time?.timestamp);
-        const scheduledTimestamp = Number(
+        const actualTimestamp = optionalFiniteNumber(time?.timestamp);
+        const scheduledTimestamp = optionalFiniteNumber(
           time?.matched_scheduled_timestamp
           ?? time?.scheduled_time
           ?? getRealtimeScheduledTimestamp(time)
@@ -576,6 +576,17 @@ const REALTIME_MATCH_STRENGTH = Object.freeze({
   START_TIME: 60
 });
 
+function optionalFiniteNumber(value) {
+  if (
+    value === null
+    || value === undefined
+    || String(value).trim() === ""
+  ) return null;
+
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
 function getRealtimeTripScheduleRelationship(realtimeRoute, realtimeTime) {
   const raw = realtimeTime?.trip_schedule_relationship
     ?? realtimeRoute?.schedule_relationship;
@@ -624,15 +635,9 @@ function normalizeGtfsDateKey(value) {
 }
 
 function getRealtimeScheduledTimestamp(time) {
-  const relationship = Number(time?.trip_schedule_relationship);
+  const relationship = optionalFiniteNumber(time?.trip_schedule_relationship);
   const scheduledRaw = time?.scheduled_time;
-  const scheduledTimestamp = (
-    scheduledRaw !== null
-    && scheduledRaw !== undefined
-    && String(scheduledRaw).trim() !== ""
-  )
-    ? Number(scheduledRaw)
-    : NaN;
+  const scheduledTimestamp = optionalFiniteNumber(scheduledRaw);
 
   // GTFS-RT scheduled_time is defined for NEW/REPLACEMENT/DUPLICATED
   // StopTimeEvents. For normal scheduled trips the authoritative schedule
@@ -650,18 +655,8 @@ function getRealtimeScheduledTimestamp(time) {
     return scheduledTimestamp;
   }
 
-  const actualRaw = time?.timestamp;
-  const delayRaw = time?.delay;
-  const actualTimestamp = (
-    actualRaw !== null
-    && actualRaw !== undefined
-    && String(actualRaw).trim() !== ""
-  ) ? Number(actualRaw) : NaN;
-  const delay = (
-    delayRaw !== null
-    && delayRaw !== undefined
-    && String(delayRaw).trim() !== ""
-  ) ? Number(delayRaw) : NaN;
+  const actualTimestamp = optionalFiniteNumber(time?.timestamp);
+  const delay = optionalFiniteNumber(time?.delay);
   if (Number.isFinite(actualTimestamp) && Number.isFinite(delay)) {
     return actualTimestamp - delay;
   }
@@ -670,12 +665,13 @@ function getRealtimeScheduledTimestamp(time) {
 }
 
 function materializeRealtimeTimestamp(realtimeTime, staticTime) {
-  if (Number.isFinite(Number(realtimeTime?.timestamp))) {
-    return Number(realtimeTime.timestamp);
+  const actualTimestamp = optionalFiniteNumber(realtimeTime?.timestamp);
+  if (actualTimestamp !== null) {
+    return actualTimestamp;
   }
 
-  const scheduledTimestamp = Number(staticTime?.timestamp);
-  const delay = Number(realtimeTime?.delay);
+  const scheduledTimestamp = optionalFiniteNumber(staticTime?.timestamp);
+  const delay = optionalFiniteNumber(realtimeTime?.delay);
   if (
     Number.isFinite(scheduledTimestamp)
     && Number.isFinite(delay)
@@ -2194,9 +2190,7 @@ function findRealtimeStaticMatchEntryAcrossDirections(
                 || '',
               times: route.times
                 .map(time => ({
-                  timestamp: Number.isFinite(Number(time?.timestamp))
-                    ? Number(time.timestamp)
-                    : null,
+                  timestamp: optionalFiniteNumber(time?.timestamp),
                   trip_id: String(time?.trip_id || route.trip_id || '').trim(),
                   trip_instance_id: String(
                     time?.trip_instance_id
@@ -2249,9 +2243,7 @@ function findRealtimeStaticMatchEntryAcrossDirections(
                     ?? route?.schedule_relationship
                   ),
                   stop_id: String(time?.stop_id || '').trim(),
-                  stop_sequence: Number.isFinite(Number(time?.stop_sequence))
-                    ? Number(time.stop_sequence)
-                    : null,
+                  stop_sequence: optionalFiniteNumber(time?.stop_sequence),
                   scheduled: false,
                   source: 'realtime',
                   stop_schedule_relationship: Number(time?.stop_schedule_relationship),
@@ -2475,7 +2467,7 @@ function findRealtimeStaticMatchEntryAcrossDirections(
           );
 
           if (!match?.entry) {
-            if (Number.isFinite(Number(realtimeTime?.timestamp))) {
+            if (optionalFiniteNumber(realtimeTime?.timestamp) !== null) {
               combinedTimes.push(realtimeTime);
             }
             continue;
@@ -2959,8 +2951,8 @@ function findRealtimeStaticMatchEntryAcrossDirections(
           ...route,
           arrivals: (route.times || [])
             .map(time => ({
-              timestamp: Number(time?.timestamp),
-              delay: Number.isFinite(Number(time?.delay)) ? Number(time.delay) : null,
+              timestamp: optionalFiniteNumber(time?.timestamp),
+              delay: optionalFiniteNumber(time?.delay),
               scheduled: Boolean(time?.scheduled)
             }))
             .filter(time => Number.isFinite(time.timestamp))
