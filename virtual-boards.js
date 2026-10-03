@@ -225,14 +225,11 @@
 
     if (!stopKey || !routeId || (!tripId && !startTime)) return "";
 
-    return [
-      stopKey,
-      routeId,
-      directionKey,
-      tripId,
-      startDate,
-      startTime
-    ].join("|");
+    const identity = tripId
+      ? [tripId, startDate, startTime]
+      : [directionKey, startDate, startTime];
+
+    return [stopKey, routeId, ...identity].join("|");
   }
 
   function rememberRealtimeCourseAssignment(stop, realtimeRoute, realtimeTime, staticRoute, staticTime) {
@@ -260,31 +257,8 @@
     );
 
     realtimeCourseStates.set(key, {
-      stop_id: stopId,
-      route_id: routeId,
-      direction_key: String(
-        realtimeRoute?.direction_key
-        || staticRoute?.direction_key
-        || ""
-      ).trim(),
-      trip_id: String(realtimeTime?.trip_id || realtimeRoute?.trip_id || "").trim(),
-      trip_start_date: String(
-        realtimeTime?.trip_start_date
-        || realtimeRoute?.trip_start_date
-        || realtimeRoute?.start_date
-        || ""
-      ).trim(),
-      trip_start_time: String(
-        realtimeTime?.trip_start_time
-        || realtimeRoute?.trip_start_time
-        || realtimeRoute?.start_time
-        || ""
-      ).trim(),
-      destination,
-      static_course_key: getStaticCourseKey(staticRoute, staticTime),
-      scheduled_timestamp: scheduledTimestamp,
-      last_actual_timestamp: actualTimestamp,
       consumed_key: consumedKey,
+      last_actual_timestamp: actualTimestamp,
       consumed: actualTimestamp <= Date.now() / 1000,
       expiresAt: Date.now() + REALTIME_COURSE_STATE_TTL_MS
     });
