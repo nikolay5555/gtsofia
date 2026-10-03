@@ -33,6 +33,7 @@ function loadInternals(storage) {
     /\n\}\)\(\);\s*$/,
     `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    getRealtimeScheduledTimestamp,\n    findRealtimeStaticMatchIndex,\n    findRealtimeStaticMatch,\n    findRealtimeStaticMatchEntryAcrossDirections,\n    getStaticCourseKey,\n    getStaticScheduleTimeValue,\n    gtfsSecondsToServiceDateTimestamp,\n    realtimeSequenceMatchesStaticRoute,
     getDuplicatedScheduleTimestamp,
+    buildSyntheticRealtimeRoutes,
     getRealtimeCourseStateKey,\n    rememberRealtimeCourseAssignment,\n    promotePassedRealtimeCourseStates,\n    isRealtimeCourseConsumed,
     isStaticCourseConsumed,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
   );
@@ -950,5 +951,41 @@ assert.equal(
     );
   }
 
+
+
+// TripDescriptor.route_id is optional when trip_id uniquely identifies the
+// scheduled trip. The synthetic fallback must therefore derive the route from
+// the matched static trip instead of requiring route_id in realtime.
+{
+  const synthetic = internals.buildSyntheticRealtimeRoutes(
+    [{
+      trip_id: 'STATIC-TRIP',
+      route_id: '',
+      direction_id: '0',
+      schedule_relationship: 0,
+      trip_delay: 0,
+      delay_updates: []
+    }],
+    [{
+      route_id: 'STATIC-ROUTE',
+      route_ref: '9',
+      direction_key: 'D1',
+      direction_id: '0',
+      terminal_stop_id: '9999',
+      destination: 'Тестова посока',
+      times: [{
+        original_trip_id: 'STATIC-TRIP',
+        service_date: '2026-10-03',
+        start_time: '18:00:00',
+        stop_sequence: 10,
+        timestamp: 1791046800
+      }]
+    }],
+    { stop_id: '1000' }
+  );
+
+  assert.equal(synthetic.length, 1, 'trip_id-only realtime updates must still synthesize the static course');
+  assert.equal(synthetic[0].route_id, 'STATIC-ROUTE');
+}
 
 console.log('virtual-board-arrivals: all tests passed');
