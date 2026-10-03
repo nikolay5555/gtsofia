@@ -112,6 +112,52 @@ function loadInternals(storage) {
 const storage = createStorage();
 const internals = loadInternals(storage);
 
+assert.equal(
+  internals.getStaticScheduleTimeValue(
+    {
+      arrival_times: ['08:01:30'],
+      departure_times: ['08:02:00'],
+      times: ['08:02:00']
+    },
+    0
+  ),
+  '08:01:30',
+  'virtual board must prefer GTFS arrival_time at the selected stop'
+);
+
+assert.equal(
+  internals.getStaticScheduleTimeValue(
+    {
+      arrival_times: [null],
+      departure_times: ['08:02:00'],
+      times: ['08:02:00']
+    },
+    0
+  ),
+  '08:02:00',
+  'virtual board must fall back to departure_time when arrival_time is missing'
+);
+
+assert.equal(
+  internals.gtfsSecondsToServiceDateTimestamp(
+    '2026-10-03',
+    25 * 3600 + 30 * 60
+  ),
+  new Date('2026-10-04T01:30:00+03:00').getTime() / 1000,
+  'GTFS service-day time after midnight must stay attached to the service date'
+);
+
+assert.equal(
+  internals.getRealtimeScheduledTimestamp({
+    trip_schedule_relationship: 0,
+    timestamp: 1_000_600,
+    scheduled_time: 1_000_500,
+    delay: 100
+  }),
+  1_000_500,
+  'scheduled trip anchor must come from time minus delay, not forbidden scheduled_time'
+);
+
 const countdownNow = 1_000;
 assert.equal(
   internals.formatArrivalCountdown(countdownNow + 60, countdownNow),
