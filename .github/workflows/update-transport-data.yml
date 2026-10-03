@@ -27,8 +27,18 @@ jobs:
       - name: Generate transport data from official CGM GTFS
         run: python Scripts/generate_transport_data.py
 
-      - name: Validate generator syntax
-        run: python -m py_compile Scripts/generate_transport_data.py
+      - name: Validate Python syntax
+        run: python -m py_compile Scripts/*.py Scripts/lib/*.py
+
+      - name: Run Python tests
+        run: python -m unittest discover -s tests -p "test_*.py"
+
+      - name: Run JavaScript tests
+        run: |
+          node tests/line-overrides.test.js
+          node tests/transport-calendar.test.js
+          node tests/virtual-board-api.test.js
+          node tests/virtual-board-arrivals.test.js
 
       - name: Commit changes
         run: |
