@@ -383,7 +383,6 @@ function getLineDisplayNumber(route) {
 
 function getTransportIcon(type, number, subtype = null) {
     const lineNumber = String(number || '').trim().toUpperCase();
-    if (lineNumber === 'X43') return 'Icons/Active icons/torist-bus.svg';
     if (subtype === 'night') return 'Icons/Active icons/night-bus.svg';
 
     switch (type) {
