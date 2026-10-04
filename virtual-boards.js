@@ -12,7 +12,6 @@
   let clockTimer = null;
   let stopMarkers = null;
   let stopMarkersById = new Map();
-  let selectedStopMarker = null;
   let transportData = null;
   let routeById = new Map();
   let routeMetaById = new Map();
@@ -20,26 +19,39 @@
   let tripById = new Map();
 
   // Realtime stop updates disappear shortly after the vehicle passes the
-  // selected stop. Keep the scheduled time they represented so the static
-  // fallback does not immediately resurrect the same course (e.g. 10:57
-  // realtime for a 10:59 scheduled course).
+  // selected stop. Keep the exact realtime course identity so the static
+  // fallback does not immediately resurrect the same course.
+  //
+  // Use v2 because v1 used destination as part of the identity, which is
+  // incorrect for partial/short-turn courses where RT and static may expose
+  // different passenger-facing destinations for the same GTFS trip.
   const CONSUMED_REALTIME_ARRIVALS_KEY =
-    "gtsofia.virtualBoard.consumedRealtimeArrivals.v1";
+    "gtsofia.virtualBoard.consumedRealtimeArrivals.v2";
 
   const CONSUMED_REALTIME_ARRIVAL_TTL_MS =
     20 * 60 * 1000;
 
-  const consumedRealtimeArrivals = new Map();
-  let consumedRealtimeArrivalsLoaded = false;
+  const consumedRealtimeArrivals =
+    new Map();
 
-  const boardPanel = () =>
-    document.getElementById("virtualBoardBody");
+  let consumedRealtimeArrivalsLoaded =
+    false;
+
+  const boardPanel =
+    () =>
+      document.getElementById(
+        "virtualBoardBody"
+      );
 
   const FAVORITE_STOPS_KEY =
     "gtsofia.favoriteStops";
 
   function loadConsumedRealtimeArrivals() {
-    if (consumedRealtimeArrivalsLoaded) return;
+    if (
+      consumedRealtimeArrivalsLoaded
+    ) {
+      return;
+    }
 
     consumedRealtimeArrivalsLoaded = true;
 
@@ -50,24 +62,38 @@
         );
 
       const stored =
-        JSON.parse(raw || "[]");
+        JSON.parse(
+          raw || "[]"
+        );
 
-      if (!Array.isArray(stored)) {
+      if (
+        !Array.isArray(stored)
+      ) {
         return;
       }
 
-      const now = Date.now();
+      const now =
+        Date.now();
 
-      for (const item of stored) {
+      for (
+        const item
+        of stored
+      ) {
         const key =
-          String(item?.key || "").trim();
+          String(
+            item?.key || ""
+          ).trim();
 
         const expiresAt =
-          Number(item?.expiresAt);
+          Number(
+            item?.expiresAt
+          );
 
         if (
           key
-          && Number.isFinite(expiresAt)
+          && Number.isFinite(
+            expiresAt
+          )
           && expiresAt > now
         ) {
           consumedRealtimeArrivals.set(
@@ -85,24 +111,31 @@
   function pruneConsumedRealtimeArrivals() {
     loadConsumedRealtimeArrivals();
 
-    const now = Date.now();
-    let changed = false;
+    const now =
+      Date.now();
+
+    let changed =
+      false;
 
     for (
       const [
         key,
         expiresAt
-      ] of consumedRealtimeArrivals
+      ]
+      of consumedRealtimeArrivals
     ) {
       if (
-        !Number.isFinite(expiresAt)
+        !Number.isFinite(
+          expiresAt
+        )
         || expiresAt <= now
       ) {
         consumedRealtimeArrivals.delete(
           key
         );
 
-        changed = true;
+        changed =
+          true;
       }
     }
 
@@ -138,20 +171,61 @@
     stopId,
     routeId,
     destination,
-    scheduledTimestamp
+    scheduledTimestamp,
+    tripId = ""
   ) {
     const timestamp =
-      Number(scheduledTimestamp);
+      Number(
+        scheduledTimestamp
+      );
 
-    if (!Number.isFinite(timestamp)) {
+    if (
+      !Number.isFinite(
+        timestamp
+      )
+    ) {
       return "";
     }
 
+    const normalizedStopId =
+      normalizeStopKey(
+        stopId
+      );
+
+    const normalizedRouteId =
+      String(
+        routeId || ""
+      ).trim();
+
+    const normalizedTripId =
+      String(
+        tripId || ""
+      ).trim();
+
+    // Exact course identity: GTFS trip_id.
+    // This is intentionally independent of destination because a partial /
+    // short-turn course can have different passenger-facing destinations in
+    // realtime and static GTFS while still being the same exact trip.
+    if (
+      normalizedTripId
+    ) {
+      return [
+        normalizedStopId,
+        normalizedRouteId,
+        "trip",
+        normalizedTripId
+      ].join("|");
+    }
+
+    // Compatibility fallback when trip_id is missing.
+    // Destination is intentionally NOT part of the fallback identity.
     return [
-      normalizeStopKey(stopId),
-      String(routeId || "").trim(),
-      normalizeDirectionText(destination),
-      Math.floor(timestamp / 60)
+      normalizedStopId,
+      normalizedRouteId,
+      "time",
+      Math.floor(
+        timestamp / 60
+      )
     ].join("|");
   }
 
@@ -172,9 +246,13 @@
       return;
     }
 
-    let changed = false;
+    let changed =
+      false;
 
-    for (const route of realtimeRoutes || []) {
+    for (
+      const route
+      of realtimeRoutes || []
+    ) {
       const routeId =
         String(
           route?.route_id || ""
@@ -189,7 +267,10 @@
           route?.destination || ""
         ).trim();
 
-      for (const time of route?.times || []) {
+      for (
+        const time
+        of route?.times || []
+      ) {
         const scheduledTimestamp =
           Number(
             time?.scheduled_time
@@ -203,20 +284,28 @@
           continue;
         }
 
+        const tripId =
+          String(
+            time?.trip_id
+            || route?.trip_id
+            || ""
+          ).trim();
+
         const key =
           getConsumedRealtimeArrivalKey(
             stopId,
             routeId,
             destination,
-            scheduledTimestamp
+            scheduledTimestamp,
+            tripId
           );
 
         if (!key) {
           continue;
         }
 
-        // Remember the course as soon as we see it as realtime.
-        // Do not wait until actualTimestamp <= now.
+        // Remember the exact realtime course as soon as we see it.
+        // Do not wait for actualTimestamp to pass.
         if (
           consumedRealtimeArrivals.has(
             key
@@ -231,7 +320,8 @@
           + CONSUMED_REALTIME_ARRIVAL_TTL_MS
         );
 
-        changed = true;
+        changed =
+          true;
       }
     }
 
@@ -244,7 +334,8 @@
     stopId,
     routeId,
     destination,
-    scheduledTimestamp
+    scheduledTimestamp,
+    tripId = ""
   ) {
     pruneConsumedRealtimeArrivals();
 
@@ -253,12 +344,15 @@
         stopId,
         routeId,
         destination,
-        scheduledTimestamp
+        scheduledTimestamp,
+        tripId
       );
 
     return (
       !!key
-      && consumedRealtimeArrivals.has(key)
+      && consumedRealtimeArrivals.has(
+        key
+      )
     );
   }
 
@@ -279,31 +373,48 @@
     }
   }
 
-  function isFavoriteStop(stopId) {
+  function isFavoriteStop(
+    stopId
+  ) {
     return getFavoriteStops().some(
       item =>
-        String(item.stop_id)
-        === String(stopId)
+        String(
+          item.stop_id
+        )
+        === String(
+          stopId
+        )
     );
   }
 
-  function setFavoriteStop(stop) {
+  function setFavoriteStop(
+    stop
+  ) {
     const favorites =
       getFavoriteStops();
 
     const index =
       favorites.findIndex(
         item =>
-          String(item.stop_id)
-          === String(stop.stop_id)
+          String(
+            item.stop_id
+          )
+          === String(
+            stop.stop_id
+          )
       );
 
     if (index >= 0) {
-      favorites.splice(index, 1);
+      favorites.splice(
+        index,
+        1
+      );
     } else {
       favorites.push({
         stop_id:
-          String(stop.stop_id),
+          String(
+            stop.stop_id
+          ),
 
         stop_code:
           String(
@@ -323,19 +434,40 @@
 
     localStorage.setItem(
       FAVORITE_STOPS_KEY,
-      JSON.stringify(favorites)
+      JSON.stringify(
+        favorites
+      )
     );
 
     return index < 0;
   }
 
-  function escapeHtml(value) {
-    return String(value ?? "")
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#039;");
+  function escapeHtml(
+    value
+  ) {
+    return String(
+      value ?? ""
+    )
+      .replaceAll(
+        "&",
+        "&amp;"
+      )
+      .replaceAll(
+        "<",
+        "&lt;"
+      )
+      .replaceAll(
+        ">",
+        "&gt;"
+      )
+      .replaceAll(
+        '"',
+        "&quot;"
+      )
+      .replaceAll(
+        "'",
+        "&#039;"
+      );
   }
 
   function getSofiaParts() {
@@ -346,34 +478,50 @@
           timeZone:
             SOFIA_TIME_ZONE,
 
-          weekday: "short",
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-          hourCycle: "h23"
+          weekday:
+            "short",
+
+          hour:
+            "2-digit",
+
+          minute:
+            "2-digit",
+
+          second:
+            "2-digit",
+
+          hourCycle:
+            "h23"
         }
       ).formatToParts(
         new Date()
       );
 
-    const get = type =>
-      parts.find(
-        part =>
-          part.type === type
-      )?.value || "";
+    const get =
+      type =>
+        parts.find(
+          part =>
+            part.type === type
+        )?.value || "";
 
     return {
       weekday:
         get("weekday"),
 
       hour:
-        Number(get("hour")),
+        Number(
+          get("hour")
+        ),
 
       minute:
-        Number(get("minute")),
+        Number(
+          get("minute")
+        ),
 
       second:
-        Number(get("second"))
+        Number(
+          get("second")
+        )
     };
   }
 
@@ -391,7 +539,9 @@
         {
           timeZone:
             SOFIA_TIME_ZONE,
-          weekday: "short"
+
+          weekday:
+            "short"
         }
       ).format(
         new Date()
@@ -422,12 +572,15 @@
     const seconds =
       Math.max(
         0,
-        Number(totalSeconds) || 0
+        Number(
+          totalSeconds
+        ) || 0
       );
 
     const hour =
-      Math.floor(seconds / 3600)
-      % 24;
+      Math.floor(
+        seconds / 3600
+      ) % 24;
 
     const minute =
       Math.floor(
@@ -435,33 +588,56 @@
       );
 
     return (
-      `${String(hour).padStart(2, "0")}:`
-      + `${String(minute).padStart(2, "0")}`
+      `${String(
+        hour
+      ).padStart(
+        2,
+        "0"
+      )}:`
+      + `${String(
+        minute
+      ).padStart(
+        2,
+        "0"
+      )}`
     );
   }
 
-  function parseGtfsTime(value) {
+  function parseGtfsTime(
+    value
+  ) {
     if (!value) {
       return null;
     }
 
     const parts =
-      String(value)
+      String(
+        value
+      )
         .trim()
         .split(":");
 
-    if (parts.length !== 3) {
+    if (
+      parts.length
+      !== 3
+    ) {
       return null;
     }
 
     const hour =
-      Number(parts[0]);
+      Number(
+        parts[0]
+      );
 
     const minute =
-      Number(parts[1]);
+      Number(
+        parts[1]
+      );
 
     const second =
-      Number(parts[2]);
+      Number(
+        parts[2]
+      );
 
     if (
       ![
@@ -482,7 +658,9 @@
     );
   }
 
-  function normalizeProxyStopCode(stop) {
+  function normalizeProxyStopCode(
+    stop
+  ) {
     const rawCode =
       String(
         stop?.stop_code
@@ -499,12 +677,17 @@
 
     const rawId =
       String(
-        stop?.stop_id ?? ""
+        stop?.stop_id
+        ?? ""
       ).trim();
 
     const isMetro =
-      /^M/i.test(rawCode)
-      || /^M/i.test(rawId);
+      /^M/i.test(
+        rawCode
+      )
+      || /^M/i.test(
+        rawId
+      );
 
     const digits =
       rawCode.replace(
@@ -512,12 +695,15 @@
         ""
       );
 
-    const candidates = [];
+    const candidates =
+      [];
 
     if (digits) {
       candidates.push(
         String(
-          Number(digits)
+          Number(
+            digits
+          )
         )
       );
 
@@ -526,7 +712,9 @@
       );
     }
 
-    candidates.push(rawCode);
+    candidates.push(
+      rawCode
+    );
 
     return {
       candidates:
@@ -558,21 +746,31 @@
 
     if (
       id
-      && routeMetaById.has(id)
+      && routeMetaById.has(
+        id
+      )
     ) {
-      return routeMetaById.get(id);
+      return routeMetaById.get(
+        id
+      );
     }
 
     if (
       ref
-      && routeMetaByNumber.has(ref)
+      && routeMetaByNumber.has(
+        ref
+      )
     ) {
-      return routeMetaByNumber.get(ref);
+      return routeMetaByNumber.get(
+        ref
+      );
     }
 
     const route =
       id
-        ? routeById.get(id)
+        ? routeById.get(
+            id
+          )
         : null;
 
     const number =
@@ -582,14 +780,18 @@
 
     if (!route) {
       const subtype =
-        /^N/i.test(number)
+        /^N/i.test(
+          number
+        )
           ? "night"
           : null;
 
       return {
         id,
         number,
-        type: "bus",
+        type:
+          "bus",
+
         subtype,
 
         icon:
@@ -608,13 +810,17 @@
     const type =
       typeof getLineType
       === "function"
-        ? getLineType(route)
+        ? getLineType(
+            route
+          )
         : "bus";
 
     const subtype =
       typeof getLineSubtype
       === "function"
-        ? getLineSubtype(route)
+        ? getLineSubtype(
+            route
+          )
         : null;
 
     const icon =
@@ -657,10 +863,13 @@
     };
   }
 
-  function linePillHtml(line) {
+  function linePillHtml(
+    line
+  ) {
     const number =
       escapeHtml(
-        line?.number || "—"
+        line?.number
+        || "—"
       );
 
     const typeClass =
@@ -690,41 +899,54 @@
     );
   }
 
-  function lineIdentityHtml(line) {
+  function lineIdentityHtml(
+    line
+  ) {
     const icon =
       line?.icon
         ? (
             `<span class="schedule-line-icon">`
-            + `<img src="${escapeHtml(line.icon)}" `
-            + `alt="" aria-hidden="true"></span>`
+            + `<img src="${escapeHtml(
+                line.icon
+              )}" alt="" aria-hidden="true">`
+            + `</span>`
           )
         : "";
 
     return (
       `<span class="schedule-line-identity">`
       + `${icon}`
-      + `${linePillHtml(line)}`
+      + `${linePillHtml(
+          line
+        )}`
       + `</span>`
     );
   }
 
-  function destinationHtml(destination) {
+  function destinationHtml(
+    destination
+  ) {
     return (
-      `<span class="schedule-summary-arrow `
-      + `direction-arrow" aria-hidden="true">`
+      `<span class="schedule-summary-arrow direction-arrow" aria-hidden="true">`
       + `<img src="Icons/destinationarrow.svg" alt="">`
       + `</span>`
-      + `<strong class="schedule-summary-destination `
-      + `vb-destination">`
-      + `${escapeHtml(destination || "—")}`
+      + `<strong class="schedule-summary-destination vb-destination">`
+      + `${escapeHtml(
+          destination
+          || "—"
+        )}`
       + `</strong>`
     );
   }
 
-  function parseGeneratedAt(value) {
+  function parseGeneratedAt(
+    value
+  ) {
     if (
       typeof value === "number"
-      && Number.isFinite(value)
+      && Number.isFinite(
+        value
+      )
     ) {
       return value < 1e12
         ? value * 1000
@@ -733,10 +955,14 @@
 
     const parsed =
       Date.parse(
-        String(value ?? "")
+        String(
+          value ?? ""
+        )
       );
 
-    return Number.isFinite(parsed)
+    return Number.isFinite(
+      parsed
+    )
       ? parsed
       : Date.now();
   }
@@ -745,10 +971,14 @@
     timestamp
   ) {
     const seconds =
-      Number(timestamp);
+      Number(
+        timestamp
+      );
 
     if (
-      !Number.isFinite(seconds)
+      !Number.isFinite(
+        seconds
+      )
     ) {
       return null;
     }
@@ -768,10 +998,14 @@
       Date.now() / 1000
   ) {
     const seconds =
-      Number(timestamp);
+      Number(
+        timestamp
+      );
 
     if (
-      !Number.isFinite(seconds)
+      !Number.isFinite(
+        seconds
+      )
     ) {
       return "";
     }
@@ -779,7 +1013,8 @@
     const remainingSeconds =
       Math.max(
         0,
-        seconds - nowSeconds
+        seconds
+        - nowSeconds
       );
 
     return (
@@ -796,10 +1031,14 @@
     timestamp
   ) {
     const seconds =
-      Number(timestamp);
+      Number(
+        timestamp
+      );
 
     if (
-      !Number.isFinite(seconds)
+      !Number.isFinite(
+        seconds
+      )
     ) {
       return "—";
     }
@@ -810,9 +1049,14 @@
         timeZone:
           SOFIA_TIME_ZONE,
 
-        hour: "2-digit",
-        minute: "2-digit",
-        hourCycle: "h23"
+        hour:
+          "2-digit",
+
+        minute:
+          "2-digit",
+
+        hourCycle:
+          "h23"
       }
     ).format(
       new Date(
@@ -836,7 +1080,9 @@
       );
 
     if (
-      !Number.isFinite(minutes)
+      !Number.isFinite(
+        minutes
+      )
     ) {
       return "";
     }
@@ -863,19 +1109,25 @@
       `<div class="vb-arrival-main">`
       + `${live}`
       + `<span class="vb-arrival-clock">`
-      + `${escapeHtml(clock)}`
+      + `${escapeHtml(
+          clock
+        )}`
       + `</span>`
       + `<span class="vb-arrival-separator" `
       + `aria-hidden="true">·</span>`
       + `<span class="vb-arrival-minutes" `
       + `data-arrival-timestamp="${timestamp}">`
-      + `${escapeHtml(countdown)}`
+      + `${escapeHtml(
+          countdown
+        )}`
       + `</span>`
       + `</div>`
     );
   }
 
-  function normalizeStopKey(value) {
+  function normalizeStopKey(
+    value
+  ) {
     const raw =
       String(
         value ?? ""
@@ -898,7 +1150,8 @@
       );
 
     return (
-      numeric || "0"
+      numeric
+      || "0"
     );
   }
 
@@ -924,13 +1177,18 @@
     }
 
     const leftMetro =
-      /^M/i.test(leftRaw);
+      /^M/i.test(
+        leftRaw
+      );
 
     const rightMetro =
-      /^M/i.test(rightRaw);
+      /^M/i.test(
+        rightRaw
+      );
 
     if (
-      leftMetro !== rightMetro
+      leftMetro
+      !== rightMetro
     ) {
       return false;
     }
@@ -946,21 +1204,29 @@
     }
 
     return (
-      normalizeStopKey(leftRaw)
-      === normalizeStopKey(rightRaw)
+      normalizeStopKey(
+        leftRaw
+      )
+      === normalizeStopKey(
+        rightRaw
+      )
     );
   }
 
-  function isMetroStop(stop) {
+  function isMetroStop(
+    stop
+  ) {
     return (
       /^M/i.test(
         String(
-          stop?.stop_id || ""
+          stop?.stop_id
+          || ""
         ).trim()
       )
       || /^M/i.test(
         String(
-          stop?.stop_code || ""
+          stop?.stop_code
+          || ""
         ).trim()
       )
     );
@@ -976,29 +1242,41 @@
           timeZone:
             SOFIA_TIME_ZONE,
 
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit"
+          year:
+            "numeric",
+
+          month:
+            "2-digit",
+
+          day:
+            "2-digit"
         }
       ).formatToParts(
         date
       );
 
-    const get = type =>
-      parts.find(
-        part =>
-          part.type === type
-      )?.value || "";
+    const get =
+      type =>
+        parts.find(
+          part =>
+            part.type === type
+        )?.value || "";
 
     return {
       year:
-        Number(get("year")),
+        Number(
+          get("year")
+        ),
 
       month:
-        Number(get("month")),
+        Number(
+          get("month")
+        ),
 
       day:
-        Number(get("day"))
+        Number(
+          get("day")
+        )
     };
   }
 
@@ -1023,9 +1301,24 @@
     }
 
     return (
-      `${String(parts.year).padStart(4, "0")}-`
-      + `${String(parts.month).padStart(2, "0")}-`
-      + `${String(parts.day).padStart(2, "0")}`
+      `${String(
+        parts.year
+      ).padStart(
+        4,
+        "0"
+      )}-`
+      + `${String(
+        parts.month
+      ).padStart(
+        2,
+        "0"
+      )}-`
+      + `${String(
+        parts.day
+      ).padStart(
+        2,
+        "0"
+      )}`
     );
   }
 
@@ -1039,7 +1332,8 @@
           timeZone:
             SOFIA_TIME_ZONE,
 
-          weekday: "long"
+          weekday:
+            "long"
         }
       ).format(
         date
@@ -1091,9 +1385,13 @@
       Array.isArray(
         byDate[dateKey]
       )
-      && byDate[dateKey].some(
+      && byDate[
+        dateKey
+      ].some(
         value =>
-          String(value).trim()
+          String(
+            value
+          ).trim()
           === id
       )
     );
@@ -1129,9 +1427,14 @@
           timeZoneName:
             "shortOffset",
 
-          hour: "2-digit",
-          minute: "2-digit",
-          hourCycle: "h23"
+          hour:
+            "2-digit",
+
+          minute:
+            "2-digit",
+
+          hourCycle:
+            "h23"
         }
       ).formatToParts(
         date
@@ -1140,7 +1443,8 @@
     const raw =
       parts.find(
         part =>
-          part.type === "timeZoneName"
+          part.type ===
+          "timeZoneName"
       )?.value
       || "GMT+0";
 
@@ -1161,8 +1465,13 @@
     return (
       sign
       * (
-        Number(match[2]) * 60
-        + Number(match[3] || 0)
+        Number(
+          match[2]
+        ) * 60
+        + Number(
+          match[3]
+          || 0
+        )
       )
       * 60
       * 1000
@@ -1184,9 +1493,13 @@
 
     const candidate =
       baseUtc
-      + Number(seconds) * 1000
+      + Number(
+        seconds
+      ) * 1000
       - getSofiaOffsetMs(
-          new Date(baseUtc)
+          new Date(
+            baseUtc
+          )
         );
 
     return candidate / 1000;
@@ -1197,7 +1510,9 @@
   ) {
     return (
       tripById.get(
-        String(tripId)
+        String(
+          tripId
+        )
       )
       || null
     );
@@ -1206,7 +1521,9 @@
   function normalizeDirectionText(
     value
   ) {
-    return String(value ?? "")
+    return String(
+      value ?? ""
+    )
       .trim()
       .toLocaleLowerCase(
         "bg-BG"
@@ -1242,7 +1559,9 @@
 
     const directions =
       transportData
-        ?.directions?.[routeId]
+        ?.directions?.[
+          routeId
+        ]
       || {};
 
     const tripId =
@@ -1387,7 +1706,9 @@
   function normalizeStopName(
     value
   ) {
-    return String(value ?? "")
+    return String(
+      value ?? ""
+    )
       .trim()
       .toLocaleLowerCase(
         "bg-BG"
@@ -1475,7 +1796,9 @@
 
     const toRad =
       value =>
-        value * Math.PI / 180;
+        value
+        * Math.PI
+        / 180;
 
     const dLat =
       toRad(
@@ -1492,10 +1815,14 @@
         dLat / 2
       ) ** 2
       + Math.cos(
-          toRad(lat1)
+          toRad(
+            lat1
+          )
         )
         * Math.cos(
-          toRad(lat2)
+          toRad(
+            lat2
+          )
         )
         * Math.sin(
           dLon / 2
@@ -1506,7 +1833,9 @@
       * 2
       * Math.atan2(
         Math.sqrt(a),
-        Math.sqrt(1 - a)
+        Math.sqrt(
+          1 - a
+        )
       )
     );
   }
@@ -1526,7 +1855,8 @@
         : [];
 
     if (
-      pattern.length < 2
+      pattern.length
+      < 2
     ) {
       return false;
     }
@@ -1604,7 +1934,9 @@
     const directionSet =
       transportData
         ?.directions?.[
-          String(routeId)
+          String(
+            routeId
+          )
         ]
       || {};
 
@@ -1827,7 +2159,8 @@
       return [];
     }
 
-    const result = [];
+    const result =
+      [];
 
     for (
       const route
@@ -1930,7 +2263,8 @@
           continue;
         }
 
-        const arrivals = [];
+        const arrivals =
+          [];
 
         for (
           const schedule
@@ -1985,7 +2319,10 @@
         }
 
         arrivals.sort(
-          (a, b) =>
+          (
+            a,
+            b
+          ) =>
             a - b
         );
 
@@ -2024,8 +2361,10 @@
               timestamp => ({
                 timestamp,
                 delay: null,
-                scheduled: true,
-                source: "static"
+                scheduled:
+                  true,
+                source:
+                  "static"
               })
             ),
 
@@ -2171,7 +2510,8 @@
 
         if (
           !skippedTripId
-          || scheduleStartTime == null
+          || scheduleStartTime
+            == null
         ) {
           return false;
         }
@@ -2207,7 +2547,8 @@
           );
 
         if (
-          skippedStartTime == null
+          skippedStartTime
+          == null
         ) {
           return false;
         }
@@ -2245,7 +2586,8 @@
       return [];
     }
 
-    const result = [];
+    const result =
+      [];
 
     for (
       const route
@@ -2463,67 +2805,55 @@
             timestamp
             < nowTimestamp
             || timestamp
-            > horizonTimestamp
+              > horizonTimestamp
           ) {
             continue;
           }
 
-const isPartialCourse =
-  !stopIdsMatch(
-    terminalStopId,
-    getDirectionTerminalStopId(
-      direction
-    )
-  );
+          const destination =
+            normalizeDirectionText(
+              direction?.destination
+              || direction?.headsign
+              || terminalStopId
+            );
 
-const terminalStop =
-  getStopById(
-    terminalStopId
-  );
+          if (
+            isSkippedStaticSchedule(
+              schedule,
+              routeId,
+              directionKey,
+              selectedStop,
+              stopIndex,
+              skippedTrips
+            )
+          ) {
+            continue;
+          }
 
-const destination =
-  isPartialCourse
-    ? (
-        terminalStop?.stop_name
-        || direction?.destination
-        || direction?.headsign
-        || ""
-      )
-    : (
-        direction?.destination
-        || direction?.headsign
-        || terminalStop?.stop_name
-        || ""
-      );
+          // IMPORTANT:
+          // Resolve the static trip_id BEFORE checking whether this course
+          // was previously represented by realtime.
+          //
+          // This is what makes partial/short-turn courses match correctly:
+          // the RT and static destinations may differ, but their trip_id is
+          // still the same exact GTFS course.
+          const tripId =
+            String(
+              schedule?.original_trip_id
+              || ""
+            ).trim();
 
-if (
-  isSkippedStaticSchedule(
-    schedule,
-    routeId,
-    directionKey,
-    selectedStop,
-    stopIndex,
-    skippedTrips
-  )
-) {
-  continue;
-}
-
-if (
-  isConsumedRealtimeScheduledArrival(
-    selectedStop,
-    routeId,
-    destination,
-    timestamp
-  )
-) {
-  continue;
-}
-
-const tripId =
-  String(
-    schedule?.original_trip_id || ""
-  ).trim();
+          if (
+            isConsumedRealtimeScheduledArrival(
+              selectedStop,
+              routeId,
+              destination,
+              timestamp,
+              tripId
+            )
+          ) {
+            continue;
+          }
 
           if (
             !rowsByTerminal.has(
@@ -2545,13 +2875,21 @@ const tripId =
             )
             .times.push({
               timestamp,
+
               scheduled_time:
                 timestamp,
+
               trip_id:
                 tripId,
-              delay: null,
-              scheduled: true,
-              source: "static"
+
+              delay:
+                null,
+
+              scheduled:
+                true,
+
+              source:
+                "static"
             });
         }
 
@@ -2593,7 +2931,10 @@ const tripId =
           const uniqueTimes =
             times
               .sort(
-                (a, b) =>
+                (
+                  a,
+                  b
+                ) =>
                   Number(
                     a.timestamp
                   )
@@ -2670,15 +3011,21 @@ const tripId =
 
             meta,
 
-            scheduled: true,
-            source: "static"
+            scheduled:
+              true,
+
+            source:
+              "static"
           });
         }
       }
     }
 
     return result.sort(
-      (a, b) =>
+      (
+        a,
+        b
+      ) =>
         Number(
           a.times?.[0]?.timestamp
         )
@@ -2709,8 +3056,10 @@ const tripId =
           url,
           {
             ...options,
+
             signal:
               controller.signal,
+
             cache:
               "no-store"
           }
@@ -2747,7 +3096,9 @@ const tripId =
     }
 
     const url =
-      `api/virtual-board?stop_code=${encodeURIComponent(stopCode)}`;
+      `api/virtual-board?stop_code=${encodeURIComponent(
+        stopCode
+      )}`;
 
     const {
       response,
@@ -2961,11 +3312,7 @@ const tripId =
                             source:
                               "realtime",
 
-                            // IMPORTANT:
-                            // Keep the trip_id on EVERY realtime arrival.
-                            // After merging multiple RT trips into one board row,
-                            // route.trip_id alone is no longer enough to know which
-                            // exact course an arrival belongs to.
+                            // Keep trip_id on EVERY realtime arrival.
                             trip_id:
                               timeTripId,
 
@@ -3132,18 +3479,25 @@ const tripId =
           key,
           {
             ...route,
+
             source:
               "realtime",
+
             realtime:
               true,
+
             destination,
-            times: []
+
+            times:
+              []
           }
         );
       }
 
       mergedRealtime
-        .get(key)
+        .get(
+          key
+        )
         .times.push(
           ...(route.times || [])
         );
@@ -3160,7 +3514,10 @@ const tripId =
             times:
               route.times
                 .sort(
-                  (a, b) =>
+                  (
+                    a,
+                    b
+                  ) =>
                     Number(
                       a.timestamp
                     )
@@ -3195,9 +3552,11 @@ const tripId =
             route.times.length
         );
 
-    // Preserve the scheduled course behind a realtime arrival that has just
-    // passed. This lets the static fallback jump to the NEXT course instead of
-    // resurrecting the timetable time of the already completed one.
+    // Remember every realtime course immediately.
+    //
+    // The important part is that the identity is trip_id whenever available,
+    // not destination. This prevents a partial/short-turn RT course from being
+    // resurrected as a differently-labelled static course after RT disappears.
     rememberConsumedRealtimeArrivals(
       stop,
       mergedSurfaceRoutes
@@ -3205,10 +3564,8 @@ const tripId =
 
     // Static timetable candidates.
     //
-    // IMPORTANT:
-    // We no longer decide "does this line have realtime somewhere?"
-    // Instead, each individual static course is checked against the actual
-    // realtime arrivals for this stop.
+    // Each individual static course is checked against the actual realtime
+    // courses for this stop.
     const scheduledSurfaceRoutes =
       isMetroStop(stop)
         ? []
@@ -3248,7 +3605,8 @@ const tripId =
         return false;
       }
 
-      let commonPrefix = 0;
+      let commonPrefix =
+        0;
 
       while (
         commonPrefix
@@ -3342,7 +3700,9 @@ const tripId =
 
       const directionSet =
         transportData
-          ?.directions?.[routeId]
+          ?.directions?.[
+            routeId
+          ]
         || {};
 
       const longDirection =
@@ -3417,7 +3777,8 @@ const tripId =
           continue;
         }
 
-        let commonPrefix = 0;
+        let commonPrefix =
+          0;
 
         while (
           commonPrefix
@@ -3436,7 +3797,8 @@ const tripId =
           commonPrefix++;
         }
 
-        let commonSuffix = 0;
+        let commonSuffix =
+          0;
 
         while (
           commonSuffix
@@ -3506,7 +3868,8 @@ const tripId =
 
     // Only operational realtime trips may suppress static fallback.
     // Explicit CANCELED/DELETED trips are not active service.
-    const activeDirections = [];
+    const activeDirections =
+      [];
 
     const seenActiveDirectionKeys =
       new Set();
@@ -3554,8 +3917,10 @@ const tripId =
         ).toUpperCase();
 
       if (
-        relationship === "CANCELED"
-        || relationship === "DELETED"
+        relationship
+          === "CANCELED"
+        || relationship
+          === "DELETED"
       ) {
         continue;
       }
@@ -3744,7 +4109,9 @@ const tripId =
                 === realtimeDestinationKey
             );
 
-          if (!sameDirection) {
+          if (
+            !sameDirection
+          ) {
             return false;
           }
 
@@ -3811,7 +4178,8 @@ const tripId =
     //   181 course C -> RT exists -> remove static C
     //
     // The existence of realtime for the line itself is irrelevant.
-    const surfaceFallbackRoutes = [];
+    const surfaceFallbackRoutes =
+      [];
 
     for (
       const staticRoute
@@ -3846,6 +4214,7 @@ const tripId =
 
       surfaceFallbackRoutes.push({
         ...staticRoute,
+
         times:
           fallbackTimes
       });
@@ -3880,9 +4249,11 @@ const tripId =
           key,
           {
             ...route,
-            times: [
-              ...(route.times || [])
-            ]
+
+            times:
+              [
+                ...(route.times || [])
+              ]
           }
         );
       }
@@ -3907,9 +4278,11 @@ const tripId =
           key,
           {
             ...route,
-            times: [
-              ...(route.times || [])
-            ]
+
+            times:
+              [
+                ...(route.times || [])
+              ]
           }
         );
 
@@ -3936,7 +4309,10 @@ const tripId =
                 || []
               )
                 .sort(
-                  (a, b) =>
+                  (
+                    a,
+                    b
+                  ) =>
                     Number(
                       a.timestamp
                     )
@@ -3971,11 +4347,15 @@ const tripId =
                       tripId
                         ? (
                             `trip|${tripId}|`
-                            + `${Math.floor(timestamp)}`
+                            + `${Math.floor(
+                                timestamp
+                              )}`
                           )
                         : (
                             `time|`
-                            + `${Math.floor(timestamp)}`
+                            + `${Math.floor(
+                                timestamp
+                              )}`
                           );
 
                     if (
@@ -4009,7 +4389,10 @@ const tripId =
             route.times.length
         )
         .sort(
-          (a, b) =>
+          (
+            a,
+            b
+          ) =>
             Number(
               a.times?.[0]?.timestamp
             )
@@ -4091,13 +4474,51 @@ const tripId =
           <div class="virtual-board-kicker">Спирка ${escapeHtml(stop.stop_code || stop.stop_id || "")}</div>
           <h2>${escapeHtml(stop.stop_name || stop.name || "Спирка")}</h2>
         </div>
+
         <div class="virtual-board-header-actions">
-          <button type="button" class="virtual-board-refresh is-loading" id="virtualBoardRefresh" disabled aria-label="Обнови таблото" title="Обнови таблото"><span aria-hidden="true">↻</span></button>
-          <button type="button" class="virtual-board-favorite${isFavoriteStop(stop.stop_id) ? " is-favorite" : ""}" id="virtualBoardFavorite" aria-label="${isFavoriteStop(stop.stop_id) ? "Премахни от любими" : "Добави в любими"}" title="${isFavoriteStop(stop.stop_id) ? "Премахни от любими" : "Добави в любими"}"><span aria-hidden="true">${isFavoriteStop(stop.stop_id) ? "★" : "☆"}</span></button>
-          <button type="button" class="virtual-board-close" id="virtualBoardClose" aria-label="Затвори таблото">×</button>
+          <button
+            type="button"
+            class="virtual-board-refresh is-loading"
+            id="virtualBoardRefresh"
+            disabled
+            aria-label="Обнови таблото"
+            title="Обнови таблото"
+          >
+            <span aria-hidden="true">↻</span>
+          </button>
+
+          <button
+            type="button"
+            class="virtual-board-favorite${isFavoriteStop(stop.stop_id) ? " is-favorite" : ""}"
+            id="virtualBoardFavorite"
+            aria-label="${isFavoriteStop(stop.stop_id) ? "Премахни от любими" : "Добави в любими"}"
+            title="${isFavoriteStop(stop.stop_id) ? "Премахни от любими" : "Добави в любими"}"
+          >
+            <span aria-hidden="true">
+              ${isFavoriteStop(
+                stop.stop_id
+              )
+                ? "★"
+                : "☆"}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            class="virtual-board-close"
+            id="virtualBoardClose"
+            aria-label="Затвори таблото"
+          >
+            ×
+          </button>
         </div>
       </div>
-      <div class="virtual-board-list"><div class="virtual-board-loading">Зареждане…</div></div>
+
+      <div class="virtual-board-list">
+        <div class="virtual-board-loading">
+          Зареждане…
+        </div>
+      </div>
     `;
 
     document
@@ -4113,7 +4534,9 @@ const tripId =
             null;
 
           if (
-            selectedStopMarker
+            typeof selectedStopMarker
+              !== "undefined"
+            && selectedStopMarker
           ) {
             selectedStopMarker.setStyle({
               fillColor:
@@ -4201,7 +4624,8 @@ const tripId =
         );
 
       if (
-        data.status !== "ok"
+        data.status
+          !== "ok"
         || !data.routes.length
       ) {
         list.innerHTML =
@@ -4258,7 +4682,10 @@ const tripId =
                       ) >= 0
                   )
                   .sort(
-                    (a, b) =>
+                    (
+                      a,
+                      b
+                    ) =>
                       a.timestamp
                       - b.timestamp
                   )
@@ -4273,7 +4700,10 @@ const tripId =
               route.arrivals.length
           )
           .sort(
-            (a, b) =>
+            (
+              a,
+              b
+            ) =>
               a.arrivals[0].timestamp
               - b.arrivals[0].timestamp
           );
@@ -4323,9 +4753,15 @@ const tripId =
                         `<span class="vb-next-time" `
                         + `tabindex="0" `
                         + `data-arrival-timestamp="${time.timestamp}" `
-                        + `data-tooltip="${escapeHtml(tooltip)}" `
-                        + `aria-label="${escapeHtml(tooltip)}">`
-                        + `${escapeHtml(clock)}`
+                        + `data-tooltip="${escapeHtml(
+                            tooltip
+                          )}" `
+                        + `aria-label="${escapeHtml(
+                            tooltip
+                          )}">`
+                        + `${escapeHtml(
+                            clock
+                          )}`
                         + `</span>`
                       );
                     }
@@ -4335,7 +4771,10 @@ const tripId =
               return `
                 <article class="vb-row">
                   <div class="schedule-summary-route-row vb-route-row">
-                    ${lineIdentityHtml(meta)}
+                    ${lineIdentityHtml(
+                      meta
+                    )}
+
                     ${destinationHtml(
                       row.destination
                       || row.headsign
@@ -4364,7 +4803,9 @@ const tripId =
             }
           )
           .join("");
-    } catch (error) {
+    } catch (
+      error
+    ) {
       if (
         renderToken
           !== boardRenderToken
@@ -4419,7 +4860,8 @@ const tripId =
               true
             ),
           {
-            once: true
+            once:
+              true
           }
         );
       }
@@ -4446,44 +4888,49 @@ const tripId =
             </div>
 
             <div class="virtual-board-favorites-list">
-              ${favorites.map(
-                stop => `
-                  <button
-                    type="button"
-                    class="virtual-board-favorite-stop"
-                    data-stop-id="${escapeHtml(stop.stop_id)}"
-                  >
-                    <span
-                      class="virtual-board-favorite-stop-star"
-                      aria-hidden="true"
-                    >★</span>
+              ${favorites
+                .map(
+                  stop =>
+                    `
+                      <button
+                        type="button"
+                        class="virtual-board-favorite-stop"
+                        data-stop-id="${escapeHtml(
+                          stop.stop_id
+                        )}"
+                      >
+                        <span
+                          class="virtual-board-favorite-stop-star"
+                          aria-hidden="true"
+                        >★</span>
 
-                    <span
-                      class="virtual-board-favorite-stop-info"
-                    >
-                      <strong>
-                        ${escapeHtml(
-                          stop.stop_name
-                          || "Спирка"
-                        )}
-                      </strong>
+                        <span
+                          class="virtual-board-favorite-stop-info"
+                        >
+                          <strong>
+                            ${escapeHtml(
+                              stop.stop_name
+                              || "Спирка"
+                            )}
+                          </strong>
 
-                      <span>
-                        [${escapeHtml(
-                          stop.stop_code
-                          || stop.stop_id
-                          || ""
-                        )}]
-                      </span>
-                    </span>
+                          <span>
+                            [${escapeHtml(
+                              stop.stop_code
+                              || stop.stop_id
+                              || ""
+                            )}]
+                          </span>
+                        </span>
 
-                    <span
-                      class="virtual-board-favorite-stop-arrow"
-                      aria-hidden="true"
-                    >→</span>
-                  </button>
-                `
-              ).join("")}
+                        <span
+                          class="virtual-board-favorite-stop-arrow"
+                          aria-hidden="true"
+                        >→</span>
+                      </button>
+                    `
+                )
+                .join("")}
             </div>
           </div>
         `
@@ -4491,7 +4938,10 @@ const tripId =
 
     panel.innerHTML = `
       <div class="virtual-board-empty">
-        <p>Изберете спирка от картата, за да видите следващите пристигания</p>
+        <p>
+          Изберете спирка от картата, за да видите следващите пристигания
+        </p>
+
         ${favoritesHtml}
       </div>
     `;
@@ -4550,7 +5000,9 @@ const tripId =
     }
 
     if (
-      selectedStopMarker
+      typeof selectedStopMarker
+        !== "undefined"
+      && selectedStopMarker
     ) {
       selectedStopMarker.setStyle({
         fillColor:
@@ -4575,8 +5027,12 @@ const tripId =
       );
 
     if (
-      !Number.isFinite(lat)
-      || !Number.isFinite(lon)
+      !Number.isFinite(
+        lat
+      )
+      || !Number.isFinite(
+        lon
+      )
     ) {
       return;
     }
@@ -4713,7 +5169,9 @@ const tripId =
 
               if (
                 !key
-                || seen.has(key)
+                || seen.has(
+                  key
+                )
               ) {
                 return false;
               }
@@ -4735,31 +5193,36 @@ const tripId =
       matches => {
         results.innerHTML =
           matches.length
-            ? matches.map(
-                stop => `
-                  <button
-                    type="button"
-                    class="virtual-stop-search-result"
-                    data-stop-id="${escapeHtml(stop.stop_id)}"
-                  >
-                    <strong>
-                      ${escapeHtml(
-                        stop.name
-                        || stop.stop_name
-                        || "Спирка"
-                      )}
-                    </strong>
+            ? matches
+                .map(
+                  stop =>
+                    `
+                      <button
+                        type="button"
+                        class="virtual-stop-search-result"
+                        data-stop-id="${escapeHtml(
+                          stop.stop_id
+                        )}"
+                      >
+                        <strong>
+                          ${escapeHtml(
+                            stop.name
+                            || stop.stop_name
+                            || "Спирка"
+                          )}
+                        </strong>
 
-                    <span>
-                      ${escapeHtml(
-                        stop.stop_code
-                        || stop.stop_id
-                        || ""
-                      )}
-                    </span>
-                  </button>
-                `
-              ).join("")
+                        <span>
+                          ${escapeHtml(
+                            stop.stop_code
+                            || stop.stop_id
+                            || ""
+                          )}
+                        </span>
+                      </button>
+                    `
+                )
+                .join("")
             : `
                 <div class="virtual-stop-search-empty">
                   Няма намерени спирки.
@@ -4931,7 +5394,10 @@ const tripId =
                       "top",
 
                     offset:
-                      [0, -8]
+                      [
+                        0,
+                        -8
+                      ]
                   }
                 );
               } else {
@@ -4965,6 +5431,7 @@ const tripId =
                 "is-loading"
               );
             },
+
             error => {
               console.warn(
                 "Грешка при определяне на локацията:",
@@ -4982,6 +5449,7 @@ const tripId =
                 "Не успяхме да определим вашата локация. Проверете разрешението за достъп до местоположението."
               );
             },
+
             {
               enableHighAccuracy:
                 true,
@@ -5005,9 +5473,16 @@ const tripId =
     stops
   ) {
     stopMarkers.clearLayers();
+
     stopMarkersById.clear();
-    selectedStopMarker =
-      null;
+
+    if (
+      typeof selectedStopMarker
+        !== "undefined"
+    ) {
+      selectedStopMarker =
+        null;
+    }
 
     const renderer =
       L.svg();
@@ -5027,8 +5502,12 @@ const tripId =
         );
 
       if (
-        !Number.isFinite(lat)
-        || !Number.isFinite(lon)
+        !Number.isFinite(
+          lat
+        )
+        || !Number.isFinite(
+          lon
+        )
       ) {
         continue;
       }
@@ -5105,7 +5584,10 @@ const tripId =
             "top",
 
           offset:
-            [0, -5]
+            [
+              0,
+              -5
+            ]
         }
       );
 
@@ -5116,7 +5598,10 @@ const tripId =
             "top",
 
           offset:
-            [0, -12]
+            [
+              0,
+              -12
+            ]
         }
       );
 
@@ -5229,7 +5714,7 @@ const tripId =
   ) {
     if (
       typeof L
-      === "undefined"
+        === "undefined"
     ) {
       const mapElement =
         document.getElementById(
@@ -5450,7 +5935,9 @@ const tripId =
         stop,
         data
       );
-    } catch (error) {
+    } catch (
+      error
+    ) {
       if (
         requestToken
           !== boardRenderToken
@@ -5540,8 +6027,10 @@ const tripId =
         convertGtfsRoutes(
           transportData.routes
           || [],
+
           transportData.trips
           || [],
+
           transportData.directions
           || {}
         );
@@ -5550,7 +6039,9 @@ const tripId =
         new Map(
           lines.map(
             line => [
-              String(line.id),
+              String(
+                line.id
+              ),
               line
             ]
           )
@@ -5614,7 +6105,9 @@ const tripId =
       }
 
       startTimers();
-    } catch (error) {
+    } catch (
+      error
+    ) {
       console.error(
         "Неуспешно зареждане на GTFS за виртуалните табла:",
         error
@@ -5626,11 +6119,16 @@ const tripId =
       if (panel) {
         panel.innerHTML = `
           <div class="virtual-board-error">
-            <strong>Виртуалното табло не може да бъде заредено.</strong>
-            <span>${escapeHtml(
-              error.message
-              || "Неизвестна грешка."
-            )}</span>
+            <strong>
+              Виртуалното табло не може да бъде заредено.
+            </strong>
+
+            <span>
+              ${escapeHtml(
+                error.message
+                || "Неизвестна грешка."
+              )}
+            </span>
           </div>
         `;
       }
