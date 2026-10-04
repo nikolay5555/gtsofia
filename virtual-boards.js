@@ -674,7 +674,7 @@
 
     const result = [];
     for (const route of (transportData?.routes || [])) {
-      if (String(route?.route_type) !== '1') continue;
+      if (getLineType(route) !== 'metro') continue;
 
       const routeId = String(route.route_id || '').trim();
       const directionSet = transportData?.directions?.[routeId] || {};
@@ -801,7 +801,7 @@
     for (const route of (transportData?.routes || [])) {
       // Static fallback applies only to surface transport. Metro keeps its
       // existing static timetable logic below.
-      if (String(route?.route_type) === '1') continue;
+      if (getLineType(route) === 'metro') continue;
 
       const routeId = String(route?.route_id || '').trim();
       if (!routeId) continue;
