@@ -876,37 +876,71 @@
             timestamp
           )) continue;
 
-          const existing = rowsByTerminal.get(terminalStopId);
-          if (!existing) {
-            rowsByTerminal.set(terminalStopId, {
-              timestamp,
-              terminalStopId
-            });
-          } else if (timestamp < existing.timestamp) {
-            existing.timestamp = timestamp;
-          }
+const tripId = String(schedule?.original_trip_id || "").trim();
+
+const existing = rowsByTerminal.get(terminalStopId);
+if (!existing) {
+  rowsByTerminal.set(terminalStopId, {
+    timestamp,
+    scheduledTime: seconds,
+    terminalStopId,
+    tripId
+  });
+} else if (timestamp < existing.timestamp) {
+  existing.timestamp = timestamp;
+  existing.scheduledTime = seconds;
+  existing.tripId = tripId;
+}
         }
 
-        for (const { timestamp, terminalStopId } of rowsByTerminal.values()) {
-          const isPartialCourse = !stopIdsMatch(terminalStopId, getDirectionTerminalStopId(direction));
-          const terminalStop = getStopById(terminalStopId);
-          const destination = isPartialCourse
-            ? (terminalStop?.stop_name || direction?.destination || direction?.headsign || '')
-            : (direction?.destination || direction?.headsign || terminalStop?.stop_name || '');
+for (const {
+  timestamp,
+  scheduledTime,
+  terminalStopId,
+  tripId
+} of rowsByTerminal.values()) {
+  const isPartialCourse = !stopIdsMatch(
+    terminalStopId,
+    getDirectionTerminalStopId(direction)
+  );
 
-          result.push({
-            route_id: routeId,
-            direction_key: directionKey,
-            direction,
-            terminal_stop_id: terminalStopId,
-            route_ref: meta.number || route.route_short_name || '—',
-            destination,
-            times: [{ timestamp, delay: null, scheduled: true }],
-            meta,
-            scheduled: true,
-            source: 'static'
-          });
-        }
+  const terminalStop = getStopById(terminalStopId);
+
+  const destination = isPartialCourse
+    ? (
+        terminalStop?.stop_name
+        || direction?.destination
+        || direction?.headsign
+        || ''
+      )
+    : (
+        direction?.destination
+        || direction?.headsign
+        || terminalStop?.stop_name
+        || ''
+      );
+
+  result.push({
+    route_id: routeId,
+    direction_key: directionKey,
+    direction,
+    terminal_stop_id: terminalStopId,
+    route_ref: meta.number || route.route_short_name || '—',
+    destination,
+    trip_id: tripId,
+    scheduled_time: scheduledTime,
+    times: [{
+      timestamp,
+      delay: null,
+      scheduled: true,
+      source: 'static',
+      scheduled_time: scheduledTime
+    }],
+    meta,
+    scheduled: true,
+    source: 'static'
+  });
+}
       }
     }
 
@@ -942,11 +976,6 @@
     }
     const generatedAt = data?.generated_at || Date.now();
     const skippedTrips = Array.isArray(data?.skipped_trips) ? data.skipped_trips : [];
-    const realtimeSupportedRouteIds = new Set(
-      (Array.isArray(data?.realtime_route_ids) ? data.realtime_route_ids : [])
-        .map(value => String(value || '').trim())
-        .filter(Boolean)
-    );
     const realtimeRoutes = Array.isArray(data?.routes)
       ? data.routes
           .filter(route => route && Array.isArray(route.times))
@@ -1029,6 +1058,33 @@
       generatedAt,
       routes: isMetroStop(stop) ? [] : realtimeRoutes
     };
+  function hasRealtimeForScheduledCourse(scheduledRoute) {
+  const scheduledRouteId = String(scheduledRoute?.route_id || '').trim();
+  const scheduledTripId = String(scheduledRoute?.trip_id || '').trim();
+
+  if (!scheduledRouteId || !scheduledTripId) {
+    return false;
+  }
+
+  return realtimeRoutes.some(realtimeRoute => {
+    const staticTrip = findStaticTrip(realtimeRoute?.trip_id);
+
+    const realtimeRouteId = String(
+      realtimeRoute?.route_id
+      || staticTrip?.route_id
+      || ''
+    ).trim();
+
+    const realtimeTripId = String(
+      realtimeRoute?.trip_id || ''
+    ).trim();
+
+    return (
+      realtimeRouteId === scheduledRouteId
+      && realtimeTripId === scheduledTripId
+    );
+  });
+}
     const metroRoutes = getMetroScheduledArrivals(stop);
 
     // Realtime rows are kept per trip by the API because Sofia's feed often
@@ -1265,22 +1321,6 @@
       return false;
     }
 
-    // A realtime row suppresses its own logical direction. It may also
-    // suppress a longer scheduled direction when the realtime course belongs
-    // to a shorter direction whose stop pattern is a true prefix of that
-    // longer route (an operational short-turn such as trolley 3).
-    const realtimeLogicalRoutes = mergedSurfaceRoutes.filter(route =>
-      String(route.direction_key || '').trim()
-    );
-
-    const realtimeDirectionKeys = new Set(
-      mergedSurfaceRoutes.map(route => {
-        const routeId = String(route.route_id || '');
-        const destinationKey = normalizeDirectionText(route.destination || '');
-        return `${routeId}|${destinationKey}|${String(route.route_ref || '')}`;
-      })
-    );
-
     // Only operational realtime trips may suppress static fallback. Explicit
     // CANCELED/DELETED trips are not active service.
     const activeDirections = [];
@@ -1314,34 +1354,14 @@
       });
     }
 
-    const surfaceFallbackRoutes = scheduledSurfaceRoutes.filter(route => {
-      if (realtimeLogicalRoutes.some(realtimeRoute =>
-        realtimeOverridesScheduledDirection(realtimeRoute, route, stop.stop_id)
-      )) {
-        return false;
-      }
-
-      if (activeShortDirectionOverridesScheduledDirection(route, activeDirections)) {
-        return false;
-      }
-
-      // Passenger-facing merge for equivalent named terminals (e.g. 94 /
-      // stop 1699 vs 1700).
-      const routeId = String(route.route_id || '');
-      // If this line is represented anywhere in the current GTFS-RT feed,
-      // never use its static timetable as a fallback. A missing realtime
-      // arrival at this stop can mean no vehicle is currently approaching,
-      // a short-turn/temporary organization, or another operational state.
-      // Falling back to the normal GTFS route would turn that absence into a
-      // misleading predicted arrival.
-      if (realtimeSupportedRouteIds.has(routeId)) {
-        return false;
-      }
-
-      const destinationKey = normalizeDirectionText(route.destination || '');
-      const displayedKey = `${routeId}|${destinationKey}|${String(route.route_ref || '')}`;
-      return !realtimeDirectionKeys.has(displayedKey);
-    });
+const surfaceFallbackRoutes = scheduledSurfaceRoutes.filter(route => {
+  // A static course is suppressed only when THIS EXACT COURSE
+  // has realtime data for the selected stop.
+  //
+  // Missing RT for another course on the same line/direction must
+  // NOT suppress this static fallback.
+  return !hasRealtimeForScheduledCourse(route);
+});
 
     // Some GTFS exports contain duplicate static directions with the same
     // destination/pattern. Keep only the earliest fallback row for a given
