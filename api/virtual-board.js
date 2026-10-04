@@ -1,6 +1,6 @@
 const FEED_URL = 'https://gtfs.sofiatraffic.bg/api/v1/trip-updates';
 const FEED_TIMEOUT_MS = 15000;
-const MAX_RESULTS_PER_ROUTE = 4;
+const MAX_RESULTS_PER_ROUTE = 3;
 const LOOK_AHEAD_SECONDS = 3 * 60 * 60;
 
 // GTFS-Realtime TripDescriptor.schedule_relationship.
