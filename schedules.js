@@ -5,21 +5,16 @@ let selectedStopIndex = 0;
 let selectedDayType = "weekday";
 let selectedCourse = null;
 
-const typeLabels = {
-  bus: "Автобуси",
-  trolleybus: "Тролейбуси",
-  tram: "Трамваи",
-  metro: "Метролинии",
-  night: "Нощни линии"
-};
-
-const typeOrder = [
-  "bus",
-  "trolleybus",
-  "tram",
-  "metro",
-  "night"
+const lineGroups = [
+  { key: "metro", type: "metro", subtype: null, label: "Метролинии" },
+  { key: "tram", type: "tram", subtype: null, label: "Трамваи" },
+  { key: "trolley", type: "trolley", subtype: null, label: "Тролейбуси" },
+  { key: "bus", type: "bus", subtype: null, label: "Автобуси" },
+  { key: "school", type: "bus", subtype: "school", label: "Училищни автобуси" },
+  { key: "temporary", type: "bus", subtype: "temporary", label: "Заместващи автобуси" },
+  { key: "night", type: "bus", subtype: "night", label: "Нощни автобуси" }
 ];
+
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -100,12 +95,14 @@ function renderLineDropdown() {
 
   menu.innerHTML = "";
 
-  for (const type of typeOrder) {
+  for (const groupDefinition of lineGroups) {
     const lines =
       scheduleLines
-        .filter(
-          line =>
-            line.type === type
+        .filter(line =>
+          line.type === groupDefinition.type
+          && (groupDefinition.subtype === null
+            ? !line.subtype
+            : line.subtype === groupDefinition.subtype)
         )
         .sort(
           (a, b) =>
@@ -133,7 +130,7 @@ function renderLineDropdown() {
 
     group.innerHTML = `
       <div class="schedule-dropdown-group-title">
-        ${typeLabels[type]}
+        ${groupDefinition.label}
       </div>`;
 
     for (const line of lines) {

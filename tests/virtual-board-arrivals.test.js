@@ -58,14 +58,19 @@ assert.equal(
   'exactly 60 seconds remaining must still show one minute'
 );
 assert.equal(
+  internals.formatArrivalCountdown(countdownNow + 29.9, countdownNow),
+  '0 мин.',
+  'the final 30 seconds must display zero minutes'
+);
+assert.equal(
   internals.formatArrivalCountdown(countdownNow + 59.9, countdownNow),
-  'Сега',
-  'less than 60 seconds remaining must show Сега'
+  '1 мин.',
+  '59.9 seconds remaining rounds to one minute'
 );
 assert.equal(
   internals.formatArrivalCountdown(countdownNow, countdownNow),
-  'Сега',
-  'at the arrival timestamp must show Сега'
+  '0 мин.',
+  'at the arrival timestamp must show zero minutes'
 );
 assert.equal(
   internals.formatArrivalCountdown(countdownNow + 60 + 59, countdownNow),

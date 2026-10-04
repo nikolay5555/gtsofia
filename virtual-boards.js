@@ -1,7 +1,6 @@
 (() => {
   const SOFIA_TIME_ZONE = "Europe/Sofia";
   const REFRESH_MS = 15000;
-  const EXPIRED_PRIMARY_HOLD_MS = 10000;
   const SOFIA_CENTER = [42.6977, 23.3219];
 
   let map = null;
@@ -9,8 +8,6 @@
   let refreshTimer = null;
   let countdownTimer = null;
   let refreshInFlight = false;
-  let lastExpiredPrimaryArrival = null;
-  let expiredPrimaryRefreshTimer = null;
   let boardRenderToken = 0;
   let clockTimer = null;
   let stopMarkers = null;
@@ -20,7 +17,6 @@
   let routeMetaById = new Map();
   let routeMetaByNumber = new Map();
   let tripById = new Map();
-  let tripStopsById = new Map();
 
   // Realtime stop updates disappear shortly after the vehicle passes the
   // selected stop. Keep the scheduled time they represented so the static
@@ -282,23 +278,27 @@
     const route = id ? routeById.get(id) : null;
     const number = ref || route?.route_short_name || "—";
     if (!route) {
+      const subtype = /^N/i.test(number) ? "night" : null;
       return {
         id,
         number,
-        type: /^N/i.test(number) ? "night" : "bus",
-        icon: "",
+        type: "bus",
+        subtype,
+        icon: subtype === "night" ? "Icons/Active icons/night-bus.svg" : "Icons/Active icons/bus.svg",
         color: "#BE1E2D",
         textColor: "#FFFFFF"
       };
     }
 
     const type = typeof getLineType === "function" ? getLineType(route) : "bus";
-    const icon = typeof getTransportIcon === "function" ? getTransportIcon(type, number) : "";
+    const subtype = typeof getLineSubtype === "function" ? getLineSubtype(route) : null;
+    const icon = typeof getTransportIcon === "function" ? getTransportIcon(type, number, subtype) : "";
     const color = typeof getLineColor === "function" ? getLineColor(route, type) : "#BE1E2D";
     return {
       id: route.route_id,
       number,
       type,
+      subtype,
       icon,
       color,
       textColor: route.route_text_color ? `#${route.route_text_color}` : "#FFFFFF"
@@ -342,15 +342,11 @@
     const seconds = Number(timestamp);
     if (!Number.isFinite(seconds)) return "";
 
-    const remainingSeconds = seconds - nowSeconds;
-    if (remainingSeconds < 60) return "Сега";
-
-    // Round to the nearest minute instead of always rounding up. With
-    // Math.ceil() the 1-minute state effectively existed only at exactly
-    // 60.000 seconds because anything below 60 seconds becomes "Сега".
-    // Nearest-minute rounding gives each minute a useful display window while
-    // still avoiding the old 2:59 -> 2 min. under-reporting.
-    return `${Math.max(1, Math.round(remainingSeconds / 60))} мин.`;
+    const remainingSeconds = Math.max(0, seconds - nowSeconds);
+    // Display the nearest whole minute. Arrivals in the final half-minute and
+    // arrivals that have already reached the stop therefore display 0 мин.,
+    // with no separate transient state and no artificial hold period.
+    return `${Math.max(0, Math.round(remainingSeconds / 60))} мин.`;
   }
 
   function formatArrivalClock(timestamp) {
@@ -441,43 +437,14 @@
     const dateKey = getSofiaDateKey(date);
     if (!dateKey) return false;
 
-    // The generated date map is an exact GTFS evaluation of calendar.txt +
-    // calendar_dates.txt for the current data window. Prefer it whenever the
-    // requested date is covered because it already includes exceptions.
+    // serviceIdsByDate is generated directly from the full GTFS calendar plus
+    // all calendar_dates exceptions, so the browser never has to ship or
+    // interpret the large raw exception table. Outside the published window
+    // we fail closed rather than inventing service.
     const byDate = calendar?.serviceIdsByDate;
-    if (byDate && Object.prototype.hasOwnProperty.call(byDate, dateKey)) {
-      return Array.isArray(byDate[dateKey])
-        && byDate[dateKey].some(value => String(value).trim() === id);
-    }
-
-    // Fall back to the raw GTFS calendar tables so a stale/older generated
-    // date window cannot accidentally turn a future-only service into today's
-    // service. This also preserves support for feeds that contain calendar.txt.
-    let active = false;
-    const weekdayField = getSofiaWeekdayField(date);
-    const pattern = (calendar?.servicePatterns || []).find(row =>
-      String(row?.service_id || "").trim() === id
-    );
-
-    if (pattern) {
-      const start = String(pattern.start_date || "").trim();
-      const end = String(pattern.end_date || "").trim();
-      const compactDate = dateKey.replaceAll("-", "");
-      active = compactDate >= start
-        && compactDate <= end
-        && String(pattern?.[weekdayField] || "") === "1";
-    }
-
-    for (const exception of (calendar?.exceptions || [])) {
-      if (String(exception?.service_id || "").trim() !== id) continue;
-      const exceptionDate = String(exception?.date || "").trim();
-      if (exceptionDate !== dateKey.replaceAll("-", "")) continue;
-      const type = String(exception?.exception_type || "").trim();
-      if (type === "1") active = true;
-      if (type === "2") active = false;
-    }
-
-    return active;
+    if (!byDate || !Object.prototype.hasOwnProperty.call(byDate, dateKey)) return false;
+    return Array.isArray(byDate[dateKey])
+      && byDate[dateKey].some(value => String(value).trim() === id);
   }
 
   function isScheduleRowActiveToday(schedule) {
@@ -544,7 +511,7 @@
       if (tripIds.includes(tripId)) return { key, ...direction };
     }
 
-    // Backward-compatible fallback for an older transport.json that does not
+    // Backward-compatible fallback for older generated data that does not
     // yet contain trip_ids on directions. Prefer the representative trip id,
     // then a unique shape id, and only finally the display headsign.
     for (const [key, direction] of Object.entries(directions)) {
@@ -793,7 +760,7 @@
 
       const skippedTripId = String(skipped.trip_id || '').trim();
 
-      // Newer generated transport.json contains the exact original GTFS trip
+      // The split generated data contains the exact original GTFS trip
       // id on every schedule row. This is the strongest possible match.
       if (scheduleOriginalTripId && skippedTripId && scheduleOriginalTripId === skippedTripId) {
         return true;
@@ -1419,26 +1386,7 @@
     return fetchVirtualBoardViaServer(stop);
   }
 
-  function clearExpiredPrimaryRefreshTimer() {
-    if (expiredPrimaryRefreshTimer !== null) {
-      clearTimeout(expiredPrimaryRefreshTimer);
-      expiredPrimaryRefreshTimer = null;
-    }
-  }
-
-  function scheduleExpiredPrimaryRefresh(expiredTimestamp) {
-    if (expiredPrimaryRefreshTimer !== null || !selectedStopId) return;
-
-    const scheduledStopId = String(selectedStopId);
-    expiredPrimaryRefreshTimer = setTimeout(() => {
-      expiredPrimaryRefreshTimer = null;
-      if (selectedStopId !== scheduledStopId || lastExpiredPrimaryArrival !== expiredTimestamp) return;
-      refreshSelectedBoard();
-    }, EXPIRED_PRIMARY_HOLD_MS);
-  }
-
   async function renderStopBoard(stop, boardData = null) {
-    clearExpiredPrimaryRefreshTimer();
     const renderToken = ++boardRenderToken;
     selectedStopId = String(stop.stop_id);
     const panel = boardPanel();
@@ -1462,9 +1410,7 @@
     document.getElementById("virtualBoardClose")?.addEventListener("click", () => {
       ++boardRenderToken;
       selectedStopId = null;
-      lastExpiredPrimaryArrival = null;
-      clearExpiredPrimaryRefreshTimer();
-      if (selectedStopMarker) {
+        if (selectedStopMarker) {
         selectedStopMarker.setStyle({
           fillColor: "#111827",
           color: "#ffffff",
@@ -1863,7 +1809,6 @@
     if (!panel || !selectedStopId) return;
 
     const nowSeconds = Date.now() / 1000;
-    let primaryArrivalExpired = null;
 
     panel.querySelectorAll("[data-arrival-timestamp]").forEach(element => {
       const timestamp = Number(element.dataset.arrivalTimestamp);
@@ -1872,7 +1817,6 @@
       const countdown = formatArrivalCountdown(timestamp, nowSeconds);
       if (element.classList.contains("vb-arrival-minutes")) {
         element.textContent = countdown;
-        if (timestamp <= nowSeconds) primaryArrivalExpired = timestamp;
         return;
       }
 
@@ -1880,14 +1824,6 @@
       element.setAttribute("aria-label", countdown);
     });
 
-    if (
-      primaryArrivalExpired !== null
-      && primaryArrivalExpired !== lastExpiredPrimaryArrival
-      && !refreshInFlight
-    ) {
-      lastExpiredPrimaryArrival = primaryArrivalExpired;
-      scheduleExpiredPrimaryRefresh(primaryArrivalExpired);
-    }
   }
 
   function startTimers() {
@@ -1904,10 +1840,6 @@
 
   async function refreshSelectedBoard(force = false) {
     if (!selectedStopId || refreshInFlight) return;
-    // Do not let the regular 15s refresh interrupt the guaranteed 10s hold
-    // after the primary arrival reaches zero. A manual refresh may override it.
-    if (!force && expiredPrimaryRefreshTimer !== null) return;
-
     const requestedStopId = String(selectedStopId);
     const requestToken = boardRenderToken;
     const stop = findStopById(requestedStopId);
@@ -1921,24 +1853,6 @@
     try {
       const data = await fetchVirtualBoard(stop);
       if (requestToken !== boardRenderToken || selectedStopId !== requestedStopId) return;
-
-      // If an automatic refresh finishes after the currently displayed primary
-      // arrival has already expired, keep the existing "Сега" state until the
-      // 10s hold expires instead of replacing it prematurely.
-      if (!force && expiredPrimaryRefreshTimer !== null) return;
-
-      const displayedPrimaryArrival = Number(
-        boardPanel()?.querySelector(".vb-arrival-minutes")?.dataset.arrivalTimestamp
-      );
-      if (
-        !force
-        && Number.isFinite(displayedPrimaryArrival)
-        && displayedPrimaryArrival <= Date.now() / 1000
-      ) {
-        lastExpiredPrimaryArrival = displayedPrimaryArrival;
-        updateBoardCountdowns();
-        return;
-      }
 
       await renderStopBoard(stop, data);
     } catch (error) {
@@ -1962,10 +1876,6 @@
         }
       }
 
-      const primaryArrival = boardPanel()?.querySelector(".vb-arrival-minutes")?.dataset.arrivalTimestamp;
-      lastExpiredPrimaryArrival = Number.isFinite(Number(primaryArrival))
-        ? Number(primaryArrival)
-        : null;
     }
   }
 
@@ -1981,23 +1891,11 @@
       );
 
       tripById = new Map(
-        (transportData.trips || []).map(trip => [
+        (transportData.sourceTrips || []).map(trip => [
           String(trip.trip_id),
           trip
         ])
       );
-
-      tripStopsById = new Map();
-      for (const directionSet of Object.values(transportData.directions || {})) {
-        for (const direction of Object.values(directionSet || {})) {
-          const tripId = String(direction?.trip_id || '').trim();
-          if (!tripId) continue;
-          const stopIds = Array.isArray(direction?.stops)
-            ? direction.stops.map(stop => String(stop?.stop_id || '').trim()).filter(Boolean)
-            : [];
-          if (stopIds.length) tripStopsById.set(tripId, stopIds);
-        }
-      }
 
       const lines = convertGtfsRoutes(
         transportData.routes || [],
