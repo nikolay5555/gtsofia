@@ -1,18 +1,14 @@
-```javascript
 (() => {
   const SOFIA_TIME_ZONE = "Europe/Sofia";
   const REFRESH_MS = 15000;
   const SOFIA_CENTER = [42.6977, 23.3219];
-  const FAVORITE_STOPS_KEY = "gtsofia.favoriteStops";
 
   let map = null;
   let selectedStopId = null;
-  let selectedStopMarker = null;
   let refreshTimer = null;
   let countdownTimer = null;
   let refreshInFlight = false;
   let boardRenderToken = 0;
-  let lastExpiredPrimaryArrival = null;
   let clockTimer = null;
   let stopMarkers = null;
   let stopMarkersById = new Map();
@@ -22,15 +18,19 @@
   let routeMetaByNumber = new Map();
   let tripById = new Map();
 
-  const boardPanel = () => document.getElementById("virtualBoardBody");
-
-  // Realtime stop updates can disappear shortly after a vehicle passes the
-  // selected stop. Remember the exact realtime course while it is observed,
-  // so its static counterpart can never resurrect after the RT ETA has passed.
-  const CONSUMED_REALTIME_ARRIVALS_KEY = "gtsofia.virtualBoard.consumedRealtimeArrivals.v3";
+  // Realtime stop updates disappear shortly after the vehicle passes the
+  // selected stop. Keep the scheduled time they represented so the static
+  // fallback does not immediately resurrect the same course (e.g. 10:57
+  // realtime for a 10:59 scheduled course).
+  const CONSUMED_REALTIME_ARRIVALS_KEY = "gtsofia.virtualBoard.consumedRealtimeArrivals.v1";
   const CONSUMED_REALTIME_ARRIVAL_TTL_MS = 20 * 60 * 1000;
   const consumedRealtimeArrivals = new Map();
   let consumedRealtimeArrivalsLoaded = false;
+
+  const boardPanel = () => document.getElementById("virtualBoardBody");
+
+
+  const FAVORITE_STOPS_KEY = "gtsofia.favoriteStops";
 
   function loadConsumedRealtimeArrivals() {
     if (consumedRealtimeArrivalsLoaded) return;
@@ -44,35 +44,14 @@
       const now = Date.now();
       for (const item of stored) {
         const key = String(item?.key || "").trim();
-        const arrivalTimestamp = Number(item?.arrivalTimestamp);
         const expiresAt = Number(item?.expiresAt);
-        if (
-          key
-          && Number.isFinite(arrivalTimestamp)
-          && Number.isFinite(expiresAt)
-          && expiresAt > now
-        ) {
-          consumedRealtimeArrivals.set(key, { arrivalTimestamp, expiresAt });
+        if (key && Number.isFinite(expiresAt) && expiresAt > now) {
+          consumedRealtimeArrivals.set(key, expiresAt);
         }
       }
     } catch {
-      // sessionStorage is optional; the in-memory map still protects the
-      // current page session when storage is unavailable.
-    }
-  }
-
-  function persistConsumedRealtimeArrivals() {
-    try {
-      sessionStorage.setItem(
-        CONSUMED_REALTIME_ARRIVALS_KEY,
-        JSON.stringify([...consumedRealtimeArrivals.entries()].map(([key, value]) => ({
-          key,
-          arrivalTimestamp: Number(value?.arrivalTimestamp),
-          expiresAt: Number(value?.expiresAt)
-        })))
-      );
-    } catch {
-      // Keep the in-memory state.
+      // sessionStorage can be unavailable in private/restricted browsing
+      // contexts. The in-memory map still protects the current page session.
     }
   }
 
@@ -80,96 +59,72 @@
     loadConsumedRealtimeArrivals();
     const now = Date.now();
     let changed = false;
-    for (const [key, value] of consumedRealtimeArrivals) {
-      if (!Number.isFinite(Number(value?.expiresAt)) || Number(value.expiresAt) <= now) {
+
+    for (const [key, expiresAt] of consumedRealtimeArrivals) {
+      if (!Number.isFinite(expiresAt) || expiresAt <= now) {
         consumedRealtimeArrivals.delete(key);
         changed = true;
       }
     }
+
     if (changed) persistConsumedRealtimeArrivals();
   }
 
-  function getConsumedRealtimeArrivalKey(
-    stopId,
-    routeId,
-    destination,
-    scheduledTimestamp,
-    sourceTripId = ""
-  ) {
-    const stopKey = normalizeStopKey(stopId);
-    if (!stopKey) return "";
-
-    const tripId = String(sourceTripId || "").trim();
-    if (tripId) {
-      return [stopKey, "trip", tripId].join("|");
+  function persistConsumedRealtimeArrivals() {
+    try {
+      sessionStorage.setItem(
+        CONSUMED_REALTIME_ARRIVALS_KEY,
+        JSON.stringify([...consumedRealtimeArrivals.entries()].map(([key, expiresAt]) => ({ key, expiresAt })))
+      );
+    } catch {
+      // Keep working with the in-memory cache when sessionStorage is blocked.
     }
+  }
 
+  function getConsumedRealtimeArrivalKey(stopId, routeId, destination, scheduledTimestamp) {
     const timestamp = Number(scheduledTimestamp);
     if (!Number.isFinite(timestamp)) return "";
+
     return [
-      stopKey,
+      normalizeStopKey(stopId),
       String(routeId || "").trim(),
       normalizeDirectionText(destination),
       Math.floor(timestamp / 60)
     ].join("|");
   }
 
-  function rememberConsumedRealtimeArrivals(stop, matches, nowSeconds = Date.now() / 1000) {
+  function rememberConsumedRealtimeArrivals(stop, realtimeRoutes) {
     pruneConsumedRealtimeArrivals();
+    const nowSeconds = Date.now() / 1000;
     const stopId = String(stop?.stop_id || stop?.stop_code || "").trim();
     if (!stopId) return;
 
-    const now = Number(nowSeconds);
-    if (!Number.isFinite(now)) return;
-
     let changed = false;
-    for (const match of matches || []) {
-      const realtime = match?.realtime;
-      const staticCourse = match?.static;
-      const actualTimestamp = Number(realtime?.timestamp);
-      if (!Number.isFinite(actualTimestamp)) continue;
+    for (const route of realtimeRoutes || []) {
+      const routeId = String(route?.route_id || "").trim();
+      if (!routeId) continue;
 
-      const routeId = String(
-        realtime?.route_id || staticCourse?.route_id || ""
-      ).trim();
-      const destination = String(
-        staticCourse?.destination || realtime?.destination || ""
-      ).trim();
-      const sourceTripId = String(
-        staticCourse?.source_trip_id || realtime?.source_trip_id || realtime?.trip_id || ""
-      ).trim();
-      const scheduledTimestamp = Number(
-        staticCourse?.timestamp ?? realtime?.scheduled_timestamp
-      );
-      const key = getConsumedRealtimeArrivalKey(
-        stopId,
-        routeId,
-        destination,
-        scheduledTimestamp,
-        sourceTripId
-      );
-      if (!key) continue;
+      const destination = String(route?.destination || "").trim();
+      for (const time of route?.times || []) {
+        const actualTimestamp = Number(time?.timestamp);
+        const scheduledTimestamp = Number(time?.scheduled_time);
+        if (!Number.isFinite(actualTimestamp) || !Number.isFinite(scheduledTimestamp)) continue;
 
-      const previous = consumedRealtimeArrivals.get(key);
-      // Once the previously observed ETA has passed, keep the course consumed
-      // even if a later/older feed update reports a newer ETA. This is the
-      // continuity guarantee that prevents early vehicles from resurrecting
-      // their original static times.
-      if (previous && Number(previous.arrivalTimestamp) <= now) continue;
+        // The upstream API intentionally keeps a passed stop update visible
+        // for about 60 seconds. Remember its scheduled course while the
+        // realtime arrival is already at/past the current time, so a transient
+        // feed gap does not resurrect the static scheduled time.
+        if (actualTimestamp > nowSeconds) continue;
 
-      const expiresAt = Math.max(
-        Date.now() + CONSUMED_REALTIME_ARRIVAL_TTL_MS,
-        actualTimestamp * 1000 + CONSUMED_REALTIME_ARRIVAL_TTL_MS
-      );
-      if (
-        !previous
-        || Number(previous.arrivalTimestamp) !== actualTimestamp
-        || Number(previous.expiresAt) !== expiresAt
-      ) {
-        consumedRealtimeArrivals.set(key, {
-          arrivalTimestamp: actualTimestamp,
-          expiresAt
-        });
+        const key = getConsumedRealtimeArrivalKey(
+          stopId,
+          routeId,
+          destination,
+          scheduledTimestamp
+        );
+        if (!key || consumedRealtimeArrivals.has(key)) continue;
+
+        consumedRealtimeArrivals.set(key, Date.now() + CONSUMED_REALTIME_ARRIVAL_TTL_MS);
         changed = true;
       }
     }
@@ -177,22 +132,10 @@
     if (changed) persistConsumedRealtimeArrivals();
   }
 
-  function isConsumedRealtimeScheduledArrival(staticCourse, stopId = selectedStopId, nowSeconds = Date.now() / 1000) {
+  function isConsumedRealtimeScheduledArrival(stopId, routeId, destination, scheduledTimestamp) {
     pruneConsumedRealtimeArrivals();
-    const key = getConsumedRealtimeArrivalKey(
-      stopId,
-      staticCourse?.route_id,
-      staticCourse?.destination,
-      staticCourse?.timestamp,
-      staticCourse?.source_trip_id
-    );
-    if (!key) return false;
-
-    const entry = consumedRealtimeArrivals.get(key);
-    if (!entry) return false;
-    const arrivalTimestamp = Number(entry.arrivalTimestamp);
-    return Number.isFinite(arrivalTimestamp)
-      && arrivalTimestamp <= Number(nowSeconds);
+    const key = getConsumedRealtimeArrivalKey(stopId, routeId, destination, scheduledTimestamp);
+    return !!key && consumedRealtimeArrivals.has(key);
   }
 
   function getFavoriteStops() {
@@ -347,10 +290,10 @@
       };
     }
 
-    const type = typeof getLineType === 'function' ? getLineType(route) : "bus";
-    const subtype = typeof getLineSubtype === 'function' ? getLineSubtype(route) : null;
-    const icon = typeof getTransportIcon === 'function' ? getTransportIcon(type, number, subtype) : "";
-    const color = typeof getLineColor === 'function' ? getLineColor(route, type) : "#BE1E2D";
+    const type = typeof getLineType === "function" ? getLineType(route) : "bus";
+    const subtype = typeof getLineSubtype === "function" ? getLineSubtype(route) : null;
+    const icon = typeof getTransportIcon === "function" ? getTransportIcon(type, number, subtype) : "";
+    const color = typeof getLineColor === "function" ? getLineColor(route, type) : "#BE1E2D";
     return {
       id: route.route_id,
       number,
@@ -400,11 +343,10 @@
     if (!Number.isFinite(seconds)) return "";
 
     const remainingSeconds = Math.max(0, seconds - nowSeconds);
-    // Preserve the old “Сега” window numerically: everything below one minute
-    // is displayed as 0 мин. For one minute and above, use nearest-minute
-    // rounding so 1:30 -> 2 мин. while 1:29 -> 1 мин.
-    if (remainingSeconds < 60) return "0 мин.";
-    return `${Math.max(1, Math.round(remainingSeconds / 60))} мин.`;
+    // Display the nearest whole minute. Arrivals in the final half-minute and
+    // arrivals that have already reached the stop therefore display 0 мин.,
+    // with no separate transient state and no artificial hold period.
+    return `${Math.max(0, Math.round(remainingSeconds / 60))} мин.`;
   }
 
   function formatArrivalClock(timestamp) {
@@ -724,6 +666,59 @@
     return !!selectedName && !!destinationName && selectedName === destinationName;
   }
 
+  function getMetroScheduledArrivals(stop) {
+    const now = getNowGtfsSeconds();
+    const dayType = getCurrentScheduleDayType();
+    const selectedStop = String(stop?.stop_id || stop?.stop_code || '').trim();
+    if (!selectedStop) return [];
+
+    const result = [];
+    for (const route of (transportData?.routes || [])) {
+      if (String(route?.route_type) !== '1') continue;
+
+      const routeId = String(route.route_id || '').trim();
+      const directionSet = transportData?.directions?.[routeId] || {};
+      const scheduleSet = transportData?.schedules?.[routeId] || {};
+      const meta = getLineMeta(routeId, route.route_short_name || '');
+
+      for (const [directionKey, direction] of Object.entries(directionSet)) {
+        const pattern = Array.isArray(direction?.pattern) ? direction.pattern.map(String) : [];
+        const stopIndex = pattern.findIndex(id => stopIdsMatch(id, selectedStop));
+        if (stopIndex < 0) continue;
+        if (isTerminalDirectionForStop(routeId, selectedStop, direction)) continue;
+
+        const daySchedules = scheduleSet?.[directionKey]?.[dayType];
+        if (!Array.isArray(daySchedules)) continue;
+
+        const arrivals = [];
+        for (const schedule of daySchedules) {
+          if (!isScheduleRowActiveToday(schedule)) continue;
+          const rawTime = Array.isArray(schedule?.times) ? schedule.times[stopIndex] : null;
+          const seconds = parseGtfsTime(rawTime);
+          if (seconds == null) continue;
+
+          const todayTimestamp = gtfsSecondsToTodayTimestamp(seconds);
+          let timestamp = todayTimestamp;
+          if (timestamp < Date.now() / 1000) timestamp += 86400;
+          arrivals.push(timestamp);
+        }
+
+        arrivals.sort((a, b) => a - b);
+        const unique = [...new Set(arrivals)].slice(0, 4);
+        if (!unique.length) continue;
+
+        result.push({
+          route_id: routeId,
+          route_ref: meta.number || route.route_short_name || '—',
+          destination: direction?.destination || direction?.headsign || '',
+          times: unique.map(timestamp => ({ timestamp, delay: null, scheduled: true, source: 'static' })),
+          meta
+        });
+      }
+    }
+    return result;
+  }
+
   function isSkippedStaticSchedule(
     schedule,
     routeId,
@@ -751,6 +746,9 @@
       const skippedRouteId = String(skipped.route_id || '').trim();
       if (skippedRouteId && scheduleRouteId && skippedRouteId !== scheduleRouteId) return false;
 
+      // A SKIPPED record is meaningful only for the exact stop represented by
+      // this static schedule row. Prefer stop_id; when GTFS-RT omitted it,
+      // resolve the stop through stop_sequence against the generated pattern.
       const skippedStopId = String(skipped.stop_id || '').trim();
       if (skippedStopId) {
         if (!stopIdsMatch(skippedStopId, selectedStopId)) return false;
@@ -762,10 +760,16 @@
 
       const skippedTripId = String(skipped.trip_id || '').trim();
 
+      // The split generated data contains the exact original GTFS trip
+      // id on every schedule row. This is the strongest possible match.
       if (scheduleOriginalTripId && skippedTripId && scheduleOriginalTripId === skippedTripId) {
         return true;
       }
 
+      // Compatibility with older generated data: resolve the realtime trip to
+      // its static direction and match its GTFS start_time. The stop check above
+      // is deliberately done first so an unrelated SKIPPED stop cannot suppress
+      // the same scheduled course.
       if (!skippedTripId || scheduleStartTime == null) return false;
 
       const staticTrip = findStaticTrip(skippedTripId);
@@ -785,7 +789,7 @@
     });
   }
 
-  function getStaticArrivalCandidates(stop, expectedType, skippedTrips = []) {
+  function getSurfaceScheduledArrivals(stop, skippedTrips = []) {
     const nowTimestamp = Date.now() / 1000;
     const horizonTimestamp = nowTimestamp + 2 * 60 * 60;
     const dayType = getCurrentScheduleDayType();
@@ -795,29 +799,30 @@
     const result = [];
 
     for (const route of (transportData?.routes || [])) {
-      const routeType = typeof getLineType === 'function'
-        ? getLineType(route)
-        : String(route?.type || '').trim().toLowerCase();
-      if (expectedType === 'surface' ? routeType === 'metro' : routeType !== expectedType) continue;
+      // Static fallback applies only to surface transport. Metro keeps its
+      // existing static timetable logic below.
+      if (String(route?.route_type) === '1') continue;
 
       const routeId = String(route?.route_id || '').trim();
       if (!routeId) continue;
 
       const directionSet = transportData?.directions?.[routeId] || {};
       const scheduleSet = transportData?.schedules?.[routeId] || {};
-      const meta = getLineMeta(routeId, route.route_short_name || route.route_ref || '');
+      const meta = getLineMeta(routeId, route.route_short_name || '');
 
       for (const [directionKey, direction] of Object.entries(directionSet)) {
-        const pattern = Array.isArray(direction?.pattern)
-          ? direction.pattern.map(String)
-          : [];
+        const pattern = Array.isArray(direction?.pattern) ? direction.pattern.map(String) : [];
         const stopIndex = pattern.findIndex(id => stopIdsMatch(id, selectedStop));
         if (stopIndex < 0) continue;
-        if (isTerminalDirectionForStop(routeId, selectedStop, direction)) continue;
 
+        // The generated schedule keeps partial courses in the parent direction
+        // by padding the unused tail with nulls. Therefore the actual terminal
+        // of a particular course must be derived from that course's own times,
+        // not from direction.pattern alone.
         const daySchedules = scheduleSet?.[directionKey]?.[dayType];
         if (!Array.isArray(daySchedules)) continue;
 
+        const rowsByTerminal = new Map();
         for (const schedule of daySchedules) {
           if (!isScheduleRowActiveToday(schedule)) continue;
           const times = Array.isArray(schedule?.times) ? schedule.times : [];
@@ -825,12 +830,11 @@
           const seconds = parseGtfsTime(rawTime);
           if (seconds == null) continue;
 
-          let timestamp = gtfsSecondsToTodayTimestamp(seconds);
-          if (timestamp < nowTimestamp) timestamp += 86400;
-          if (timestamp < nowTimestamp || timestamp > horizonTimestamp) continue;
-
+          // Find the last actually served stop for THIS course. A partial course
+          // has nulls after its final stop, while a full course reaches the end
+          // of the parent direction.
           let terminalIndex = -1;
-          for (let i = Math.min(times.length, pattern.length) - 1; i >= 0; i -= 1) {
+          for (let i = Math.min(times.length, pattern.length) - 1; i >= 0; i--) {
             if (parseGtfsTime(times[i]) != null) {
               terminalIndex = i;
               break;
@@ -841,57 +845,72 @@
           const terminalStopId = String(
             pattern[terminalIndex] || getDirectionTerminalStopId(direction) || ''
           ).trim();
-          if (!terminalStopId || stopIdsMatch(terminalStopId, selectedStop)) continue;
+          if (!terminalStopId) continue;
 
-          if (isSkippedStaticSchedule(
-            schedule,
-            routeId,
-            directionKey,
+          // A course whose actual terminal is the selected stop is still a
+          // terminal arrival and should not appear on the board. This check is
+          // per COURSE, which is the crucial difference from the old logic.
+          if (stopIdsMatch(terminalStopId, selectedStop)) continue;
+
+          let timestamp = gtfsSecondsToTodayTimestamp(seconds);
+          if (timestamp < nowTimestamp) timestamp += 86400;
+          if (timestamp < nowTimestamp || timestamp > horizonTimestamp) continue;
+
+          // A realtime course can be a few minutes early/late compared with
+          // the timetable. Once that realtime arrival has passed the stop, the
+          // same scheduled timestamp must not come back through the static
+          // fallback. Only this specific course is skipped; later scheduled
+          // courses remain eligible.
+          const destination = normalizeDirectionText(
+            direction?.destination || direction?.headsign || terminalStopId
+          );
+
+          if (isSkippedStaticSchedule(schedule, routeId, directionKey, selectedStop, stopIndex, skippedTrips)) {
+            continue;
+          }
+
+          if (isConsumedRealtimeScheduledArrival(
             selectedStop,
-            stopIndex,
-            skippedTrips
+            routeId,
+            destination,
+            timestamp
           )) continue;
 
-          const isPartialCourse = !stopIdsMatch(
-            terminalStopId,
-            getDirectionTerminalStopId(direction)
-          );
+          const existing = rowsByTerminal.get(terminalStopId);
+          if (!existing) {
+            rowsByTerminal.set(terminalStopId, {
+              timestamp,
+              terminalStopId
+            });
+          } else if (timestamp < existing.timestamp) {
+            existing.timestamp = timestamp;
+          }
+        }
+
+        for (const { timestamp, terminalStopId } of rowsByTerminal.values()) {
+          const isPartialCourse = !stopIdsMatch(terminalStopId, getDirectionTerminalStopId(direction));
           const terminalStop = getStopById(terminalStopId);
           const destination = isPartialCourse
             ? (terminalStop?.stop_name || direction?.destination || direction?.headsign || '')
             : (direction?.destination || direction?.headsign || terminalStop?.stop_name || '');
-          const sourceTripId = String(schedule?.original_trip_id || '').trim();
-          const logicalTripId = String(schedule?.trip_id || '').trim();
 
           result.push({
-            course_id: [routeId, directionKey, sourceTripId || logicalTripId, timestamp].join('|'),
-            source_trip_id: sourceTripId,
-            logical_trip_id: logicalTripId,
             route_id: routeId,
-            route_ref: meta.number || route.route_short_name || route.route_ref || '—',
             direction_key: directionKey,
+            direction,
             terminal_stop_id: terminalStopId,
+            route_ref: meta.number || route.route_short_name || '—',
             destination,
-            timestamp,
-            scheduled_timestamp: timestamp,
-            delay: null,
+            times: [{ timestamp, delay: null, scheduled: true }],
+            meta,
             scheduled: true,
-            source: 'static',
-            meta
+            source: 'static'
           });
         }
       }
     }
 
-    return result.sort((a, b) => a.timestamp - b.timestamp);
-  }
-
-  function getMetroScheduledArrivals(stop) {
-    return getStaticArrivalCandidates(stop, 'metro');
-  }
-
-  function getSurfaceScheduledArrivals(stop, skippedTrips = []) {
-    return getStaticArrivalCandidates(stop, 'surface', skippedTrips);
+    return result.sort((a, b) => a.times[0].timestamp - b.times[0].timestamp);
   }
 
   async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 45000) {
@@ -912,77 +931,125 @@
 
     const url = `api/virtual-board?stop_code=${encodeURIComponent(stopCode)}`;
     const { response, data } = await fetchJsonWithTimeout(url, {
-      headers: { Accept: 'application/json' }
+      headers: {
+        Accept: 'application/json'
+      }
     }, 20000);
 
     if (!response.ok) {
       const message = data?.error || `Realtime API заявката върна ${response.status}.`;
       throw new Error(message);
     }
-
     const generatedAt = data?.generated_at || Date.now();
     const skippedTrips = Array.isArray(data?.skipped_trips) ? data.skipped_trips : [];
-    const metroStop = isMetroStop(stop);
+    const realtimeSupportedRouteIds = new Set(
+      (Array.isArray(data?.realtime_route_ids) ? data.realtime_route_ids : [])
+        .map(value => String(value || '').trim())
+        .filter(Boolean)
+    );
+    const realtimeRoutes = Array.isArray(data?.routes)
+      ? data.routes
+          .filter(route => route && Array.isArray(route.times))
+          .filter(route => {
+            const staticTrip = findStaticTrip(route.trip_id);
+            const routeId = route.route_id || staticTrip?.route_id || '';
 
-    // Metro has no usable GTFS-RT feed in this project. It intentionally uses
-    // the static timetable only; realtime is never consulted for metro stops.
-    if (metroStop) {
-      const metroCandidates = getMetroScheduledArrivals(stop);
-      const mergedMetro = typeof globalThis.GtsofiaVirtualBoardArrivals?.mergeArrivalCandidates === 'function'
-        ? globalThis.GtsofiaVirtualBoardArrivals.mergeArrivalCandidates({
-          staticCandidates: metroCandidates,
-          realtimeCandidates: [],
-          nowSeconds: Date.now() / 1000,
-          maxResults: 4,
-          isStaticConsumed: () => false
-        }).routes
-        : [];
-      return {
-        status: mergedMetro.length ? 'ok' : 'empty',
-        generatedAt,
-        routes: mergedMetro
-      };
-    }
+            // NEW/REPLACEMENT trips may not exist in static GTFS. In that case
+            // destination_stop_id is the strongest terminal signal we have.
+            if (route.destination_stop_id && shouldHideTerminalArrival(
+              routeId,
+              route.destination_stop_id,
+              staticTrip,
+              route.destination || '',
+              route.direction_id || route.directionId || ''
+            )) return false;
 
-    const realtimeCandidates = [];
-    const realtimeRoutes = Array.isArray(data?.routes) ? data.routes : [];
+            return !shouldHideTerminalArrival(
+              routeId,
+              stop.stop_id,
+              staticTrip,
+              route.destination || '',
+              route.direction_id || route.directionId || ''
+            );
+          })
+          .map(route => {
+            const staticTrip = findStaticTrip(route.trip_id);
+            const routeId = route.route_id || staticTrip?.route_id || '';
+            // Realtime trip_ids are not guaranteed to be present in today's
+            // static GTFS export. In that case, resolve the logical direction
+            // from the selected stop + realtime destination instead of leaving
+            // the direction key empty. This is essential for short-turns such
+            // as trolley 3 -> Пътностроителна техника.
+            const staticDirection = getStaticDirectionForTrip(staticTrip)
+              || resolveDirectionForRealtimeRoute(
+                routeId,
+                stop.stop_id,
+                staticTrip,
+                route.destination || '',
+                route.direction_id || route.directionId || ''
+              );
+            const routeMeta = getLineMeta(
+              routeId,
+              route.route_ref || ''
+            );
 
-    for (const route of realtimeRoutes) {
-      if (!route || !Array.isArray(route.times) || !route.times.length) continue;
+            return {
+              ...route,
+              source: 'realtime',
+              realtime: true,
+              schedule_relationship: Number(route?.schedule_relationship),
+              schedule_relationship_name: String(route?.schedule_relationship_name || 'SCHEDULED'),
+              route_id: route.route_id || staticTrip?.route_id || '',
+              route_ref: route.route_ref || routeMeta.number || '—',
+              direction_key: staticDirection?.key || '',
+              destination_stop_id: route.destination_stop_id || '',
+              destination: route.destination
+                || staticTrip?.trip_headsign
+                || staticDirection?.destination
+                || staticDirection?.headsign
+                || '',
+              times: route.times
+                .map(time => ({
+                  timestamp: Number(time?.timestamp),
+                  delay: Number.isFinite(Number(time?.delay)) ? Number(time.delay) : null,
+                  scheduled: false,
+                  source: 'realtime',
+                  stop_schedule_relationship: Number(time?.stop_schedule_relationship),
+                  stop_schedule_relationship_name: String(time?.stop_schedule_relationship_name || 'SCHEDULED'),
+                  scheduled_time: Number.isFinite(Number(time?.scheduled_time)) ? Number(time.scheduled_time) : null
+                }))
+                .filter(time => Number.isFinite(time.timestamp))
+            };
+          })
+          .filter(route => route.times.length)
+      : [];
 
+    const realtime = {
+      status: data?.status || 'empty',
+      generatedAt,
+      routes: isMetroStop(stop) ? [] : realtimeRoutes
+    };
+    const metroRoutes = getMetroScheduledArrivals(stop);
+
+    // Realtime rows are kept per trip by the API because Sofia's feed often
+    // does not populate direction_id. Merge them back by line + destination
+    // here, after terminal-direction filtering, so opposite directions never
+    // get mixed into the same row.
+    const mergedRealtime = new Map();
+    for (const route of realtime.routes) {
       const staticTrip = findStaticTrip(route.trip_id);
-      const routeId = String(route.route_id || staticTrip?.route_id || '').trim();
-      if (!routeId) continue;
-
-      if (route.destination_stop_id && shouldHideTerminalArrival(
-        routeId,
-        route.destination_stop_id,
-        staticTrip,
-        route.destination || '',
-        route.direction_id || route.directionId || ''
-      )) continue;
-
-      if (shouldHideTerminalArrival(
-        routeId,
-        stop.stop_id,
-        staticTrip,
-        route.destination || '',
-        route.direction_id || route.directionId || ''
-      )) continue;
-
+      const realtimeRouteId = String(route.route_id || staticTrip?.route_id || '').trim();
       const staticDirection = getStaticDirectionForTrip(staticTrip)
         || resolveDirectionForRealtimeRoute(
-          routeId,
+          realtimeRouteId,
           stop.stop_id,
           staticTrip,
           route.destination || '',
           route.direction_id || route.directionId || ''
         );
-      const routeMeta = getLineMeta(routeId, route.route_ref || '');
       const staticTerminalId = getDirectionTerminalStopId(staticDirection);
       const realtimeTerminalId = String(route.destination_stop_id || '').trim();
       const isPartialRealtime = !!realtimeTerminalId
-        && !!staticTerminalId
         && !stopIdsMatch(realtimeTerminalId, staticTerminalId);
       const realtimeTerminal = isPartialRealtime ? getStopById(realtimeTerminalId) : null;
       const destination = isPartialRealtime
@@ -997,69 +1064,321 @@
           || route.destination
           || staticTrip?.trip_headsign
           || '');
+      // The board row is a displayed line + destination, not a raw GTFS
+      // stop_id. The same physical terminal can have multiple GTFS stop IDs
+      // (platforms / approaches), which previously split one direction into
+      // two rows. Partial courses still remain separate because their
+      // displayed destination is their actual terminal stop name.
+      const directionIdentity = normalizeDirectionText(destination);
+      const key = `${String(route.route_id || staticTrip?.route_id || '')}|${directionIdentity}|${String(route.route_ref || '')}`;
 
-      // The API returns a row per realtime trip. Keep only the earliest arrival
-      // at the requested stop for that trip; duplicate TripUpdate events must
-      // never consume two positions in the passenger-facing four-item list.
-      const earliest = route.times
-        .map(time => ({
-          timestamp: Number(time?.timestamp),
-          scheduled_timestamp: Number.isFinite(Number(time?.scheduled_time))
-            ? Number(time.scheduled_time)
-            : null,
-          delay: Number.isFinite(Number(time?.delay)) ? Number(time.delay) : null,
-          stop_schedule_relationship: Number(time?.stop_schedule_relationship),
-          stop_schedule_relationship_name: String(time?.stop_schedule_relationship_name || 'SCHEDULED')
-        }))
-        .filter(time => Number.isFinite(time.timestamp))
-        .sort((a, b) => a.timestamp - b.timestamp)[0];
-      if (!earliest) continue;
+      if (!mergedRealtime.has(key)) {
+        mergedRealtime.set(key, {
+          ...route,
+          source: 'realtime',
+          realtime: true,
+          destination,
+          times: []
+        });
+      }
+      mergedRealtime.get(key).times.push(...(route.times || []));
+    }
 
-      realtimeCandidates.push({
-        course_id: `rt|${route.trip_id || ''}|${routeId}|${earliest.timestamp}`,
-        source_trip_id: String(route.trip_id || '').trim(),
-        trip_id: String(route.trip_id || '').trim(),
-        route_id: routeId,
-        route_ref: route.route_ref || routeMeta.number || '—',
-        direction_key: staticDirection?.key || '',
-        destination,
-        timestamp: earliest.timestamp,
-        scheduled_timestamp: earliest.scheduled_timestamp,
-        delay: earliest.delay,
-        scheduled: false,
-        source: 'realtime',
-        realtime: true,
-        schedule_relationship: Number(route?.schedule_relationship),
-        schedule_relationship_name: String(route?.schedule_relationship_name || 'SCHEDULED'),
-        destination_stop_id: realtimeTerminalId,
-        meta: routeMeta
+    const mergedSurfaceRoutes = [...mergedRealtime.values()]
+      .map(route => ({
+        ...route,
+        times: route.times
+          .sort((a, b) => Number(a.timestamp) - Number(b.timestamp))
+          .filter((time, index, list) =>
+            index === 0 || Number(time.timestamp) !== Number(list[index - 1].timestamp)
+          )
+          .slice(0, 4)
+      }))
+      .filter(route => route.times.length);
+
+    // Preserve the scheduled course behind a realtime arrival that has just
+    // passed. This is what lets the static fallback jump to the NEXT course
+    // instead of showing the timetable time of the already completed one.
+    rememberConsumedRealtimeArrivals(stop, mergedSurfaceRoutes);
+
+    // For surface transport, use the static timetable as a fallback during
+    // the two hours before the next scheduled course when CGM has not yet
+    // published realtime data for that line/direction. Once realtime appears,
+    // it wins and replaces the static fallback.
+    const scheduledSurfaceRoutes = isMetroStop(stop) ? [] : getSurfaceScheduledArrivals(stop, skippedTrips);
+    function directionPatternsShareLongPrefix(shortDirection, longDirection, selectedStopId) {
+      const shortPattern = Array.isArray(shortDirection?.pattern)
+        ? shortDirection.pattern.map(String)
+        : [];
+      const longPattern = Array.isArray(longDirection?.pattern)
+        ? longDirection.pattern.map(String)
+        : [];
+      if (!shortPattern.length || shortPattern.length >= longPattern.length) return false;
+
+      let commonPrefix = 0;
+      while (
+        commonPrefix < shortPattern.length
+        && commonPrefix < longPattern.length
+        && stopIdsMatch(shortPattern[commonPrefix], longPattern[commonPrefix])
+      ) {
+        commonPrefix++;
+      }
+
+      // A short-turn does not have to be a literal prefix. It can take a
+      // slightly different branch immediately before its terminal (as with
+      // trolley 3: the two variants share the first 19 stops, then diverge).
+      const shortRatio = commonPrefix / shortPattern.length;
+      const longRatio = commonPrefix / longPattern.length;
+      if (commonPrefix < 5 || shortRatio < 0.8 || longRatio < 0.7) return false;
+
+      const shortStopIndex = shortPattern.findIndex(id => stopIdsMatch(id, selectedStopId));
+      const longStopIndex = longPattern.findIndex(id => stopIdsMatch(id, selectedStopId));
+      if (shortStopIndex < 0 || longStopIndex < 0) return false;
+
+      // The shared section must actually extend beyond the selected stop;
+      // otherwise this is merely two unrelated directions that happen to
+      // start at the same origin.
+      return commonPrefix > Math.max(shortStopIndex, longStopIndex);
+    }
+
+    function realtimeOverridesScheduledDirection(realtimeRoute, scheduledRoute, selectedStopId) {
+      const routeId = String(scheduledRoute?.route_id || '');
+      if (!routeId || routeId !== String(realtimeRoute?.route_id || '')) return false;
+
+      const realtimeDirectionKey = String(realtimeRoute?.direction_key || '').trim();
+      const scheduledDirectionKey = String(scheduledRoute?.direction_key || '').trim();
+      if (realtimeDirectionKey && scheduledDirectionKey && realtimeDirectionKey === scheduledDirectionKey) {
+        return true;
+      }
+
+      // Operational short-turn case: realtime may belong to a shorter static
+      // direction (e.g. trolley 3 -> Пътностроителна техника), while the
+      // scheduled fallback is the longer parent direction (-> Ж.К. ЛЕВСКИ Г).
+      // For a realtime route that is actually visible at this stop, retain the
+      // stricter, stop-aware check.
+      if (!realtimeDirectionKey || !scheduledDirectionKey) return false;
+      const directionSet = transportData?.directions?.[routeId] || {};
+      const shortDirection = directionSet[realtimeDirectionKey];
+      const longDirection = directionSet[scheduledDirectionKey];
+      if (!shortDirection || !longDirection) return false;
+      if (!directionPatternsShareLongPrefix(shortDirection, longDirection, selectedStopId)) return false;
+
+      const realtimeTerminalId = String(realtimeRoute?.destination_stop_id || '').trim();
+      const realtimeDestinationKey = normalizeDirectionText(realtimeRoute?.destination || '');
+      const shortDestinationKey = normalizeDirectionText(
+        shortDirection?.destination || shortDirection?.headsign || ''
+      );
+
+      return (
+        (!!realtimeTerminalId && isTerminalDirectionForStop(routeId, realtimeTerminalId, shortDirection))
+        || (!!shortDestinationKey && realtimeDestinationKey === shortDestinationKey)
+      );
+    }
+
+    function activeShortDirectionOverridesScheduledDirection(scheduledRoute, activeDirections) {
+      const routeId = String(scheduledRoute?.route_id || '').trim();
+      const scheduledDirectionKey = String(scheduledRoute?.direction_key || '').trim();
+      if (!routeId || !scheduledDirectionKey) return false;
+
+      const directionSet = transportData?.directions?.[routeId] || {};
+      const longDirection = directionSet[scheduledDirectionKey];
+      if (!longDirection) return false;
+
+      for (const activeDirection of activeDirections) {
+        if (String(activeDirection?.route_id || '').trim() !== routeId) continue;
+        const shortDirectionKey = String(activeDirection?.key || '').trim();
+        if (!shortDirectionKey || shortDirectionKey === scheduledDirectionKey) continue;
+
+        const shortDirection = directionSet[shortDirectionKey];
+        if (!shortDirection) continue;
+
+        // This test intentionally does NOT require the selected stop to be
+        // present in the short direction. A short-turn must suppress the
+        // longer scheduled parent even at stops that exist only after the
+        // point where the two patterns diverge (e.g. trolley 3 at stop 2125).
+        const shortPattern = Array.isArray(shortDirection?.pattern)
+          ? shortDirection.pattern.map(String)
+          : [];
+        const longPattern = Array.isArray(longDirection?.pattern)
+          ? longDirection.pattern.map(String)
+          : [];
+        if (!shortPattern.length || shortPattern.length >= longPattern.length) continue;
+
+        // There are two forms of an operational short-turn:
+        //   1) the short route is a prefix of the full route (e.g. 3 ->
+        //      Пътностроителна техника vs Левски Г in one direction);
+        //   2) the short route starts later and is effectively a suffix of
+        //      the full route (the reverse direction of trolley 3).
+        let commonPrefix = 0;
+        while (
+          commonPrefix < shortPattern.length &&
+          commonPrefix < longPattern.length &&
+          stopIdsMatch(shortPattern[commonPrefix], longPattern[commonPrefix])
+        ) {
+          commonPrefix++;
+        }
+
+        let commonSuffix = 0;
+        while (
+          commonSuffix < shortPattern.length &&
+          commonSuffix < longPattern.length &&
+          stopIdsMatch(
+            shortPattern[shortPattern.length - 1 - commonSuffix],
+            longPattern[longPattern.length - 1 - commonSuffix]
+          )
+        ) {
+          commonSuffix++;
+        }
+
+        const prefixShortRatio = commonPrefix / shortPattern.length;
+        const prefixLongRatio = commonPrefix / longPattern.length;
+        const suffixShortRatio = commonSuffix / shortPattern.length;
+        const suffixLongRatio = commonSuffix / longPattern.length;
+
+        const prefixMatch =
+          commonPrefix >= 5 &&
+          prefixShortRatio >= 0.8 &&
+          prefixLongRatio >= 0.7 &&
+          commonPrefix < shortPattern.length;
+
+        const suffixMatch =
+          commonSuffix >= 5 &&
+          suffixShortRatio >= 0.8 &&
+          suffixLongRatio >= 0.7 &&
+          commonSuffix < shortPattern.length;
+
+        if (!prefixMatch && !suffixMatch) continue;
+
+        // The defining property of an operational short-turn is the route
+        // pattern itself, not the passenger-facing destination text. The
+        // short variant intentionally ends at a different terminal, so the
+        // destination names are normally different (e.g. an active short
+        // turn ending at Пътностроителна техника vs the regular terminal
+        // Левски Г). We therefore suppress the longer static direction when
+        // an active realtime direction is a genuine strict prefix/suffix of
+        // it. Unrelated directions with only a common origin/section are
+        // protected by the strong overlap ratios and by requiring that the
+        // short pattern is actually shorter than the long one.
+        return true;
+      }
+
+      return false;
+    }
+
+    // A realtime row suppresses its own logical direction. It may also
+    // suppress a longer scheduled direction when the realtime course belongs
+    // to a shorter direction whose stop pattern is a true prefix of that
+    // longer route (an operational short-turn such as trolley 3).
+    const realtimeLogicalRoutes = mergedSurfaceRoutes.filter(route =>
+      String(route.direction_key || '').trim()
+    );
+
+    const realtimeDirectionKeys = new Set(
+      mergedSurfaceRoutes.map(route => {
+        const routeId = String(route.route_id || '');
+        const destinationKey = normalizeDirectionText(route.destination || '');
+        return `${routeId}|${destinationKey}|${String(route.route_ref || '')}`;
+      })
+    );
+
+    // Only operational realtime trips may suppress static fallback. Explicit
+    // CANCELED/DELETED trips are not active service.
+    const activeDirections = [];
+    const seenActiveDirectionKeys = new Set();
+    const activeTripRecords = Array.isArray(data?.active_trips)
+      ? data.active_trips
+      : (Array.isArray(data?.active_trip_ids)
+        ? data.active_trip_ids.map(tripId => ({ trip_id: tripId, schedule_relationship_name: 'SCHEDULED' }))
+        : []);
+
+    for (const activeTrip of activeTripRecords) {
+      const activeTripId = String(activeTrip?.trip_id || '').trim();
+      if (!activeTripId) continue;
+
+      const relationship = String(activeTrip?.schedule_relationship_name || 'SCHEDULED').toUpperCase();
+      if (relationship === 'CANCELED' || relationship === 'DELETED') continue;
+
+      const staticTrip = findStaticTrip(activeTripId);
+      if (!staticTrip) continue;
+      const activeDirection = getStaticDirectionForTrip(staticTrip);
+      if (!activeDirection?.key) continue;
+
+      const activeKey = `${String(staticTrip.route_id || '')}|${String(activeDirection.key)}`;
+      if (seenActiveDirectionKeys.has(activeKey)) continue;
+      seenActiveDirectionKeys.add(activeKey);
+      activeDirections.push({
+        route_id: String(staticTrip.route_id || ''),
+        key: String(activeDirection.key),
+        trip_id: activeTripId,
+        schedule_relationship: relationship
       });
     }
 
-    const staticCandidates = getSurfaceScheduledArrivals(stop, skippedTrips);
-    const merger = globalThis.GtsofiaVirtualBoardArrivals?.mergeArrivalCandidates;
-    if (typeof merger !== 'function') {
-      throw new Error('Arrival merge engine is not available.');
-    }
+    const surfaceFallbackRoutes = scheduledSurfaceRoutes.filter(route => {
+      if (realtimeLogicalRoutes.some(realtimeRoute =>
+        realtimeOverridesScheduledDirection(realtimeRoute, route, stop.stop_id)
+      )) {
+        return false;
+      }
 
-    const nowSeconds = Date.now() / 1000;
-    const merged = merger({
-      staticCandidates,
-      realtimeCandidates,
-      nowSeconds,
-      maxResults: 4,
-      isStaticConsumed: candidate => isConsumedRealtimeScheduledArrival(candidate)
+      if (activeShortDirectionOverridesScheduledDirection(route, activeDirections)) {
+        return false;
+      }
+
+      // Passenger-facing merge for equivalent named terminals (e.g. 94 /
+      // stop 1699 vs 1700).
+      const routeId = String(route.route_id || '');
+      // If this line is represented anywhere in the current GTFS-RT feed,
+      // never use its static timetable as a fallback. A missing realtime
+      // arrival at this stop can mean no vehicle is currently approaching,
+      // a short-turn/temporary organization, or another operational state.
+      // Falling back to the normal GTFS route would turn that absence into a
+      // misleading predicted arrival.
+      if (realtimeSupportedRouteIds.has(routeId)) {
+        return false;
+      }
+
+      const destinationKey = normalizeDirectionText(route.destination || '');
+      const displayedKey = `${routeId}|${destinationKey}|${String(route.route_ref || '')}`;
+      return !realtimeDirectionKeys.has(displayedKey);
     });
 
-    // Persist only courses whose realtime ETA has already reached/passed this
-    // stop. The cache is keyed by exact source trip ID whenever possible, so a
-    // shifted/early realtime course can never resurrect as its static schedule.
-    rememberConsumedRealtimeArrivals(stop, merged.matches);
+    // Some GTFS exports contain duplicate static directions with the same
+    // destination/pattern. Keep only the earliest fallback row for a given
+    // line + destination so the board never shows duplicate static entries.
+    const fallbackByKey = new Map();
+    for (const route of surfaceFallbackRoutes) {
+      // Deduplicate by the direction the passenger actually sees. Different
+      // GTFS terminal stop IDs can represent the same named destination.
+      const destinationKey = normalizeDirectionText(route.destination || '');
+      const key = `${String(route.route_id || '')}|${destinationKey}|${String(route.route_ref || '')}`;
+      const existing = fallbackByKey.get(key);
+      if (!existing || Number(route.times?.[0]?.timestamp) < Number(existing.times?.[0]?.timestamp)) {
+        fallbackByKey.set(key, route);
+      }
+    }
+
+    const surfaceRoutes = [...mergedSurfaceRoutes, ...fallbackByKey.values()]
+      .sort((a, b) => Number(a.times?.[0]?.timestamp) - Number(b.times?.[0]?.timestamp));
+
+    // Sofia Traffic currently does not provide usable Trip Updates for metro.
+    // Keep surface transport realtime-only and add metro from the static GTFS
+    // timetable when the selected stop is a metro station.
+    const realtimeRouteIds = new Set(
+      mergedSurfaceRoutes.map(route => String(route?.route_id || ''))
+    );
+
+    const routes = [
+      ...surfaceRoutes,
+      ...metroRoutes.filter(route =>
+        !realtimeRouteIds.has(String(route.route_id || ''))
+      )
+    ];
 
     return {
-      status: merged.routes.length ? 'ok' : 'empty',
+      status: routes.length ? 'ok' : 'empty',
       generatedAt,
-      routes: merged.routes
+      routes
     };
   }
 
@@ -1070,7 +1389,6 @@
   async function renderStopBoard(stop, boardData = null) {
     const renderToken = ++boardRenderToken;
     selectedStopId = String(stop.stop_id);
-    lastExpiredPrimaryArrival = null;
     const panel = boardPanel();
     if (!panel) return;
 
@@ -1092,8 +1410,7 @@
     document.getElementById("virtualBoardClose")?.addEventListener("click", () => {
       ++boardRenderToken;
       selectedStopId = null;
-      lastExpiredPrimaryArrival = null;
-      if (selectedStopMarker) {
+        if (selectedStopMarker) {
         selectedStopMarker.setStyle({
           fillColor: "#111827",
           color: "#ffffff",
@@ -1129,7 +1446,7 @@
           arrivals: (route.times || [])
             .map(time => ({
               timestamp: Number(time?.timestamp),
-              delay: Number.isFinite(Number(time?.delay)) ? Number(time?.delay) : null,
+              delay: Number.isFinite(Number(time?.delay)) ? Number(time.delay) : null,
               scheduled: Boolean(time?.scheduled)
             }))
             .filter(time => Number.isFinite(time.timestamp))
@@ -1486,12 +1803,12 @@
     setTimeout(() => map.invalidateSize(), 100);
   }
 
+
   function updateBoardCountdowns() {
     const panel = boardPanel();
     if (!panel || !selectedStopId) return;
 
     const nowSeconds = Date.now() / 1000;
-    let expiredPrimaryArrival = null;
 
     panel.querySelectorAll("[data-arrival-timestamp]").forEach(element => {
       const timestamp = Number(element.dataset.arrivalTimestamp);
@@ -1500,9 +1817,6 @@
       const countdown = formatArrivalCountdown(timestamp, nowSeconds);
       if (element.classList.contains("vb-arrival-minutes")) {
         element.textContent = countdown;
-        if (timestamp <= nowSeconds && expiredPrimaryArrival === null) {
-          expiredPrimaryArrival = timestamp;
-        }
         return;
       }
 
@@ -1510,17 +1824,6 @@
       element.setAttribute("aria-label", countdown);
     });
 
-    // Do not hold an expired primary arrival. Once its actual timestamp is
-    // reached, immediately rebuild the board so the next merged RT/static
-    // course can take its place. refreshInFlight prevents duplicate requests.
-    if (
-      expiredPrimaryArrival !== null
-      && expiredPrimaryArrival !== lastExpiredPrimaryArrival
-      && !refreshInFlight
-    ) {
-      lastExpiredPrimaryArrival = expiredPrimaryArrival;
-      void refreshSelectedBoard(true);
-    }
   }
 
   function startTimers() {
@@ -1572,6 +1875,7 @@
           button.classList.remove("is-loading");
         }
       }
+
     }
   }
 
@@ -1646,4 +1950,3 @@
     getSofiaDateKey
   };
 })();
-```
