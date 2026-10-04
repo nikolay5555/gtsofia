@@ -12,6 +12,7 @@
   let clockTimer = null;
   let stopMarkers = null;
   let stopMarkersById = new Map();
+  let selectedStopMarker = null;
   let transportData = null;
   let routeById = new Map();
   let routeMetaById = new Map();
@@ -22,30 +23,57 @@
   // selected stop. Keep the scheduled time they represented so the static
   // fallback does not immediately resurrect the same course (e.g. 10:57
   // realtime for a 10:59 scheduled course).
-  const CONSUMED_REALTIME_ARRIVALS_KEY = "gtsofia.virtualBoard.consumedRealtimeArrivals.v1";
-  const CONSUMED_REALTIME_ARRIVAL_TTL_MS = 20 * 60 * 1000;
+  const CONSUMED_REALTIME_ARRIVALS_KEY =
+    "gtsofia.virtualBoard.consumedRealtimeArrivals.v1";
+
+  const CONSUMED_REALTIME_ARRIVAL_TTL_MS =
+    20 * 60 * 1000;
+
   const consumedRealtimeArrivals = new Map();
   let consumedRealtimeArrivalsLoaded = false;
 
-  const boardPanel = () => document.getElementById("virtualBoardBody");
+  const boardPanel = () =>
+    document.getElementById("virtualBoardBody");
 
-  const FAVORITE_STOPS_KEY = "gtsofia.favoriteStops";
+  const FAVORITE_STOPS_KEY =
+    "gtsofia.favoriteStops";
 
   function loadConsumedRealtimeArrivals() {
     if (consumedRealtimeArrivalsLoaded) return;
+
     consumedRealtimeArrivalsLoaded = true;
 
     try {
-      const raw = sessionStorage.getItem(CONSUMED_REALTIME_ARRIVALS_KEY);
-      const stored = JSON.parse(raw || "[]");
-      if (!Array.isArray(stored)) return;
+      const raw =
+        sessionStorage.getItem(
+          CONSUMED_REALTIME_ARRIVALS_KEY
+        );
+
+      const stored =
+        JSON.parse(raw || "[]");
+
+      if (!Array.isArray(stored)) {
+        return;
+      }
 
       const now = Date.now();
+
       for (const item of stored) {
-        const key = String(item?.key || "").trim();
-        const expiresAt = Number(item?.expiresAt);
-        if (key && Number.isFinite(expiresAt) && expiresAt > now) {
-          consumedRealtimeArrivals.set(key, expiresAt);
+        const key =
+          String(item?.key || "").trim();
+
+        const expiresAt =
+          Number(item?.expiresAt);
+
+        if (
+          key
+          && Number.isFinite(expiresAt)
+          && expiresAt > now
+        ) {
+          consumedRealtimeArrivals.set(
+            key,
+            expiresAt
+          );
         }
       }
     } catch {
@@ -56,17 +84,31 @@
 
   function pruneConsumedRealtimeArrivals() {
     loadConsumedRealtimeArrivals();
+
     const now = Date.now();
     let changed = false;
 
-    for (const [key, expiresAt] of consumedRealtimeArrivals) {
-      if (!Number.isFinite(expiresAt) || expiresAt <= now) {
-        consumedRealtimeArrivals.delete(key);
+    for (
+      const [
+        key,
+        expiresAt
+      ] of consumedRealtimeArrivals
+    ) {
+      if (
+        !Number.isFinite(expiresAt)
+        || expiresAt <= now
+      ) {
+        consumedRealtimeArrivals.delete(
+          key
+        );
+
         changed = true;
       }
     }
 
-    if (changed) persistConsumedRealtimeArrivals();
+    if (changed) {
+      persistConsumedRealtimeArrivals();
+    }
   }
 
   function persistConsumedRealtimeArrivals() {
@@ -74,10 +116,17 @@
       sessionStorage.setItem(
         CONSUMED_REALTIME_ARRIVALS_KEY,
         JSON.stringify(
-          [...consumedRealtimeArrivals.entries()].map(([key, expiresAt]) => ({
-            key,
-            expiresAt
-          }))
+          [
+            ...consumedRealtimeArrivals.entries()
+          ].map(
+            ([
+              key,
+              expiresAt
+            ]) => ({
+              key,
+              expiresAt
+            })
+          )
         )
       );
     } catch {
@@ -91,8 +140,12 @@
     destination,
     scheduledTimestamp
   ) {
-    const timestamp = Number(scheduledTimestamp);
-    if (!Number.isFinite(timestamp)) return "";
+    const timestamp =
+      Number(scheduledTimestamp);
+
+    if (!Number.isFinite(timestamp)) {
+      return "";
+    }
 
     return [
       normalizeStopKey(stopId),
@@ -102,60 +155,89 @@
     ].join("|");
   }
 
-  function rememberConsumedRealtimeArrivals(stop, realtimeRoutes) {
+  function rememberConsumedRealtimeArrivals(
+    stop,
+    realtimeRoutes
+  ) {
     pruneConsumedRealtimeArrivals();
 
-    const nowSeconds = Date.now() / 1000;
-    const stopId = String(
-      stop?.stop_id || stop?.stop_code || ""
-    ).trim();
+    const stopId =
+      String(
+        stop?.stop_id
+        || stop?.stop_code
+        || ""
+      ).trim();
 
-    if (!stopId) return;
+    if (!stopId) {
+      return;
+    }
 
     let changed = false;
 
     for (const route of realtimeRoutes || []) {
-      const routeId = String(route?.route_id || "").trim();
-      if (!routeId) continue;
+      const routeId =
+        String(
+          route?.route_id || ""
+        ).trim();
 
-      const destination = String(route?.destination || "").trim();
+      if (!routeId) {
+        continue;
+      }
+
+      const destination =
+        String(
+          route?.destination || ""
+        ).trim();
 
       for (const time of route?.times || []) {
-        const actualTimestamp = Number(time?.timestamp);
-        const scheduledTimestamp = Number(time?.scheduled_time);
+        const scheduledTimestamp =
+          Number(
+            time?.scheduled_time
+          );
 
         if (
-          !Number.isFinite(actualTimestamp)
-          || !Number.isFinite(scheduledTimestamp)
+          !Number.isFinite(
+            scheduledTimestamp
+          )
         ) {
           continue;
         }
 
-        // The upstream API intentionally keeps a passed stop update visible
-        // for about 60 seconds. Remember its scheduled course while the
-        // realtime arrival is already at/past the current time, so a transient
-        // feed gap does not resurrect the static scheduled time.
-        if (actualTimestamp > nowSeconds) continue;
+        const key =
+          getConsumedRealtimeArrivalKey(
+            stopId,
+            routeId,
+            destination,
+            scheduledTimestamp
+          );
 
-        const key = getConsumedRealtimeArrivalKey(
-          stopId,
-          routeId,
-          destination,
-          scheduledTimestamp
-        );
+        if (!key) {
+          continue;
+        }
 
-        if (!key || consumedRealtimeArrivals.has(key)) continue;
+        // Remember the course as soon as we see it as realtime.
+        // Do not wait until actualTimestamp <= now.
+        if (
+          consumedRealtimeArrivals.has(
+            key
+          )
+        ) {
+          continue;
+        }
 
         consumedRealtimeArrivals.set(
           key,
-          Date.now() + CONSUMED_REALTIME_ARRIVAL_TTL_MS
+          Date.now()
+          + CONSUMED_REALTIME_ARRIVAL_TTL_MS
         );
 
         changed = true;
       }
     }
 
-    if (changed) persistConsumedRealtimeArrivals();
+    if (changed) {
+      persistConsumedRealtimeArrivals();
+    }
   }
 
   function isConsumedRealtimeScheduledArrival(
@@ -166,23 +248,32 @@
   ) {
     pruneConsumedRealtimeArrivals();
 
-    const key = getConsumedRealtimeArrivalKey(
-      stopId,
-      routeId,
-      destination,
-      scheduledTimestamp
-    );
+    const key =
+      getConsumedRealtimeArrivalKey(
+        stopId,
+        routeId,
+        destination,
+        scheduledTimestamp
+      );
 
-    return !!key && consumedRealtimeArrivals.has(key);
+    return (
+      !!key
+      && consumedRealtimeArrivals.has(key)
+    );
   }
 
   function getFavoriteStops() {
     try {
-      const value = JSON.parse(
-        localStorage.getItem(FAVORITE_STOPS_KEY) || "[]"
-      );
+      const value =
+        JSON.parse(
+          localStorage.getItem(
+            FAVORITE_STOPS_KEY
+          ) || "[]"
+        );
 
-      return Array.isArray(value) ? value : [];
+      return Array.isArray(value)
+        ? value
+        : [];
     } catch {
       return [];
     }
@@ -190,24 +281,43 @@
 
   function isFavoriteStop(stopId) {
     return getFavoriteStops().some(
-      item => String(item.stop_id) === String(stopId)
+      item =>
+        String(item.stop_id)
+        === String(stopId)
     );
   }
 
   function setFavoriteStop(stop) {
-    const favorites = getFavoriteStops();
+    const favorites =
+      getFavoriteStops();
 
-    const index = favorites.findIndex(
-      item => String(item.stop_id) === String(stop.stop_id)
-    );
+    const index =
+      favorites.findIndex(
+        item =>
+          String(item.stop_id)
+          === String(stop.stop_id)
+      );
 
     if (index >= 0) {
       favorites.splice(index, 1);
     } else {
       favorites.push({
-        stop_id: String(stop.stop_id),
-        stop_code: String(stop.stop_code || stop.stop_id || ""),
-        stop_name: String(stop.stop_name || stop.name || "Спирка")
+        stop_id:
+          String(stop.stop_id),
+
+        stop_code:
+          String(
+            stop.stop_code
+            || stop.stop_id
+            || ""
+          ),
+
+        stop_name:
+          String(
+            stop.stop_name
+            || stop.name
+            || "Спирка"
+          )
       });
     }
 
@@ -229,78 +339,156 @@
   }
 
   function getSofiaParts() {
-    const parts = new Intl.DateTimeFormat("en-GB", {
-      timeZone: SOFIA_TIME_ZONE,
-      weekday: "short",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hourCycle: "h23"
-    }).formatToParts(new Date());
+    const parts =
+      new Intl.DateTimeFormat(
+        "en-GB",
+        {
+          timeZone:
+            SOFIA_TIME_ZONE,
+
+          weekday: "short",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hourCycle: "h23"
+        }
+      ).formatToParts(
+        new Date()
+      );
 
     const get = type =>
-      parts.find(part => part.type === type)?.value || "";
+      parts.find(
+        part =>
+          part.type === type
+      )?.value || "";
 
     return {
-      weekday: get("weekday"),
-      hour: Number(get("hour")),
-      minute: Number(get("minute")),
-      second: Number(get("second"))
+      weekday:
+        get("weekday"),
+
+      hour:
+        Number(get("hour")),
+
+      minute:
+        Number(get("minute")),
+
+      second:
+        Number(get("second"))
     };
   }
 
   function getCurrentScheduleDayType() {
-    if (typeof getTransportCalendarDayType === "function") {
+    if (
+      typeof getTransportCalendarDayType
+      === "function"
+    ) {
       return getTransportCalendarDayType();
     }
 
-    const day = new Intl.DateTimeFormat("en-US", {
-      timeZone: SOFIA_TIME_ZONE,
-      weekday: "short"
-    }).format(new Date());
+    const day =
+      new Intl.DateTimeFormat(
+        "en-US",
+        {
+          timeZone:
+            SOFIA_TIME_ZONE,
+          weekday: "short"
+        }
+      ).format(
+        new Date()
+      );
 
-    return day === "Sat" || day === "Sun"
+    return (
+      day === "Sat"
+      || day === "Sun"
+    )
       ? "weekend"
       : "weekday";
   }
 
   function getNowGtfsSeconds() {
-    const parts = getSofiaParts();
+    const parts =
+      getSofiaParts();
 
     return (
-      parts.hour * 3600 +
-      parts.minute * 60 +
-      parts.second
+      parts.hour * 3600
+      + parts.minute * 60
+      + parts.second
     );
   }
 
-  function formatClockTime(totalSeconds) {
-    const seconds = Math.max(0, Number(totalSeconds) || 0);
-    const hour = Math.floor(seconds / 3600) % 24;
-    const minute = Math.floor((seconds % 3600) / 60);
+  function formatClockTime(
+    totalSeconds
+  ) {
+    const seconds =
+      Math.max(
+        0,
+        Number(totalSeconds) || 0
+      );
 
-    return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+    const hour =
+      Math.floor(seconds / 3600)
+      % 24;
+
+    const minute =
+      Math.floor(
+        (seconds % 3600) / 60
+      );
+
+    return (
+      `${String(hour).padStart(2, "0")}:`
+      + `${String(minute).padStart(2, "0")}`
+    );
   }
 
   function parseGtfsTime(value) {
-    if (!value) return null;
+    if (!value) {
+      return null;
+    }
 
-    const parts = String(value).trim().split(":");
-    if (parts.length !== 3) return null;
+    const parts =
+      String(value)
+        .trim()
+        .split(":");
 
-    const hour = Number(parts[0]);
-    const minute = Number(parts[1]);
-    const second = Number(parts[2]);
+    if (parts.length !== 3) {
+      return null;
+    }
 
-    if (![hour, minute, second].every(Number.isFinite)) return null;
+    const hour =
+      Number(parts[0]);
 
-    return hour * 3600 + minute * 60 + second;
+    const minute =
+      Number(parts[1]);
+
+    const second =
+      Number(parts[2]);
+
+    if (
+      ![
+        hour,
+        minute,
+        second
+      ].every(
+        Number.isFinite
+      )
+    ) {
+      return null;
+    }
+
+    return (
+      hour * 3600
+      + minute * 60
+      + second
+    );
   }
 
   function normalizeProxyStopCode(stop) {
-    const rawCode = String(
-      stop?.stop_code ?? stop?.stop_id ?? ""
-    ).trim();
+    const rawCode =
+      String(
+        stop?.stop_code
+        ?? stop?.stop_id
+        ?? ""
+      ).trim();
 
     if (!rawCode) {
       return {
@@ -309,399 +497,886 @@
       };
     }
 
-    const rawId = String(stop?.stop_id ?? "").trim();
-    const isMetro = /^M/i.test(rawCode) || /^M/i.test(rawId);
-    const digits = rawCode.replace(/\D/g, "");
+    const rawId =
+      String(
+        stop?.stop_id ?? ""
+      ).trim();
+
+    const isMetro =
+      /^M/i.test(rawCode)
+      || /^M/i.test(rawId);
+
+    const digits =
+      rawCode.replace(
+        /\D/g,
+        ""
+      );
 
     const candidates = [];
 
     if (digits) {
-      candidates.push(String(Number(digits)));
-      candidates.push(digits);
+      candidates.push(
+        String(
+          Number(digits)
+        )
+      );
+
+      candidates.push(
+        digits
+      );
     }
 
     candidates.push(rawCode);
 
     return {
-      candidates: [...new Set(candidates.filter(Boolean))],
+      candidates:
+        [
+          ...new Set(
+            candidates.filter(
+              Boolean
+            )
+          )
+        ],
+
       isMetro
     };
   }
 
-  function getLineMeta(routeId, routeRef) {
-    const id = String(routeId ?? "").trim();
-    const ref = String(routeRef ?? "").trim();
+  function getLineMeta(
+    routeId,
+    routeRef
+  ) {
+    const id =
+      String(
+        routeId ?? ""
+      ).trim();
 
-    if (id && routeMetaById.has(id)) {
+    const ref =
+      String(
+        routeRef ?? ""
+      ).trim();
+
+    if (
+      id
+      && routeMetaById.has(id)
+    ) {
       return routeMetaById.get(id);
     }
 
-    if (ref && routeMetaByNumber.has(ref)) {
+    if (
+      ref
+      && routeMetaByNumber.has(ref)
+    ) {
       return routeMetaByNumber.get(ref);
     }
 
-    const route = id ? routeById.get(id) : null;
-    const number = ref || route?.route_short_name || "—";
+    const route =
+      id
+        ? routeById.get(id)
+        : null;
+
+    const number =
+      ref
+      || route?.route_short_name
+      || "—";
 
     if (!route) {
-      const subtype = /^N/i.test(number) ? "night" : null;
+      const subtype =
+        /^N/i.test(number)
+          ? "night"
+          : null;
 
       return {
         id,
         number,
         type: "bus",
         subtype,
-        icon: subtype === "night"
-          ? "Icons/Active icons/night-bus.svg"
-          : "Icons/Active icons/bus.svg",
-        color: "#BE1E2D",
-        textColor: "#FFFFFF"
+
+        icon:
+          subtype === "night"
+            ? "Icons/Active icons/night-bus.svg"
+            : "Icons/Active icons/bus.svg",
+
+        color:
+          "#BE1E2D",
+
+        textColor:
+          "#FFFFFF"
       };
     }
 
     const type =
-      typeof getLineType === "function"
+      typeof getLineType
+      === "function"
         ? getLineType(route)
         : "bus";
 
     const subtype =
-      typeof getLineSubtype === "function"
+      typeof getLineSubtype
+      === "function"
         ? getLineSubtype(route)
         : null;
 
     const icon =
-      typeof getTransportIcon === "function"
-        ? getTransportIcon(type, number, subtype)
+      typeof getTransportIcon
+      === "function"
+        ? getTransportIcon(
+            type,
+            number,
+            subtype
+          )
         : "";
 
     const color =
-      typeof getLineColor === "function"
-        ? getLineColor(route, type)
+      typeof getLineColor
+      === "function"
+        ? getLineColor(
+            route,
+            type
+          )
         : "#BE1E2D";
 
     return {
-      id: route.route_id,
+      id:
+        route.route_id,
+
       number,
+
       type,
+
       subtype,
+
       icon,
+
       color,
-      textColor: route.route_text_color
-        ? `#${route.route_text_color}`
-        : "#FFFFFF"
+
+      textColor:
+        route.route_text_color
+          ? `#${route.route_text_color}`
+          : "#FFFFFF"
     };
   }
 
   function linePillHtml(line) {
-    const number = escapeHtml(line?.number || "—");
-    const typeClass = line?.type === "metro" ? " metro" : "";
-    const color = escapeHtml(line?.color || "#BE1E2D");
-    const textColor = escapeHtml(
-      line?.textColor || "#FFFFFF"
-    );
+    const number =
+      escapeHtml(
+        line?.number || "—"
+      );
 
-    return `<span class="schedule-line-pill${typeClass}" style="--line-color:${color}; --line-text-color:${textColor}; background-color:${color}; color:${textColor};">${number}</span>`;
+    const typeClass =
+      line?.type === "metro"
+        ? " metro"
+        : "";
+
+    const color =
+      escapeHtml(
+        line?.color
+        || "#BE1E2D"
+      );
+
+    const textColor =
+      escapeHtml(
+        line?.textColor
+        || "#FFFFFF"
+      );
+
+    return (
+      `<span class="schedule-line-pill${typeClass}" `
+      + `style="--line-color:${color}; `
+      + `--line-text-color:${textColor}; `
+      + `background-color:${color}; `
+      + `color:${textColor};">`
+      + `${number}</span>`
+    );
   }
 
   function lineIdentityHtml(line) {
-    const icon = line?.icon
-      ? `<span class="schedule-line-icon"><img src="${escapeHtml(line.icon)}" alt="" aria-hidden="true"></span>`
-      : "";
+    const icon =
+      line?.icon
+        ? (
+            `<span class="schedule-line-icon">`
+            + `<img src="${escapeHtml(line.icon)}" `
+            + `alt="" aria-hidden="true"></span>`
+          )
+        : "";
 
-    return `<span class="schedule-line-identity">${icon}${linePillHtml(line)}</span>`;
+    return (
+      `<span class="schedule-line-identity">`
+      + `${icon}`
+      + `${linePillHtml(line)}`
+      + `</span>`
+    );
   }
 
   function destinationHtml(destination) {
-    return `<span class="schedule-summary-arrow direction-arrow" aria-hidden="true"><img src="Icons/destinationarrow.svg" alt=""></span><strong class="schedule-summary-destination vb-destination">${escapeHtml(destination || "—")}</strong>`;
+    return (
+      `<span class="schedule-summary-arrow `
+      + `direction-arrow" aria-hidden="true">`
+      + `<img src="Icons/destinationarrow.svg" alt="">`
+      + `</span>`
+      + `<strong class="schedule-summary-destination `
+      + `vb-destination">`
+      + `${escapeHtml(destination || "—")}`
+      + `</strong>`
+    );
   }
 
   function parseGeneratedAt(value) {
-    if (typeof value === "number" && Number.isFinite(value)) {
-      return value < 1e12 ? value * 1000 : value;
+    if (
+      typeof value === "number"
+      && Number.isFinite(value)
+    ) {
+      return value < 1e12
+        ? value * 1000
+        : value;
     }
 
-    const parsed = Date.parse(String(value ?? ""));
-    return Number.isFinite(parsed) ? parsed : Date.now();
+    const parsed =
+      Date.parse(
+        String(value ?? "")
+      );
+
+    return Number.isFinite(parsed)
+      ? parsed
+      : Date.now();
   }
 
-  function getArrivalMinutes(timestamp) {
-    const seconds = Number(timestamp);
+  function getArrivalMinutes(
+    timestamp
+  ) {
+    const seconds =
+      Number(timestamp);
 
-    if (!Number.isFinite(seconds)) return null;
+    if (
+      !Number.isFinite(seconds)
+    ) {
+      return null;
+    }
 
     return Math.max(
       0,
-      (seconds - Date.now() / 1000) / 60
+      (
+        seconds
+        - Date.now() / 1000
+      ) / 60
     );
   }
 
   function formatArrivalCountdown(
     timestamp,
-    nowSeconds = Date.now() / 1000
+    nowSeconds =
+      Date.now() / 1000
   ) {
-    const seconds = Number(timestamp);
+    const seconds =
+      Number(timestamp);
 
-    if (!Number.isFinite(seconds)) return "";
-
-    const remainingSeconds = Math.max(
-      0,
-      seconds - nowSeconds
-    );
-
-    return `${Math.max(
-      0,
-      Math.round(remainingSeconds / 60)
-    )} мин.`;
-  }
-
-  function formatArrivalClock(timestamp) {
-    const seconds = Number(timestamp);
-
-    if (!Number.isFinite(seconds)) return "—";
-
-    return new Intl.DateTimeFormat("bg-BG", {
-      timeZone: SOFIA_TIME_ZONE,
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23"
-    }).format(new Date(seconds * 1000));
-  }
-
-  function countdownHtml(arrival, showLive) {
-    const timestamp = Number(arrival?.timestamp);
-    const minutes = getArrivalMinutes(timestamp);
-
-    if (!Number.isFinite(minutes)) return "";
-
-    const clock = formatArrivalClock(timestamp);
-    const live = showLive
-      ? '<span class="vb-arrival-live" aria-hidden="true"></span>'
-      : "";
-
-    const countdown = formatArrivalCountdown(timestamp);
-
-    return `<div class="vb-arrival-main">${live}<span class="vb-arrival-clock">${escapeHtml(clock)}</span><span class="vb-arrival-separator" aria-hidden="true">·</span><span class="vb-arrival-minutes" data-arrival-timestamp="${timestamp}">${escapeHtml(countdown)}</span></div>`;
-  }
-
-  function normalizeStopKey(value) {
-    const raw = String(value ?? "").trim();
-
-    if (!raw) return "";
-
-    const withoutMetroPrefix = raw.replace(/^M/i, "");
-    const numeric = withoutMetroPrefix.replace(/^0+(?=\d)/, "");
-
-    return numeric || "0";
-  }
-
-  function stopIdsMatch(left, right) {
-    const leftRaw = String(left ?? "").trim();
-    const rightRaw = String(right ?? "").trim();
-
-    if (!leftRaw || !rightRaw) return false;
-
-    const leftMetro = /^M/i.test(leftRaw);
-    const rightMetro = /^M/i.test(rightRaw);
-
-    if (leftMetro !== rightMetro) return false;
-
-    if (leftMetro && rightMetro) {
-      return leftRaw.toUpperCase() === rightRaw.toUpperCase();
-    }
-
-    return normalizeStopKey(leftRaw) === normalizeStopKey(rightRaw);
-  }
-
-  function isMetroStop(stop) {
-    return /^M/i.test(String(stop?.stop_id || "").trim())
-      || /^M/i.test(String(stop?.stop_code || "").trim());
-  }
-
-  function getSofiaDateParts(date = new Date()) {
-    const parts = new Intl.DateTimeFormat("en-CA", {
-      timeZone: SOFIA_TIME_ZONE,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit"
-    }).formatToParts(date);
-
-    const get = type =>
-      parts.find(part => part.type === type)?.value || "";
-
-    return {
-      year: Number(get("year")),
-      month: Number(get("month")),
-      day: Number(get("day"))
-    };
-  }
-
-  function getSofiaDateKey(date = new Date()) {
-    const parts = getSofiaDateParts(date);
-
-    if (![parts.year, parts.month, parts.day].every(Number.isFinite)) {
+    if (
+      !Number.isFinite(seconds)
+    ) {
       return "";
     }
 
-    return `${String(parts.year).padStart(4, "0")}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+    const remainingSeconds =
+      Math.max(
+        0,
+        seconds - nowSeconds
+      );
+
+    return (
+      `${Math.max(
+        0,
+        Math.round(
+          remainingSeconds / 60
+        )
+      )} мин.`
+    );
   }
 
-  function getSofiaWeekdayField(date = new Date()) {
-    const weekday = new Intl.DateTimeFormat("en-US", {
-      timeZone: SOFIA_TIME_ZONE,
-      weekday: "long"
-    }).format(date).toLowerCase();
-
-    return weekday;
-  }
-
-  function isServiceActiveOnDate(serviceId, date = new Date()) {
-    const id = String(serviceId ?? "").trim();
-
-    if (!id) return true;
-
-    const calendar = transportData?.calendar || {};
-    const dateKey = getSofiaDateKey(date);
-
-    if (!dateKey) return false;
-
-    const byDate = calendar?.serviceIdsByDate;
+  function formatArrivalClock(
+    timestamp
+  ) {
+    const seconds =
+      Number(timestamp);
 
     if (
-      !byDate
-      || !Object.prototype.hasOwnProperty.call(byDate, dateKey)
+      !Number.isFinite(seconds)
+    ) {
+      return "—";
+    }
+
+    return new Intl.DateTimeFormat(
+      "bg-BG",
+      {
+        timeZone:
+          SOFIA_TIME_ZONE,
+
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23"
+      }
+    ).format(
+      new Date(
+        seconds * 1000
+      )
+    );
+  }
+
+  function countdownHtml(
+    arrival,
+    showLive
+  ) {
+    const timestamp =
+      Number(
+        arrival?.timestamp
+      );
+
+    const minutes =
+      getArrivalMinutes(
+        timestamp
+      );
+
+    if (
+      !Number.isFinite(minutes)
+    ) {
+      return "";
+    }
+
+    const clock =
+      formatArrivalClock(
+        timestamp
+      );
+
+    const live =
+      showLive
+        ? (
+            `<span class="vb-arrival-live" `
+            + `aria-hidden="true"></span>`
+          )
+        : "";
+
+    const countdown =
+      formatArrivalCountdown(
+        timestamp
+      );
+
+    return (
+      `<div class="vb-arrival-main">`
+      + `${live}`
+      + `<span class="vb-arrival-clock">`
+      + `${escapeHtml(clock)}`
+      + `</span>`
+      + `<span class="vb-arrival-separator" `
+      + `aria-hidden="true">·</span>`
+      + `<span class="vb-arrival-minutes" `
+      + `data-arrival-timestamp="${timestamp}">`
+      + `${escapeHtml(countdown)}`
+      + `</span>`
+      + `</div>`
+    );
+  }
+
+  function normalizeStopKey(value) {
+    const raw =
+      String(
+        value ?? ""
+      ).trim();
+
+    if (!raw) {
+      return "";
+    }
+
+    const withoutMetroPrefix =
+      raw.replace(
+        /^M/i,
+        ""
+      );
+
+    const numeric =
+      withoutMetroPrefix.replace(
+        /^0+(?=\d)/,
+        ""
+      );
+
+    return (
+      numeric || "0"
+    );
+  }
+
+  function stopIdsMatch(
+    left,
+    right
+  ) {
+    const leftRaw =
+      String(
+        left ?? ""
+      ).trim();
+
+    const rightRaw =
+      String(
+        right ?? ""
+      ).trim();
+
+    if (
+      !leftRaw
+      || !rightRaw
     ) {
       return false;
     }
 
-    return Array.isArray(byDate[dateKey])
-      && byDate[dateKey].some(
-        value => String(value).trim() === id
+    const leftMetro =
+      /^M/i.test(leftRaw);
+
+    const rightMetro =
+      /^M/i.test(rightRaw);
+
+    if (
+      leftMetro !== rightMetro
+    ) {
+      return false;
+    }
+
+    if (
+      leftMetro
+      && rightMetro
+    ) {
+      return (
+        leftRaw.toUpperCase()
+        === rightRaw.toUpperCase()
       );
+    }
+
+    return (
+      normalizeStopKey(leftRaw)
+      === normalizeStopKey(rightRaw)
+    );
   }
 
-  function isScheduleRowActiveToday(schedule) {
-    const serviceId = String(
-      schedule?.service_id
-      || findStaticTrip(schedule?.original_trip_id)?.service_id
-      || ""
-    ).trim();
-
-    return isServiceActiveOnDate(serviceId);
+  function isMetroStop(stop) {
+    return (
+      /^M/i.test(
+        String(
+          stop?.stop_id || ""
+        ).trim()
+      )
+      || /^M/i.test(
+        String(
+          stop?.stop_code || ""
+        ).trim()
+      )
+    );
   }
 
-  function getSofiaOffsetMs(date = new Date()) {
-    const parts = new Intl.DateTimeFormat("en-US", {
-      timeZone: SOFIA_TIME_ZONE,
-      timeZoneName: "shortOffset",
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23"
-    }).formatToParts(date);
+  function getSofiaDateParts(
+    date = new Date()
+  ) {
+    const parts =
+      new Intl.DateTimeFormat(
+        "en-CA",
+        {
+          timeZone:
+            SOFIA_TIME_ZONE,
+
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit"
+        }
+      ).formatToParts(
+        date
+      );
+
+    const get = type =>
+      parts.find(
+        part =>
+          part.type === type
+      )?.value || "";
+
+    return {
+      year:
+        Number(get("year")),
+
+      month:
+        Number(get("month")),
+
+      day:
+        Number(get("day"))
+    };
+  }
+
+  function getSofiaDateKey(
+    date = new Date()
+  ) {
+    const parts =
+      getSofiaDateParts(
+        date
+      );
+
+    if (
+      ![
+        parts.year,
+        parts.month,
+        parts.day
+      ].every(
+        Number.isFinite
+      )
+    ) {
+      return "";
+    }
+
+    return (
+      `${String(parts.year).padStart(4, "0")}-`
+      + `${String(parts.month).padStart(2, "0")}-`
+      + `${String(parts.day).padStart(2, "0")}`
+    );
+  }
+
+  function getSofiaWeekdayField(
+    date = new Date()
+  ) {
+    const weekday =
+      new Intl.DateTimeFormat(
+        "en-US",
+        {
+          timeZone:
+            SOFIA_TIME_ZONE,
+
+          weekday: "long"
+        }
+      ).format(
+        date
+      ).toLowerCase();
+
+    return weekday;
+  }
+
+  function isServiceActiveOnDate(
+    serviceId,
+    date = new Date()
+  ) {
+    const id =
+      String(
+        serviceId ?? ""
+      ).trim();
+
+    if (!id) {
+      return true;
+    }
+
+    const calendar =
+      transportData?.calendar
+      || {};
+
+    const dateKey =
+      getSofiaDateKey(
+        date
+      );
+
+    if (!dateKey) {
+      return false;
+    }
+
+    const byDate =
+      calendar?.serviceIdsByDate;
+
+    if (
+      !byDate
+      || !Object.prototype.hasOwnProperty.call(
+        byDate,
+        dateKey
+      )
+    ) {
+      return false;
+    }
+
+    return (
+      Array.isArray(
+        byDate[dateKey]
+      )
+      && byDate[dateKey].some(
+        value =>
+          String(value).trim()
+          === id
+      )
+    );
+  }
+
+  function isScheduleRowActiveToday(
+    schedule
+  ) {
+    const serviceId =
+      String(
+        schedule?.service_id
+        || findStaticTrip(
+          schedule?.original_trip_id
+        )?.service_id
+        || ""
+      ).trim();
+
+    return isServiceActiveOnDate(
+      serviceId
+    );
+  }
+
+  function getSofiaOffsetMs(
+    date = new Date()
+  ) {
+    const parts =
+      new Intl.DateTimeFormat(
+        "en-US",
+        {
+          timeZone:
+            SOFIA_TIME_ZONE,
+
+          timeZoneName:
+            "shortOffset",
+
+          hour: "2-digit",
+          minute: "2-digit",
+          hourCycle: "h23"
+        }
+      ).formatToParts(
+        date
+      );
 
     const raw =
-      parts.find(part => part.type === "timeZoneName")?.value
+      parts.find(
+        part =>
+          part.type === "timeZoneName"
+      )?.value
       || "GMT+0";
 
-    const match = raw.match(
-      /^GMT([+-])(\d{1,2})(?::(\d{2}))?$/
+    const match =
+      raw.match(
+        /^GMT([+-])(\d{1,2})(?::(\d{2}))?$/
+      );
+
+    if (!match) {
+      return 0;
+    }
+
+    const sign =
+      match[1] === "+"
+        ? 1
+        : -1;
+
+    return (
+      sign
+      * (
+        Number(match[2]) * 60
+        + Number(match[3] || 0)
+      )
+      * 60
+      * 1000
     );
-
-    if (!match) return 0;
-
-    const sign = match[1] === "+" ? 1 : -1;
-
-    return sign * (
-      Number(match[2]) * 60
-      + Number(match[3] || 0)
-    ) * 60 * 1000;
   }
 
-  function gtfsSecondsToTodayTimestamp(seconds) {
-    const date = getSofiaDateParts();
-    const baseUtc = Date.UTC(
-      date.year,
-      date.month - 1,
-      date.day
-    );
+  function gtfsSecondsToTodayTimestamp(
+    seconds
+  ) {
+    const date =
+      getSofiaDateParts();
+
+    const baseUtc =
+      Date.UTC(
+        date.year,
+        date.month - 1,
+        date.day
+      );
 
     const candidate =
       baseUtc
       + Number(seconds) * 1000
-      - getSofiaOffsetMs(new Date(baseUtc));
+      - getSofiaOffsetMs(
+          new Date(baseUtc)
+        );
 
     return candidate / 1000;
   }
 
-  function findStaticTrip(tripId) {
-    return tripById.get(String(tripId)) || null;
+  function findStaticTrip(
+    tripId
+  ) {
+    return (
+      tripById.get(
+        String(tripId)
+      )
+      || null
+    );
   }
 
-  function normalizeDirectionText(value) {
+  function normalizeDirectionText(
+    value
+  ) {
     return String(value ?? "")
       .trim()
-      .toLocaleLowerCase("bg-BG")
-      .replace(/\s+/g, " ")
-      .replace(/[–—]/g, "-")
-      .replace(/[.]/g, "")
+      .toLocaleLowerCase(
+        "bg-BG"
+      )
+      .replace(
+        /\s+/g,
+        " "
+      )
+      .replace(
+        /[–—]/g,
+        "-"
+      )
+      .replace(
+        /[.]/g,
+        ""
+      )
       .trim();
   }
 
-  function getStaticDirectionForTrip(staticTrip) {
-    if (!staticTrip?.route_id) return null;
-
-    const routeId = String(staticTrip.route_id);
-    const directions =
-      transportData?.directions?.[routeId] || {};
-
-    const tripId = String(staticTrip.trip_id || "").trim();
-
-    if (!tripId) return null;
-
-    for (const [key, direction] of Object.entries(directions)) {
-      const tripIds = Array.isArray(direction?.trip_ids)
-        ? direction.trip_ids.map(String)
-        : [];
-
-      if (tripIds.includes(tripId)) {
-        return { key, ...direction };
-      }
+  function getStaticDirectionForTrip(
+    staticTrip
+  ) {
+    if (
+      !staticTrip?.route_id
+    ) {
+      return null;
     }
 
-    for (const [key, direction] of Object.entries(directions)) {
-      if (String(direction?.trip_id || "").trim() === tripId) {
-        return { key, ...direction };
-      }
-    }
-
-    const shapeId = String(staticTrip.shape_id || "").trim();
-
-    if (shapeId) {
-      const shapeMatches = Object.entries(directions).filter(
-        ([, direction]) =>
-          String(direction?.shape_id || "").trim() === shapeId
+    const routeId =
+      String(
+        staticTrip.route_id
       );
 
-      if (shapeMatches.length === 1) {
-        const [key, direction] = shapeMatches[0];
-        return { key, ...direction };
+    const directions =
+      transportData
+        ?.directions?.[routeId]
+      || {};
+
+    const tripId =
+      String(
+        staticTrip.trip_id
+        || ""
+      ).trim();
+
+    if (!tripId) {
+      return null;
+    }
+
+    for (
+      const [
+        key,
+        direction
+      ]
+      of Object.entries(
+        directions
+      )
+    ) {
+      const tripIds =
+        Array.isArray(
+          direction?.trip_ids
+        )
+          ? direction.trip_ids.map(
+              String
+            )
+          : [];
+
+      if (
+        tripIds.includes(
+          tripId
+        )
+      ) {
+        return {
+          key,
+          ...direction
+        };
       }
     }
 
-    const headsign = normalizeDirectionText(
-      staticTrip.trip_headsign
-    );
+    for (
+      const [
+        key,
+        direction
+      ]
+      of Object.entries(
+        directions
+      )
+    ) {
+      if (
+        String(
+          direction?.trip_id
+          || ""
+        ).trim()
+        === tripId
+      ) {
+        return {
+          key,
+          ...direction
+        };
+      }
+    }
+
+    const shapeId =
+      String(
+        staticTrip.shape_id
+        || ""
+      ).trim();
+
+    if (shapeId) {
+      const shapeMatches =
+        Object.entries(
+          directions
+        ).filter(
+          ([
+            ,
+            direction
+          ]) =>
+            String(
+              direction?.shape_id
+              || ""
+            ).trim()
+            === shapeId
+        );
+
+      if (
+        shapeMatches.length
+        === 1
+      ) {
+        const [
+          key,
+          direction
+        ] =
+          shapeMatches[0];
+
+        return {
+          key,
+          ...direction
+        };
+      }
+    }
+
+    const headsign =
+      normalizeDirectionText(
+        staticTrip.trip_headsign
+      );
 
     if (headsign) {
-      for (const [key, direction] of Object.entries(directions)) {
-        const directionHeadsign = normalizeDirectionText(
-          direction?.headsign || direction?.destination
-        );
+      for (
+        const [
+          key,
+          direction
+        ]
+        of Object.entries(
+          directions
+        )
+      ) {
+        const directionHeadsign =
+          normalizeDirectionText(
+            direction?.headsign
+            || direction?.destination
+          );
 
         if (
           directionHeadsign
-          && directionHeadsign === headsign
+          && directionHeadsign
+            === headsign
         ) {
-          return { key, ...direction };
+          return {
+            key,
+            ...direction
+          };
         }
       }
     }
@@ -709,55 +1384,130 @@
     return null;
   }
 
-  function normalizeStopName(value) {
+  function normalizeStopName(
+    value
+  ) {
     return String(value ?? "")
       .trim()
-      .toLocaleLowerCase("bg-BG")
-      .replace(/["„“”'’]/g, "")
-      .replace(/[–—-]/g, " ")
-      .replace(/\s+/g, " ")
+      .toLocaleLowerCase(
+        "bg-BG"
+      )
+      .replace(
+        /["„“”'’]/g,
+        ""
+      )
+      .replace(
+        /[–—-]/g,
+        " "
+      )
+      .replace(
+        /\s+/g,
+        " "
+      )
       .trim();
   }
 
-  function getStopById(stopId) {
-    const wanted = String(stopId ?? "").trim();
+  function getStopById(
+    stopId
+  ) {
+    const wanted =
+      String(
+        stopId ?? ""
+      ).trim();
 
-    if (!wanted) return null;
+    if (!wanted) {
+      return null;
+    }
 
-    return (transportData?.stops || []).find(stop =>
-      stopIdsMatch(stop?.stop_id, wanted)
-      || stopIdsMatch(stop?.stop_code, wanted)
-    ) || null;
+    return (
+      transportData?.stops
+      || []
+    ).find(
+      stop =>
+        stopIdsMatch(
+          stop?.stop_id,
+          wanted
+        )
+        || stopIdsMatch(
+          stop?.stop_code,
+          wanted
+        )
+    )
+    || null;
   }
 
-  function getStopDistanceMeters(left, right) {
-    const lat1 = Number(left?.stop_lat);
-    const lon1 = Number(left?.stop_lon);
-    const lat2 = Number(right?.stop_lat);
-    const lon2 = Number(right?.stop_lon);
+  function getStopDistanceMeters(
+    left,
+    right
+  ) {
+    const lat1 =
+      Number(
+        left?.stop_lat
+      );
+
+    const lon1 =
+      Number(
+        left?.stop_lon
+      );
+
+    const lat2 =
+      Number(
+        right?.stop_lat
+      );
+
+    const lon2 =
+      Number(
+        right?.stop_lon
+      );
 
     if (
-      ![lat1, lon1, lat2, lon2]
-        .every(Number.isFinite)
+      ![
+        lat1,
+        lon1,
+        lat2,
+        lon2
+      ].every(
+        Number.isFinite
+      )
     ) {
       return Infinity;
     }
 
-    const toRad = value =>
-      value * Math.PI / 180;
+    const toRad =
+      value =>
+        value * Math.PI / 180;
 
-    const dLat = toRad(lat2 - lat1);
-    const dLon = toRad(lon2 - lon1);
+    const dLat =
+      toRad(
+        lat2 - lat1
+      );
+
+    const dLon =
+      toRad(
+        lon2 - lon1
+      );
 
     const a =
-      Math.sin(dLat / 2) ** 2
-      + Math.cos(toRad(lat1))
-      * Math.cos(toRad(lat2))
-      * Math.sin(dLon / 2) ** 2;
+      Math.sin(
+        dLat / 2
+      ) ** 2
+      + Math.cos(
+          toRad(lat1)
+        )
+        * Math.cos(
+          toRad(lat2)
+        )
+        * Math.sin(
+          dLon / 2
+        ) ** 2;
 
-    return 6371000 * 2 * Math.atan2(
-      Math.sqrt(a),
-      Math.sqrt(1 - a)
+    return (
+      6371000
+      * 2
+      * Math.atan2(
+        Math.sqrt(a),
+        Math.sqrt(1 - a)
+      )
     );
   }
 
@@ -766,76 +1516,151 @@
     stopId,
     direction
   ) {
-    const pattern = Array.isArray(direction?.pattern)
-      ? direction.pattern.map(String)
-      : [];
-
-    if (pattern.length < 2) return false;
-
-    const selected = String(stopId ?? "").trim();
-
-    if (!selected) return false;
-
-    const terminalId =
-      pattern[pattern.length - 1];
-
-    if (stopIdsMatch(terminalId, selected)) {
-      return true;
-    }
-
-    const selectedStop = getStopById(selected);
-    const terminalStop = getStopById(terminalId);
-
-    if (!selectedStop || !terminalStop) {
-      return false;
-    }
-
-    const selectedName =
-      normalizeStopName(selectedStop.stop_name);
-
-    const terminalName =
-      normalizeStopName(terminalStop.stop_name);
+    const pattern =
+      Array.isArray(
+        direction?.pattern
+      )
+        ? direction.pattern.map(
+            String
+          )
+        : [];
 
     if (
-      !selectedName
-      || selectedName !== terminalName
+      pattern.length < 2
     ) {
       return false;
     }
 
-    return getStopDistanceMeters(
-      selectedStop,
-      terminalStop
-    ) <= 300;
+    const selected =
+      String(
+        stopId ?? ""
+      ).trim();
+
+    if (!selected) {
+      return false;
+    }
+
+    const terminalId =
+      pattern[
+        pattern.length - 1
+      ];
+
+    if (
+      stopIdsMatch(
+        terminalId,
+        selected
+      )
+    ) {
+      return true;
+    }
+
+    const selectedStop =
+      getStopById(
+        selected
+      );
+
+    const terminalStop =
+      getStopById(
+        terminalId
+      );
+
+    if (
+      !selectedStop
+      || !terminalStop
+    ) {
+      return false;
+    }
+
+    const selectedName =
+      normalizeStopName(
+        selectedStop.stop_name
+      );
+
+    const terminalName =
+      normalizeStopName(
+        terminalStop.stop_name
+      );
+
+    if (
+      !selectedName
+      || selectedName
+        !== terminalName
+    ) {
+      return false;
+    }
+
+    return (
+      getStopDistanceMeters(
+        selectedStop,
+        terminalStop
+      ) <= 300
+    );
   }
 
-  function getDirectionsForRouteAtStop(routeId, stopId) {
+  function getDirectionsForRouteAtStop(
+    routeId,
+    stopId
+  ) {
     const directionSet =
-      transportData?.directions?.[String(routeId)] || {};
+      transportData
+        ?.directions?.[
+          String(routeId)
+        ]
+      || {};
 
-    return Object.entries(directionSet)
-      .filter(([, direction]) => {
-        const pattern = Array.isArray(direction?.pattern)
-          ? direction.pattern
-          : [];
+    return Object.entries(
+      directionSet
+    )
+      .filter(
+        ([
+          ,
+          direction
+        ]) => {
+          const pattern =
+            Array.isArray(
+              direction?.pattern
+            )
+              ? direction.pattern
+              : [];
 
-        return pattern.some(
-          id => stopIdsMatch(id, stopId)
-        );
-      })
-      .map(([key, direction]) => ({
-        key,
-        ...direction
-      }));
+          return pattern.some(
+            id =>
+              stopIdsMatch(
+                id,
+                stopId
+              )
+          );
+        }
+      )
+      .map(
+        ([
+          key,
+          direction
+        ]) => ({
+          key,
+          ...direction
+        })
+      );
   }
 
-  function getDirectionTerminalStopId(direction) {
-    const pattern = Array.isArray(direction?.pattern)
-      ? direction.pattern.map(String)
-      : [];
+  function getDirectionTerminalStopId(
+    direction
+  ) {
+    const pattern =
+      Array.isArray(
+        direction?.pattern
+      )
+        ? direction.pattern.map(
+            String
+          )
+        : [];
 
     return pattern.length
-      ? String(pattern[pattern.length - 1]).trim()
+      ? String(
+          pattern[
+            pattern.length - 1
+          ]
+        ).trim()
       : "";
   }
 
@@ -844,14 +1669,18 @@
     fallback = ""
   ) {
     const terminalStopId =
-      getDirectionTerminalStopId(direction);
+      getDirectionTerminalStopId(
+        direction
+      );
 
-    return terminalStopId
+    return (
+      terminalStopId
       || String(
         direction?.key
         || fallback
         || ""
-      ).trim();
+      ).trim()
+    );
   }
 
   function resolveDirectionForRealtimeRoute(
@@ -862,7 +1691,9 @@
     directionId = ""
   ) {
     const staticDirection =
-      getStaticDirectionForTrip(staticTrip);
+      getStaticDirectionForTrip(
+        staticTrip
+      );
 
     if (staticDirection) {
       return staticDirection;
@@ -879,16 +1710,20 @@
     }
 
     const wantedDestination =
-      normalizeDirectionText(destination);
+      normalizeDirectionText(
+        destination
+      );
 
     if (wantedDestination) {
-      const byDestination = directions.find(
-        direction =>
-          normalizeDirectionText(
-            direction?.headsign
-            || direction?.destination
-          ) === wantedDestination
-      );
+      const byDestination =
+        directions.find(
+          direction =>
+            normalizeDirectionText(
+              direction?.headsign
+              || direction?.destination
+            )
+            === wantedDestination
+        );
 
       if (byDestination) {
         return byDestination;
@@ -896,17 +1731,21 @@
     }
 
     const wantedDirectionId =
-      String(directionId ?? "").trim();
+      String(
+        directionId ?? ""
+      ).trim();
 
     if (wantedDirectionId) {
-      const byKey = directions.find(
-        direction =>
-          String(
-            direction?.direction_id
-            || direction?.key
-            || ""
-          ).trim() === wantedDirectionId
-      );
+      const byKey =
+        directions.find(
+          direction =>
+            String(
+              direction?.direction_id
+              || direction?.key
+              || ""
+            ).trim()
+            === wantedDirectionId
+        );
 
       if (byKey) {
         return byKey;
@@ -946,7 +1785,9 @@
     }
 
     const selectedStop =
-      getStopById(stopId);
+      getStopById(
+        stopId
+      );
 
     const selectedName =
       normalizeStopName(
@@ -954,64 +1795,113 @@
       );
 
     const destinationName =
-      normalizeStopName(destination);
+      normalizeStopName(
+        destination
+      );
 
-    return !!selectedName
+    return (
+      !!selectedName
       && !!destinationName
-      && selectedName === destinationName;
+      && selectedName
+        === destinationName
+    );
   }
 
-  function getMetroScheduledArrivals(stop) {
-    const now = getNowGtfsSeconds();
-    const dayType = getCurrentScheduleDayType();
+  function getMetroScheduledArrivals(
+    stop
+  ) {
+    const now =
+      getNowGtfsSeconds();
 
-    const selectedStop = String(
-      stop?.stop_id
-      || stop?.stop_code
-      || ""
-    ).trim();
+    const dayType =
+      getCurrentScheduleDayType();
 
-    if (!selectedStop) return [];
+    const selectedStop =
+      String(
+        stop?.stop_id
+        || stop?.stop_code
+        || ""
+      ).trim();
+
+    if (!selectedStop) {
+      return [];
+    }
 
     const result = [];
 
-    for (const route of (transportData?.routes || [])) {
-      if (getLineType(route) !== "metro") continue;
+    for (
+      const route
+      of (
+        transportData?.routes
+        || []
+      )
+    ) {
+      if (
+        getLineType(route)
+        !== "metro"
+      ) {
+        continue;
+      }
 
       const routeId =
-        String(route.route_id || "").trim();
+        String(
+          route.route_id
+          || ""
+        ).trim();
 
       const directionSet =
-        transportData?.directions?.[routeId] || {};
+        transportData
+          ?.directions?.[
+            routeId
+          ]
+        || {};
 
       const scheduleSet =
-        transportData?.schedules?.[routeId] || {};
+        transportData
+          ?.schedules?.[
+            routeId
+          ]
+        || {};
 
       const meta =
         getLineMeta(
           routeId,
-          route.route_short_name || ""
+          route.route_short_name
+          || ""
         );
 
       for (
         const [
           directionKey,
           direction
-        ] of Object.entries(directionSet)
+        ]
+        of Object.entries(
+          directionSet
+        )
       ) {
-        const pattern = Array.isArray(direction?.pattern)
-          ? direction.pattern.map(String)
-          : [];
+        const pattern =
+          Array.isArray(
+            direction?.pattern
+          )
+            ? direction.pattern.map(
+                String
+              )
+            : [];
 
         const stopIndex =
           pattern.findIndex(
-            id => stopIdsMatch(
-              id,
-              selectedStop
-            )
+            id =>
+              stopIdsMatch(
+                id,
+                selectedStop
+              )
           );
 
-        if (stopIndex < 0) continue;
+        if (
+          stopIndex < 0
+        ) {
+          continue;
+        }
 
         if (
           isTerminalDirectionForStop(
@@ -1024,33 +1914,63 @@
         }
 
         const daySchedules =
-          scheduleSet?.[directionKey]?.[dayType];
+          scheduleSet
+            ?.[
+              directionKey
+            ]
+            ?.[
+              dayType
+            ];
 
-        if (!Array.isArray(daySchedules)) continue;
+        if (
+          !Array.isArray(
+            daySchedules
+          )
+        ) {
+          continue;
+        }
 
         const arrivals = [];
 
-        for (const schedule of daySchedules) {
-          if (!isScheduleRowActiveToday(schedule)) {
+        for (
+          const schedule
+          of daySchedules
+        ) {
+          if (
+            !isScheduleRowActiveToday(
+              schedule
+            )
+          ) {
             continue;
           }
 
           const rawTime =
-            Array.isArray(schedule?.times)
-              ? schedule.times[stopIndex]
+            Array.isArray(
+              schedule?.times
+            )
+              ? schedule.times[
+                  stopIndex
+                ]
               : null;
 
           const seconds =
-            parseGtfsTime(rawTime);
+            parseGtfsTime(
+              rawTime
+            );
 
-          if (seconds == null) continue;
+          if (
+            seconds == null
+          ) {
+            continue;
+          }
 
           const todayTimestamp =
             gtfsSecondsToTodayTimestamp(
               seconds
             );
 
-          let timestamp = todayTimestamp;
+          let timestamp =
+            todayTimestamp;
 
           if (
             timestamp
@@ -1059,34 +1979,56 @@
             timestamp += 86400;
           }
 
-          arrivals.push(timestamp);
+          arrivals.push(
+            timestamp
+          );
         }
 
-        arrivals.sort((a, b) => a - b);
+        arrivals.sort(
+          (a, b) =>
+            a - b
+        );
 
         const unique =
-          [...new Set(arrivals)].slice(0, 3);
+          [
+            ...new Set(
+              arrivals
+            )
+          ].slice(
+            0,
+            3
+          );
 
-        if (!unique.length) continue;
+        if (
+          !unique.length
+        ) {
+          continue;
+        }
 
         result.push({
-          route_id: routeId,
+          route_id:
+            routeId,
+
           route_ref:
             meta.number
             || route.route_short_name
             || "—",
+
           destination:
             direction?.destination
             || direction?.headsign
             || "",
-          times: unique.map(
-            timestamp => ({
-              timestamp,
-              delay: null,
-              scheduled: true,
-              source: "static"
-            })
-          ),
+
+          times:
+            unique.map(
+              timestamp => ({
+                timestamp,
+                delay: null,
+                scheduled: true,
+                source: "static"
+              })
+            ),
+
           meta
         });
       }
@@ -1104,140 +2046,178 @@
     skippedTrips = []
   ) {
     if (
-      !Array.isArray(skippedTrips)
+      !Array.isArray(
+        skippedTrips
+      )
       || !skippedTrips.length
     ) {
       return false;
     }
 
     const scheduleRouteId =
-      String(routeId || "").trim();
+      String(
+        routeId || ""
+      ).trim();
 
     const scheduleDirectionKey =
-      String(directionKey || "").trim();
+      String(
+        directionKey || ""
+      ).trim();
 
     const scheduleOriginalTripId =
       String(
-        schedule?.original_trip_id || ""
+        schedule?.original_trip_id
+        || ""
       ).trim();
 
     const scheduleStartTime =
-      parseGtfsTime(schedule?.start_time);
+      parseGtfsTime(
+        schedule?.start_time
+      );
 
     const scheduleStopSequences =
-      Array.isArray(schedule?.stop_sequences)
+      Array.isArray(
+        schedule?.stop_sequences
+      )
         ? schedule.stop_sequences
         : [];
 
     const selectedSequence =
-      Number.isInteger(stopIndex)
+      Number.isInteger(
+        stopIndex
+      )
         ? Number(
-            scheduleStopSequences[stopIndex]
+            scheduleStopSequences[
+              stopIndex
+            ]
           )
         : NaN;
 
-    return skippedTrips.some(skipped => {
-      if (!skipped) return false;
+    return skippedTrips.some(
+      skipped => {
+        if (!skipped) {
+          return false;
+        }
 
-      const skippedRouteId =
-        String(
-          skipped.route_id || ""
-        ).trim();
+        const skippedRouteId =
+          String(
+            skipped.route_id
+            || ""
+          ).trim();
 
-      if (
-        skippedRouteId
-        && scheduleRouteId
-        && skippedRouteId !== scheduleRouteId
-      ) {
-        return false;
-      }
-
-      const skippedStopId =
-        String(
-          skipped.stop_id || ""
-        ).trim();
-
-      if (skippedStopId) {
         if (
-          !stopIdsMatch(
-            skippedStopId,
-            selectedStopId
+          skippedRouteId
+          && scheduleRouteId
+          && skippedRouteId
+            !== scheduleRouteId
+        ) {
+          return false;
+        }
+
+        const skippedStopId =
+          String(
+            skipped.stop_id
+            || ""
+          ).trim();
+
+        if (skippedStopId) {
+          if (
+            !stopIdsMatch(
+              skippedStopId,
+              selectedStopId
+            )
+          ) {
+            return false;
+          }
+        } else {
+          const skippedSequence =
+            Number(
+              skipped.stop_sequence
+            );
+
+          if (
+            !Number.isFinite(
+              skippedSequence
+            )
+            || !Number.isFinite(
+              selectedSequence
+            )
+          ) {
+            return false;
+          }
+
+          if (
+            skippedSequence
+            !== selectedSequence
+          ) {
+            return false;
+          }
+        }
+
+        const skippedTripId =
+          String(
+            skipped.trip_id
+            || ""
+          ).trim();
+
+        if (
+          scheduleOriginalTripId
+          && skippedTripId
+          && scheduleOriginalTripId
+            === skippedTripId
+        ) {
+          return true;
+        }
+
+        if (
+          !skippedTripId
+          || scheduleStartTime == null
+        ) {
+          return false;
+        }
+
+        const staticTrip =
+          findStaticTrip(
+            skippedTripId
+          );
+
+        if (!staticTrip) {
+          return false;
+        }
+
+        const skippedDirection =
+          getStaticDirectionForTrip(
+            staticTrip
+          );
+
+        if (
+          skippedDirection?.key
+          && scheduleDirectionKey
+          && String(
+            skippedDirection.key
           )
-        ) {
-          return false;
-        }
-      } else {
-        const skippedSequence =
-          Number(skipped.stop_sequence);
-
-        if (
-          !Number.isFinite(skippedSequence)
-          || !Number.isFinite(selectedSequence)
-        ) {
-          return false;
-        }
-
-        if (
-          skippedSequence
-          !== selectedSequence
-        ) {
-          return false;
-        }
-      }
-
-      const skippedTripId =
-        String(
-          skipped.trip_id || ""
-        ).trim();
-
-      if (
-        scheduleOriginalTripId
-        && skippedTripId
-        && scheduleOriginalTripId === skippedTripId
-      ) {
-        return true;
-      }
-
-      if (
-        !skippedTripId
-        || scheduleStartTime == null
-      ) {
-        return false;
-      }
-
-      const staticTrip =
-        findStaticTrip(skippedTripId);
-
-      if (!staticTrip) return false;
-
-      const skippedDirection =
-        getStaticDirectionForTrip(
-          staticTrip
-        );
-
-      if (
-        skippedDirection?.key
-        && scheduleDirectionKey
-        && String(skippedDirection.key)
           !== scheduleDirectionKey
-      ) {
-        return false;
-      }
+        ) {
+          return false;
+        }
 
-      const skippedStartTime =
-        parseGtfsTime(
-          skipped.start_time
+        const skippedStartTime =
+          parseGtfsTime(
+            skipped.start_time
+          );
+
+        if (
+          skippedStartTime == null
+        ) {
+          return false;
+        }
+
+        return (
+          skippedStartTime
+          === scheduleStartTime
         );
-
-      if (skippedStartTime == null) {
-        return false;
       }
-
-      return (
-        skippedStartTime
-        === scheduleStartTime
-      );
-    });
+    );
   }
 
   function getSurfaceScheduledArrivals(
@@ -1248,69 +2228,118 @@
       Date.now() / 1000;
 
     const horizonTimestamp =
-      nowTimestamp + 2 * 60 * 60;
+      nowTimestamp
+      + 2 * 60 * 60;
 
     const dayType =
       getCurrentScheduleDayType();
 
-    const selectedStop = String(
-      stop?.stop_id
-      || stop?.stop_code
-      || ""
-    ).trim();
+    const selectedStop =
+      String(
+        stop?.stop_id
+        || stop?.stop_code
+        || ""
+      ).trim();
 
-    if (!selectedStop) return [];
+    if (!selectedStop) {
+      return [];
+    }
 
     const result = [];
 
-    for (const route of (transportData?.routes || [])) {
+    for (
+      const route
+      of (
+        transportData?.routes
+        || []
+      )
+    ) {
       // Static fallback applies only to surface transport.
-      if (getLineType(route) === "metro") {
+      if (
+        getLineType(route)
+        === "metro"
+      ) {
         continue;
       }
 
       const routeId =
-        String(route?.route_id || "").trim();
+        String(
+          route?.route_id
+          || ""
+        ).trim();
 
-      if (!routeId) continue;
+      if (!routeId) {
+        continue;
+      }
 
       const directionSet =
-        transportData?.directions?.[routeId] || {};
+        transportData
+          ?.directions?.[
+            routeId
+          ]
+        || {};
 
       const scheduleSet =
-        transportData?.schedules?.[routeId] || {};
+        transportData
+          ?.schedules?.[
+            routeId
+          ]
+        || {};
 
       const meta =
         getLineMeta(
           routeId,
-          route.route_short_name || ""
+          route.route_short_name
+          || ""
         );
 
       for (
         const [
           directionKey,
           direction
-        ] of Object.entries(directionSet)
+        ]
+        of Object.entries(
+          directionSet
+        )
       ) {
         const pattern =
-          Array.isArray(direction?.pattern)
-            ? direction.pattern.map(String)
+          Array.isArray(
+            direction?.pattern
+          )
+            ? direction.pattern.map(
+                String
+              )
             : [];
 
         const stopIndex =
           pattern.findIndex(
-            id => stopIdsMatch(
-              id,
-              selectedStop
-            )
+            id =>
+              stopIdsMatch(
+                id,
+                selectedStop
+              )
           );
 
-        if (stopIndex < 0) continue;
+        if (
+          stopIndex < 0
+        ) {
+          continue;
+        }
 
         const daySchedules =
-          scheduleSet?.[directionKey]?.[dayType];
+          scheduleSet
+            ?.[
+              directionKey
+            ]
+            ?.[
+              dayType
+            ];
 
-        if (!Array.isArray(daySchedules)) {
+        if (
+          !Array.isArray(
+            daySchedules
+          )
+        ) {
           continue;
         }
 
@@ -1322,57 +2351,90 @@
         //
         // That made it impossible to fall back to the second/third course
         // when only the first one was present in GTFS-RT.
-        const rowsByTerminal = new Map();
+        const rowsByTerminal =
+          new Map();
 
-        for (const schedule of daySchedules) {
-          if (!isScheduleRowActiveToday(schedule)) {
+        for (
+          const schedule
+          of daySchedules
+        ) {
+          if (
+            !isScheduleRowActiveToday(
+              schedule
+            )
+          ) {
             continue;
           }
 
           const times =
-            Array.isArray(schedule?.times)
+            Array.isArray(
+              schedule?.times
+            )
               ? schedule.times
               : [];
 
           const rawTime =
-            times[stopIndex] ?? null;
+            times[
+              stopIndex
+            ] ?? null;
 
           const seconds =
-            parseGtfsTime(rawTime);
+            parseGtfsTime(
+              rawTime
+            );
 
-          if (seconds == null) continue;
+          if (
+            seconds == null
+          ) {
+            continue;
+          }
 
           // Find the last actually served stop for THIS course.
-          let terminalIndex = -1;
+          let terminalIndex =
+            -1;
 
           for (
-            let i = Math.min(
-              times.length,
-              pattern.length
-            ) - 1;
+            let i =
+              Math.min(
+                times.length,
+                pattern.length
+              ) - 1;
             i >= 0;
             i--
           ) {
             if (
-              parseGtfsTime(times[i]) != null
+              parseGtfsTime(
+                times[i]
+              ) != null
             ) {
-              terminalIndex = i;
+              terminalIndex =
+                i;
+
               break;
             }
           }
 
-          if (terminalIndex < stopIndex) {
+          if (
+            terminalIndex
+            < stopIndex
+          ) {
             continue;
           }
 
           const terminalStopId =
             String(
-              pattern[terminalIndex]
-              || getDirectionTerminalStopId(direction)
+              pattern[
+                terminalIndex
+              ]
+              || getDirectionTerminalStopId(
+                direction
+              )
               || ""
             ).trim();
 
-          if (!terminalStopId) continue;
+          if (!terminalStopId) {
+            continue;
+          }
 
           // A course whose actual terminal is the selected stop is still
           // a terminal arrival and should not appear on the board.
@@ -1390,13 +2452,18 @@
               seconds
             );
 
-          if (timestamp < nowTimestamp) {
+          if (
+            timestamp
+            < nowTimestamp
+          ) {
             timestamp += 86400;
           }
 
           if (
-            timestamp < nowTimestamp
-            || timestamp > horizonTimestamp
+            timestamp
+            < nowTimestamp
+            || timestamp
+            > horizonTimestamp
           ) {
             continue;
           }
@@ -1434,10 +2501,15 @@
 
           const tripId =
             String(
-              schedule?.original_trip_id || ""
+              schedule?.original_trip_id
+              || ""
             ).trim();
 
-          if (!rowsByTerminal.has(terminalStopId)) {
+          if (
+            !rowsByTerminal.has(
+              terminalStopId
+            )
+          ) {
             rowsByTerminal.set(
               terminalStopId,
               {
@@ -1448,11 +2520,15 @@
           }
 
           rowsByTerminal
-            .get(terminalStopId)
+            .get(
+              terminalStopId
+            )
             .times.push({
               timestamp,
-              scheduled_time: timestamp,
-              trip_id: tripId,
+              scheduled_time:
+                timestamp,
+              trip_id:
+                tripId,
               delay: null,
               scheduled: true,
               source: "static"
@@ -1463,12 +2539,15 @@
           const {
             terminalStopId,
             times
-          } of rowsByTerminal.values()
+          }
+          of rowsByTerminal.values()
         ) {
           const isPartialCourse =
             !stopIdsMatch(
               terminalStopId,
-              getDirectionTerminalStopId(direction)
+              getDirectionTerminalStopId(
+                direction
+              )
             );
 
           const terminalStop =
@@ -1495,47 +2574,82 @@
             times
               .sort(
                 (a, b) =>
-                  Number(a.timestamp)
-                  - Number(b.timestamp)
+                  Number(
+                    a.timestamp
+                  )
+                  - Number(
+                    b.timestamp
+                  )
               )
-              .filter((time, index, list) => {
-                if (index === 0) {
-                  return true;
+              .filter(
+                (
+                  time,
+                  index,
+                  list
+                ) => {
+                  if (
+                    index === 0
+                  ) {
+                    return true;
+                  }
+
+                  const previous =
+                    list[
+                      index - 1
+                    ];
+
+                  const sameTrip =
+                    String(
+                      time?.trip_id
+                      || ""
+                    ).trim()
+                    === String(
+                      previous?.trip_id
+                      || ""
+                    ).trim();
+
+                  return !(
+                    sameTrip
+                    && Number(
+                      time.timestamp
+                    )
+                    === Number(
+                      previous.timestamp
+                    )
+                  );
                 }
+              );
 
-                const previous =
-                  list[index - 1];
-
-                const sameTrip =
-                  String(
-                    time?.trip_id || ""
-                  ).trim()
-                  === String(
-                    previous?.trip_id || ""
-                  ).trim();
-
-                return !(
-                  sameTrip
-                  && Number(time.timestamp)
-                    === Number(previous.timestamp)
-                );
-              });
-
-          if (!uniqueTimes.length) continue;
+          if (
+            !uniqueTimes.length
+          ) {
+            continue;
+          }
 
           result.push({
-            route_id: routeId,
-            direction_key: directionKey,
+            route_id:
+              routeId,
+
+            direction_key:
+              directionKey,
+
             direction,
+
             terminal_stop_id:
               terminalStopId,
+
             route_ref:
               meta.number
               || route.route_short_name
               || "—",
+
             destination,
-            times: uniqueTimes,
+
+            times:
+              uniqueTimes,
+
             meta,
+
             scheduled: true,
             source: "static"
           });
@@ -1545,8 +2659,12 @@
 
     return result.sort(
       (a, b) =>
-        Number(a.times?.[0]?.timestamp)
-        - Number(b.times?.[0]?.timestamp)
+        Number(
+          a.times?.[0]?.timestamp
+        )
+        - Number(
+          b.times?.[0]?.timestamp
+        )
     );
   }
 
@@ -1560,17 +2678,23 @@
 
     const timeout =
       setTimeout(
-        () => controller.abort(),
+        () =>
+          controller.abort(),
         timeoutMs
       );
 
     try {
       const response =
-        await fetch(url, {
-          ...options,
-          signal: controller.signal,
-          cache: "no-store"
-        });
+        await fetch(
+          url,
+          {
+            ...options,
+            signal:
+              controller.signal,
+            cache:
+              "no-store"
+          }
+        );
 
       const data =
         await response.json();
@@ -1580,11 +2704,15 @@
         data
       };
     } finally {
-      clearTimeout(timeout);
+      clearTimeout(
+        timeout
+      );
     }
   }
 
-  async function fetchVirtualBoardViaServer(stop) {
+  async function fetchVirtualBoardViaServer(
+    stop
+  ) {
     const stopCode =
       String(
         stop?.stop_code
@@ -1604,222 +2732,256 @@
     const {
       response,
       data
-    } = await fetchJsonWithTimeout(
-      url,
-      {
-        headers: {
-          Accept: "application/json"
-        }
-      },
-      20000
-    );
+    } =
+      await fetchJsonWithTimeout(
+        url,
+        {
+          headers: {
+            Accept:
+              "application/json"
+          }
+        },
+        20000
+      );
 
     if (!response.ok) {
       const message =
         data?.error
         || `Realtime API заявката върна ${response.status}.`;
 
-      throw new Error(message);
+      throw new Error(
+        message
+      );
     }
 
     const generatedAt =
-      data?.generated_at || Date.now();
+      data?.generated_at
+      || Date.now();
 
     const skippedTrips =
-      Array.isArray(data?.skipped_trips)
+      Array.isArray(
+        data?.skipped_trips
+      )
         ? data.skipped_trips
         : [];
 
     const realtimeRoutes =
-      Array.isArray(data?.routes)
+      Array.isArray(
+        data?.routes
+      )
         ? data.routes
             .filter(
               route =>
                 route
-                && Array.isArray(route.times)
+                && Array.isArray(
+                  route.times
+                )
             )
-            .filter(route => {
-              const staticTrip =
-                findStaticTrip(
-                  route.trip_id
-                );
+            .filter(
+              route => {
+                const staticTrip =
+                  findStaticTrip(
+                    route.trip_id
+                  );
 
-              const routeId =
-                route.route_id
-                || staticTrip?.route_id
-                || "";
+                const routeId =
+                  route.route_id
+                  || staticTrip?.route_id
+                  || "";
 
-              // NEW/REPLACEMENT trips may not exist in static GTFS.
-              // destination_stop_id is the strongest terminal signal.
-              if (
-                route.destination_stop_id
-                && shouldHideTerminalArrival(
-                  routeId,
-                  route.destination_stop_id,
-                  staticTrip,
-                  route.destination || "",
-                  route.direction_id
+                // NEW/REPLACEMENT trips may not exist in static GTFS.
+                // destination_stop_id is the strongest terminal signal.
+                if (
+                  route.destination_stop_id
+                  && shouldHideTerminalArrival(
+                    routeId,
+                    route.destination_stop_id,
+                    staticTrip,
+                    route.destination
+                    || "",
+                    route.direction_id
                     || route.directionId
                     || ""
-                )
-              ) {
-                return false;
-              }
+                  )
+                ) {
+                  return false;
+                }
 
-              return !shouldHideTerminalArrival(
-                routeId,
-                stop.stop_id,
-                staticTrip,
-                route.destination || "",
-                route.direction_id
-                  || route.directionId
-                  || ""
-              );
-            })
-            .map(route => {
-              const staticTrip =
-                findStaticTrip(
-                  route.trip_id
-                );
-
-              const routeId =
-                route.route_id
-                || staticTrip?.route_id
-                || "";
-
-              const staticDirection =
-                getStaticDirectionForTrip(
-                  staticTrip
-                )
-                || resolveDirectionForRealtimeRoute(
+                return !shouldHideTerminalArrival(
                   routeId,
                   stop.stop_id,
                   staticTrip,
-                  route.destination || "",
+                  route.destination
+                  || "",
                   route.direction_id
-                    || route.directionId
-                    || ""
+                  || route.directionId
+                  || ""
                 );
+              }
+            )
+            .map(
+              route => {
+                const staticTrip =
+                  findStaticTrip(
+                    route.trip_id
+                  );
 
-              const routeMeta =
-                getLineMeta(
-                  routeId,
-                  route.route_ref || ""
-                );
-
-              const routeTripId =
-                String(
-                  route?.trip_id || ""
-                ).trim();
-
-              return {
-                ...route,
-
-                source: "realtime",
-                realtime: true,
-
-                schedule_relationship:
-                  Number(
-                    route?.schedule_relationship
-                  ),
-
-                schedule_relationship_name:
-                  String(
-                    route?.schedule_relationship_name
-                    || "SCHEDULED"
-                  ),
-
-                route_id:
+                const routeId =
                   route.route_id
                   || staticTrip?.route_id
-                  || "",
+                  || "";
 
-                route_ref:
-                  route.route_ref
-                  || routeMeta.number
-                  || "—",
+                const staticDirection =
+                  getStaticDirectionForTrip(
+                    staticTrip
+                  )
+                  || resolveDirectionForRealtimeRoute(
+                    routeId,
+                    stop.stop_id,
+                    staticTrip,
+                    route.destination
+                    || "",
+                    route.direction_id
+                    || route.directionId
+                    || ""
+                  );
 
-                direction_key:
-                  staticDirection?.key
-                  || "",
+                const routeMeta =
+                  getLineMeta(
+                    routeId,
+                    route.route_ref
+                    || ""
+                  );
 
-                destination_stop_id:
-                  route.destination_stop_id
-                  || "",
+                const routeTripId =
+                  String(
+                    route?.trip_id
+                    || ""
+                  ).trim();
 
-                destination:
-                  route.destination
-                  || staticTrip?.trip_headsign
-                  || staticDirection?.destination
-                  || staticDirection?.headsign
-                  || "",
+                return {
+                  ...route,
 
-                trip_id: routeTripId,
+                  source:
+                    "realtime",
 
-                times:
-                  route.times
-                    .map(time => {
-                      const timeTripId =
-                        String(
-                          time?.trip_id
-                          || routeTripId
-                          || ""
-                        ).trim();
+                  realtime:
+                    true,
 
-                      return {
-                        timestamp:
-                          Number(
-                            time?.timestamp
-                          ),
+                  schedule_relationship:
+                    Number(
+                      route?.schedule_relationship
+                    ),
 
-                        delay:
-                          Number.isFinite(
-                            Number(time?.delay)
-                          )
-                            ? Number(time.delay)
-                            : null,
+                  schedule_relationship_name:
+                    String(
+                      route?.schedule_relationship_name
+                      || "SCHEDULED"
+                    ),
 
-                        scheduled: false,
-                        source: "realtime",
+                  route_id:
+                    route.route_id
+                    || staticTrip?.route_id
+                    || "",
 
-                        // IMPORTANT:
-                        // Keep the trip_id on EVERY realtime arrival.
-                        // After merging multiple RT trips into one board row,
-                        // route.trip_id alone is no longer enough to know which
-                        // exact course an arrival belongs to.
-                        trip_id: timeTripId,
+                  route_ref:
+                    route.route_ref
+                    || routeMeta.number
+                    || "—",
 
-                        stop_schedule_relationship:
-                          Number(
-                            time?.stop_schedule_relationship
-                          ),
+                  direction_key:
+                    staticDirection?.key
+                    || "",
 
-                        stop_schedule_relationship_name:
-                          String(
-                            time?.stop_schedule_relationship_name
-                            || "SCHEDULED"
-                          ),
+                  destination_stop_id:
+                    route.destination_stop_id
+                    || "",
 
-                        scheduled_time:
-                          Number.isFinite(
-                            Number(
-                              time?.scheduled_time
-                            )
-                          )
-                            ? Number(
-                                time.scheduled_time
+                  destination:
+                    route.destination
+                    || staticTrip?.trip_headsign
+                    || staticDirection?.destination
+                    || staticDirection?.headsign
+                    || "",
+
+                  trip_id:
+                    routeTripId,
+
+                  times:
+                    route.times
+                      .map(
+                        time => {
+                          const timeTripId =
+                            String(
+                              time?.trip_id
+                              || routeTripId
+                              || ""
+                            ).trim();
+
+                          return {
+                            timestamp:
+                              Number(
+                                time?.timestamp
+                              ),
+
+                            delay:
+                              Number.isFinite(
+                                Number(
+                                  time?.delay
+                                )
                               )
-                            : null
-                      };
-                    })
-                    .filter(
-                      time =>
-                        Number.isFinite(
-                          time.timestamp
-                        )
-                    )
-              };
-            })
+                                ? Number(
+                                    time.delay
+                                  )
+                                : null,
+
+                            scheduled:
+                              false,
+
+                            source:
+                              "realtime",
+
+                            // IMPORTANT:
+                            // Keep the trip_id on EVERY realtime arrival.
+                            // After merging multiple RT trips into one board row,
+                            // route.trip_id alone is no longer enough to know which
+                            // exact course an arrival belongs to.
+                            trip_id:
+                              timeTripId,
+
+                            stop_schedule_relationship:
+                              Number(
+                                time?.stop_schedule_relationship
+                              ),
+
+                            stop_schedule_relationship_name:
+                              String(
+                                time?.stop_schedule_relationship_name
+                                || "SCHEDULED"
+                              ),
+
+                            scheduled_time:
+                              Number.isFinite(
+                                Number(
+                                  time?.scheduled_time
+                                )
+                              )
+                                ? Number(
+                                    time.scheduled_time
+                                  )
+                                : null
+                          };
+                        }
+                      )
+                      .filter(
+                        time =>
+                          Number.isFinite(
+                            time.timestamp
+                          )
+                      )
+                };
+              }
+            )
             .filter(
               route =>
                 route.times.length
@@ -1827,22 +2989,33 @@
         : [];
 
     const realtime = {
-      status: data?.status || "empty",
+      status:
+        data?.status
+        || "empty",
+
       generatedAt,
-      routes: isMetroStop(stop)
-        ? []
-        : realtimeRoutes
+
+      routes:
+        isMetroStop(stop)
+          ? []
+          : realtimeRoutes
     };
 
     const metroRoutes =
-      getMetroScheduledArrivals(stop);
+      getMetroScheduledArrivals(
+        stop
+      );
 
     // Realtime rows are kept per trip by the API because Sofia's feed often
     // does not populate direction_id. Merge them back by line + displayed
     // destination here, after terminal-direction filtering.
-    const mergedRealtime = new Map();
+    const mergedRealtime =
+      new Map();
 
-    for (const route of realtime.routes) {
+    for (
+      const route
+      of realtime.routes
+    ) {
       const staticTrip =
         findStaticTrip(
           route.trip_id
@@ -1863,10 +3036,11 @@
           realtimeRouteId,
           stop.stop_id,
           staticTrip,
-          route.destination || "",
+          route.destination
+          || "",
           route.direction_id
-            || route.directionId
-            || ""
+          || route.directionId
+          || ""
         );
 
       const staticTerminalId =
@@ -1929,13 +3103,19 @@
           || ""
         )}|${directionIdentity}`;
 
-      if (!mergedRealtime.has(key)) {
+      if (
+        !mergedRealtime.has(
+          key
+        )
+      ) {
         mergedRealtime.set(
           key,
           {
             ...route,
-            source: "realtime",
-            realtime: true,
+            source:
+              "realtime",
+            realtime:
+              true,
             destination,
             times: []
           }
@@ -1950,29 +3130,46 @@
     }
 
     const mergedSurfaceRoutes =
-      [...mergedRealtime.values()]
-        .map(route => ({
-          ...route,
+      [
+        ...mergedRealtime.values()
+      ]
+        .map(
+          route => ({
+            ...route,
 
-          times:
-            route.times
-              .sort(
-                (a, b) =>
-                  Number(a.timestamp)
-                  - Number(b.timestamp)
-              )
-              .filter(
-                (time, index, list) =>
-                  index === 0
-                  || Number(
-                    time.timestamp
-                  )
-                  !== Number(
-                    list[index - 1].timestamp
-                  )
-              )
-              .slice(0, 4)
-        }))
+            times:
+              route.times
+                .sort(
+                  (a, b) =>
+                    Number(
+                      a.timestamp
+                    )
+                    - Number(
+                      b.timestamp
+                    )
+                )
+                .filter(
+                  (
+                    time,
+                    index,
+                    list
+                  ) =>
+                    index === 0
+                    || Number(
+                      time.timestamp
+                    )
+                    !== Number(
+                      list[
+                        index - 1
+                      ].timestamp
+                    )
+                )
+                .slice(
+                  0,
+                  4
+                )
+          })
+        )
         .filter(
           route =>
             route.times.length
@@ -2006,18 +3203,27 @@
       selectedStopId
     ) {
       const shortPattern =
-        Array.isArray(shortDirection?.pattern)
-          ? shortDirection.pattern.map(String)
+        Array.isArray(
+          shortDirection?.pattern
+        )
+          ? shortDirection.pattern.map(
+              String
+            )
           : [];
 
       const longPattern =
-        Array.isArray(longDirection?.pattern)
-          ? longDirection.pattern.map(String)
+        Array.isArray(
+          longDirection?.pattern
+        )
+          ? longDirection.pattern.map(
+              String
+            )
           : [];
 
       if (
         !shortPattern.length
-        || shortPattern.length >= longPattern.length
+        || shortPattern.length
+          >= longPattern.length
       ) {
         return false;
       }
@@ -2025,21 +3231,29 @@
       let commonPrefix = 0;
 
       while (
-        commonPrefix < shortPattern.length
-        && commonPrefix < longPattern.length
+        commonPrefix
+          < shortPattern.length
+        && commonPrefix
+          < longPattern.length
         && stopIdsMatch(
-          shortPattern[commonPrefix],
-          longPattern[commonPrefix]
+          shortPattern[
+            commonPrefix
+          ],
+          longPattern[
+            commonPrefix
+          ]
         )
       ) {
         commonPrefix++;
       }
 
       const shortRatio =
-        commonPrefix / shortPattern.length;
+        commonPrefix
+        / shortPattern.length;
 
       const longRatio =
-        commonPrefix / longPattern.length;
+        commonPrefix
+        / longPattern.length;
 
       if (
         commonPrefix < 5
@@ -2089,12 +3303,14 @@
     ) {
       const routeId =
         String(
-          scheduledRoute?.route_id || ""
+          scheduledRoute?.route_id
+          || ""
         ).trim();
 
       const scheduledDirectionKey =
         String(
-          scheduledRoute?.direction_key || ""
+          scheduledRoute?.direction_key
+          || ""
         ).trim();
 
       if (
@@ -2105,7 +3321,8 @@
       }
 
       const directionSet =
-        transportData?.directions?.[routeId]
+        transportData
+          ?.directions?.[routeId]
         || {};
 
       const longDirection =
@@ -2123,20 +3340,24 @@
       ) {
         if (
           String(
-            activeDirection?.route_id || ""
-          ).trim() !== routeId
+            activeDirection?.route_id
+            || ""
+          ).trim()
+          !== routeId
         ) {
           continue;
         }
 
         const shortDirectionKey =
           String(
-            activeDirection?.key || ""
+            activeDirection?.key
+            || ""
           ).trim();
 
         if (
           !shortDirectionKey
-          || shortDirectionKey === scheduledDirectionKey
+          || shortDirectionKey
+            === scheduledDirectionKey
         ) {
           continue;
         }
@@ -2151,18 +3372,27 @@
         }
 
         const shortPattern =
-          Array.isArray(shortDirection?.pattern)
-            ? shortDirection.pattern.map(String)
+          Array.isArray(
+            shortDirection?.pattern
+          )
+            ? shortDirection.pattern.map(
+                String
+              )
             : [];
 
         const longPattern =
-          Array.isArray(longDirection?.pattern)
-            ? longDirection.pattern.map(String)
+          Array.isArray(
+            longDirection?.pattern
+          )
+            ? longDirection.pattern.map(
+                String
+              )
             : [];
 
         if (
           !shortPattern.length
-          || shortPattern.length >= longPattern.length
+          || shortPattern.length
+            >= longPattern.length
         ) {
           continue;
         }
@@ -2170,11 +3400,17 @@
         let commonPrefix = 0;
 
         while (
-          commonPrefix < shortPattern.length
-          && commonPrefix < longPattern.length
+          commonPrefix
+            < shortPattern.length
+          && commonPrefix
+            < longPattern.length
           && stopIdsMatch(
-            shortPattern[commonPrefix],
-            longPattern[commonPrefix]
+            shortPattern[
+              commonPrefix
+            ],
+            longPattern[
+              commonPrefix
+            ]
           )
         ) {
           commonPrefix++;
@@ -2183,8 +3419,10 @@
         let commonSuffix = 0;
 
         while (
-          commonSuffix < shortPattern.length
-          && commonSuffix < longPattern.length
+          commonSuffix
+            < shortPattern.length
+          && commonSuffix
+            < longPattern.length
           && stopIdsMatch(
             shortPattern[
               shortPattern.length
@@ -2202,30 +3440,39 @@
         }
 
         const prefixShortRatio =
-          commonPrefix / shortPattern.length;
+          commonPrefix
+          / shortPattern.length;
 
         const prefixLongRatio =
-          commonPrefix / longPattern.length;
+          commonPrefix
+          / longPattern.length;
 
         const suffixShortRatio =
-          commonSuffix / shortPattern.length;
+          commonSuffix
+          / shortPattern.length;
 
         const suffixLongRatio =
-          commonSuffix / longPattern.length;
+          commonSuffix
+          / longPattern.length;
 
         const prefixMatch =
           commonPrefix >= 5
           && prefixShortRatio >= 0.8
           && prefixLongRatio >= 0.7
-          && commonPrefix < shortPattern.length;
+          && commonPrefix
+            < shortPattern.length;
 
         const suffixMatch =
           commonSuffix >= 5
           && suffixShortRatio >= 0.8
           && suffixLongRatio >= 0.7
-          && commonSuffix < shortPattern.length;
+          && commonSuffix
+            < shortPattern.length;
 
-        if (!prefixMatch && !suffixMatch) {
+        if (
+          !prefixMatch
+          && !suffixMatch
+        ) {
           continue;
         }
 
@@ -2240,17 +3487,24 @@
     // Only operational realtime trips may suppress static fallback.
     // Explicit CANCELED/DELETED trips are not active service.
     const activeDirections = [];
+
     const seenActiveDirectionKeys =
       new Set();
 
     const activeTripRecords =
-      Array.isArray(data?.active_trips)
+      Array.isArray(
+        data?.active_trips
+      )
         ? data.active_trips
         : (
-            Array.isArray(data?.active_trip_ids)
+            Array.isArray(
+              data?.active_trip_ids
+            )
               ? data.active_trip_ids.map(
                   tripId => ({
-                    trip_id: tripId,
+                    trip_id:
+                      tripId,
+
                     schedule_relationship_name:
                       "SCHEDULED"
                   })
@@ -2264,14 +3518,18 @@
     ) {
       const activeTripId =
         String(
-          activeTrip?.trip_id || ""
+          activeTrip?.trip_id
+          || ""
         ).trim();
 
-      if (!activeTripId) continue;
+      if (!activeTripId) {
+        continue;
+      }
 
       const relationship =
         String(
-          activeTrip?.schedule_relationship_name
+          activeTrip
+            ?.schedule_relationship_name
           || "SCHEDULED"
         ).toUpperCase();
 
@@ -2287,20 +3545,25 @@
           activeTripId
         );
 
-      if (!staticTrip) continue;
+      if (!staticTrip) {
+        continue;
+      }
 
       const activeDirection =
         getStaticDirectionForTrip(
           staticTrip
         );
 
-      if (!activeDirection?.key) {
+      if (
+        !activeDirection?.key
+      ) {
         continue;
       }
 
       const activeKey =
         `${String(
-          staticTrip.route_id || ""
+          staticTrip.route_id
+          || ""
         )}|${String(
           activeDirection.key
         )}`;
@@ -2320,7 +3583,8 @@
       activeDirections.push({
         route_id:
           String(
-            staticTrip.route_id || ""
+            staticTrip.route_id
+            || ""
           ),
 
         key:
@@ -2336,21 +3600,27 @@
       });
     }
 
-    function getBoardRouteKey(route) {
+    function getBoardRouteKey(
+      route
+    ) {
       const routeId =
         String(
-          route?.route_id || ""
+          route?.route_id
+          || ""
         ).trim();
 
       const destinationKey =
         normalizeDirectionText(
-          route?.destination || ""
+          route?.destination
+          || ""
         );
 
       // Use route + passenger-facing destination.
       // route_ref is intentionally NOT part of the key because it can split
       // RT and static rows for the same line.
-      return `${routeId}|${destinationKey}`;
+      return (
+        `${routeId}|${destinationKey}`
+      );
     }
 
     function hasRealtimeForScheduledCourse(
@@ -2359,7 +3629,8 @@
     ) {
       const scheduledRouteId =
         String(
-          scheduledRoute?.route_id || ""
+          scheduledRoute?.route_id
+          || ""
         ).trim();
 
       const scheduledTripId =
@@ -2386,7 +3657,8 @@
 
       const scheduledDestinationKey =
         normalizeDirectionText(
-          scheduledRoute?.destination || ""
+          scheduledRoute?.destination
+          || ""
         );
 
       return realtimeRoutes.some(
@@ -2415,10 +3687,11 @@
               realtimeRouteId,
               stop.stop_id,
               staticTrip,
-              realtimeRoute?.destination || "",
+              realtimeRoute?.destination
+              || "",
               realtimeRoute?.direction_id
-                || realtimeRoute?.directionId
-                || ""
+              || realtimeRoute?.directionId
+              || ""
             );
 
           const realtimeDirectionKey =
@@ -2455,8 +3728,11 @@
             return false;
           }
 
-          return (realtimeRoute?.times || [])
-            .some(realtimeTime => {
+          return (
+            realtimeRoute?.times
+            || []
+          ).some(
+            realtimeTime => {
               const realtimeTripId =
                 String(
                   realtimeTime?.trip_id
@@ -2493,11 +3769,15 @@
                 return false;
               }
 
-              return Math.abs(
-                realtimeScheduledTimestamp
-                - scheduledTimestamp
-              ) <= 60;
-            });
+              return (
+                Math.abs(
+                  realtimeScheduledTimestamp
+                  - scheduledTimestamp
+                )
+                <= 60
+              );
+            }
+          );
         }
       );
     }
@@ -2527,22 +3807,27 @@
       }
 
       const fallbackTimes =
-        (staticRoute.times || [])
-          .filter(
-            staticTime =>
-              !hasRealtimeForScheduledCourse(
-                staticRoute,
-                staticTime
-              )
-          );
+        (
+          staticRoute.times
+          || []
+        ).filter(
+          staticTime =>
+            !hasRealtimeForScheduledCourse(
+              staticRoute,
+              staticTime
+            )
+        );
 
-      if (!fallbackTimes.length) {
+      if (
+        !fallbackTimes.length
+      ) {
         continue;
       }
 
       surfaceFallbackRoutes.push({
         ...staticRoute,
-        times: fallbackTimes
+        times:
+          fallbackTimes
       });
     }
 
@@ -2562,9 +3847,15 @@
       of mergedSurfaceRoutes
     ) {
       const key =
-        getBoardRouteKey(route);
+        getBoardRouteKey(
+          route
+        );
 
-      if (!surfaceRowsByKey.has(key)) {
+      if (
+        !surfaceRowsByKey.has(
+          key
+        )
+      ) {
         surfaceRowsByKey.set(
           key,
           {
@@ -2582,10 +3873,14 @@
       of surfaceFallbackRoutes
     ) {
       const key =
-        getBoardRouteKey(route);
+        getBoardRouteKey(
+          route
+        );
 
       const existing =
-        surfaceRowsByKey.get(key);
+        surfaceRowsByKey.get(
+          key
+        );
 
       if (!existing) {
         surfaceRowsByKey.set(
@@ -2607,68 +3902,100 @@
     }
 
     const surfaceRoutes =
-      [...surfaceRowsByKey.values()]
-        .map(route => {
-          const seenArrivalKeys =
-            new Set();
+      [
+        ...surfaceRowsByKey.values()
+      ]
+        .map(
+          route => {
+            const seenArrivalKeys =
+              new Set();
 
-          const times =
-            (route.times || [])
-              .sort(
-                (a, b) =>
-                  Number(a.timestamp)
-                  - Number(b.timestamp)
+            const times =
+              (
+                route.times
+                || []
               )
-              .filter(time => {
-                const timestamp =
-                  Number(
-                    time?.timestamp
-                  );
+                .sort(
+                  (a, b) =>
+                    Number(
+                      a.timestamp
+                    )
+                    - Number(
+                      b.timestamp
+                    )
+                )
+                .filter(
+                  time => {
+                    const timestamp =
+                      Number(
+                        time?.timestamp
+                      );
 
-                if (
-                  !Number.isFinite(
-                    timestamp
-                  )
-                ) {
-                  return false;
-                }
+                    if (
+                      !Number.isFinite(
+                        timestamp
+                      )
+                    ) {
+                      return false;
+                    }
 
-                const tripId =
-                  String(
-                    time?.trip_id || ""
-                  ).trim();
+                    const tripId =
+                      String(
+                        time?.trip_id
+                        || ""
+                      ).trim();
 
-                // Prefer trip identity when available.
-                // Otherwise timestamp is the dedupe identity.
-                const key =
-                  tripId
-                    ? `trip|${tripId}|${Math.floor(timestamp)}`
-                    : `time|${Math.floor(timestamp)}`;
+                    // Prefer trip identity when available.
+                    // Otherwise timestamp is the dedupe identity.
+                    const key =
+                      tripId
+                        ? (
+                            `trip|${tripId}|`
+                            + `${Math.floor(timestamp)}`
+                          )
+                        : (
+                            `time|`
+                            + `${Math.floor(timestamp)}`
+                          );
 
-                if (
-                  seenArrivalKeys.has(key)
-                ) {
-                  return false;
-                }
+                    if (
+                      seenArrivalKeys.has(
+                        key
+                      )
+                    ) {
+                      return false;
+                    }
 
-                seenArrivalKeys.add(key);
-                return true;
-              })
-              .slice(0, 4);
+                    seenArrivalKeys.add(
+                      key
+                    );
 
-          return {
-            ...route,
-            times
-          };
-        })
+                    return true;
+                  }
+                )
+                .slice(
+                  0,
+                  4
+                );
+
+            return {
+              ...route,
+              times
+            };
+          }
+        )
         .filter(
           route =>
             route.times.length
         )
         .sort(
           (a, b) =>
-            Number(a.times?.[0]?.timestamp)
-            - Number(b.times?.[0]?.timestamp)
+            Number(
+              a.times?.[0]?.timestamp
+            )
+            - Number(
+              b.times?.[0]?.timestamp
+            )
         );
 
     // Sofia Traffic currently does not provide usable Trip Updates for metro.
@@ -2679,18 +4006,21 @@
         mergedSurfaceRoutes.map(
           route =>
             String(
-              route?.route_id || ""
+              route?.route_id
+              || ""
             )
         )
       );
 
     const routes = [
       ...surfaceRoutes,
+
       ...metroRoutes.filter(
         route =>
           !realtimeRouteIds.has(
             String(
-              route.route_id || ""
+              route.route_id
+              || ""
             )
           )
       )
@@ -2708,8 +4038,12 @@
     };
   }
 
-  async function fetchVirtualBoard(stop) {
-    return fetchVirtualBoardViaServer(stop);
+  async function fetchVirtualBoard(
+    stop
+  ) {
+    return fetchVirtualBoardViaServer(
+      stop
+    );
   }
 
   async function renderStopBoard(
@@ -2720,12 +4054,16 @@
       ++boardRenderToken;
 
     selectedStopId =
-      String(stop.stop_id);
+      String(
+        stop.stop_id
+      );
 
     const panel =
       boardPanel();
 
-    if (!panel) return;
+    if (!panel) {
+      return;
+    }
 
     panel.innerHTML = `
       <div class="virtual-board-header">
@@ -2750,16 +4088,26 @@
         "click",
         () => {
           ++boardRenderToken;
-          selectedStopId = null;
 
-          if (selectedStopMarker) {
+          selectedStopId =
+            null;
+
+          if (
+            selectedStopMarker
+          ) {
             selectedStopMarker.setStyle({
-              fillColor: "#111827",
-              color: "#ffffff",
-              fillOpacity: 1
+              fillColor:
+                "#111827",
+
+              color:
+                "#ffffff",
+
+              fillOpacity:
+                1
             });
 
-            selectedStopMarker = null;
+            selectedStopMarker =
+              null;
           }
 
           renderEmptyBoard();
@@ -2777,7 +4125,9 @@
             event.currentTarget;
 
           const favorite =
-            setFavoriteStop(stop);
+            setFavoriteStop(
+              stop
+            );
 
           button.classList.toggle(
             "is-favorite",
@@ -2787,7 +4137,9 @@
           button.querySelector(
             "span"
           ).textContent =
-            favorite ? "★" : "☆";
+            favorite
+              ? "★"
+              : "☆";
 
           button.setAttribute(
             "aria-label",
@@ -2808,12 +4160,17 @@
     try {
       const data =
         boardData
-        || await fetchVirtualBoard(stop);
+        || await fetchVirtualBoard(
+          stop
+        );
 
       if (
-        renderToken !== boardRenderToken
+        renderToken
+          !== boardRenderToken
         || selectedStopId
-          !== String(stop.stop_id)
+          !== String(
+            stop.stop_id
+          )
       ) {
         return;
       }
@@ -2835,50 +4192,62 @@
 
       const rows =
         data.routes
-          .map(route => ({
-            ...route,
+          .map(
+            route => ({
+              ...route,
 
-            arrivals:
-              (route.times || [])
-                .map(time => ({
-                  timestamp:
-                    Number(
-                      time?.timestamp
-                    ),
+              arrivals:
+                (
+                  route.times
+                  || []
+                )
+                  .map(
+                    time => ({
+                      timestamp:
+                        Number(
+                          time?.timestamp
+                        ),
 
-                  delay:
-                    Number.isFinite(
-                      Number(time?.delay)
-                    )
-                      ? Number(
-                          time.delay
+                      delay:
+                        Number.isFinite(
+                          Number(
+                            time?.delay
+                          )
                         )
-                      : null,
+                          ? Number(
+                              time.delay
+                            )
+                          : null,
 
-                  scheduled:
-                    Boolean(
-                      time?.scheduled
-                    )
-                }))
-                .filter(
-                  time =>
-                    Number.isFinite(
-                      time.timestamp
-                    )
-                )
-                .filter(
-                  time =>
-                    getArrivalMinutes(
-                      time.timestamp
-                    ) >= 0
-                )
-                .sort(
-                  (a, b) =>
-                    a.timestamp
-                    - b.timestamp
-                )
-                .slice(0, 4)
-          }))
+                      scheduled:
+                        Boolean(
+                          time?.scheduled
+                        )
+                    })
+                  )
+                  .filter(
+                    time =>
+                      Number.isFinite(
+                        time.timestamp
+                      )
+                  )
+                  .filter(
+                    time =>
+                      getArrivalMinutes(
+                        time.timestamp
+                      ) >= 0
+                  )
+                  .sort(
+                    (a, b) =>
+                      a.timestamp
+                      - b.timestamp
+                  )
+                  .slice(
+                    0,
+                    4
+                  )
+            })
+          )
           .filter(
             route =>
               route.arrivals.length
@@ -2889,7 +4258,9 @@
               - b.arrivals[0].timestamp
           );
 
-      if (!rows.length) {
+      if (
+        !rows.length
+      ) {
         list.innerHTML =
           `<div class="virtual-board-no-data">Няма предстоящи заминавания.</div>`;
 
@@ -2898,65 +4269,89 @@
 
       list.innerHTML =
         rows
-          .map(row => {
-            const meta =
-              getLineMeta(
-                row.route_id
-                || row.routeId,
-                row.route_ref
-              );
+          .map(
+            row => {
+              const meta =
+                getLineMeta(
+                  row.route_id
+                  || row.routeId,
+                  row.route_ref
+                );
 
-            const arrivals =
-              row.arrivals;
+              const arrivals =
+                row.arrivals;
 
-            const nextTimes =
-              arrivals
-                .slice(1, 3)
-                .map(time => {
-                  const tooltip =
-                    formatArrivalCountdown(
-                      time.timestamp
-                    );
+              const nextTimes =
+                arrivals
+                  .slice(
+                    1,
+                    3
+                  )
+                  .map(
+                    time => {
+                      const tooltip =
+                        formatArrivalCountdown(
+                          time.timestamp
+                        );
 
-                  const clock =
-                    formatArrivalClock(
-                      time.timestamp
-                    );
+                      const clock =
+                        formatArrivalClock(
+                          time.timestamp
+                        );
 
-                  return `<span class="vb-next-time" tabindex="0" data-arrival-timestamp="${time.timestamp}" data-tooltip="${escapeHtml(tooltip)}" aria-label="${escapeHtml(tooltip)}">${escapeHtml(clock)}</span>`;
-                })
-                .join("");
+                      return (
+                        `<span class="vb-next-time" `
+                        + `tabindex="0" `
+                        + `data-arrival-timestamp="${time.timestamp}" `
+                        + `data-tooltip="${escapeHtml(tooltip)}" `
+                        + `aria-label="${escapeHtml(tooltip)}">`
+                        + `${escapeHtml(clock)}`
+                        + `</span>`
+                      );
+                    }
+                  )
+                  .join("");
 
-            return `
-              <article class="vb-row">
-                <div class="schedule-summary-route-row vb-route-row">
-                  ${lineIdentityHtml(meta)}
-                  ${destinationHtml(
-                    row.destination
-                    || row.headsign
-                    || ""
-                  )}
-                </div>
-                <div class="vb-time-block">
-                  ${countdownHtml(
-                    arrivals[0],
-                    !arrivals[0]?.scheduled
-                  )}
-                  ${
-                    arrivals.length > 1
-                      ? `<div class="vb-next-times">${nextTimes}</div>`
-                      : ""
-                  }
-                </div>
-              </article>
-            `;
-          })
+              return `
+                <article class="vb-row">
+                  <div class="schedule-summary-route-row vb-route-row">
+                    ${lineIdentityHtml(meta)}
+                    ${destinationHtml(
+                      row.destination
+                      || row.headsign
+                      || ""
+                    )}
+                  </div>
+
+                  <div class="vb-time-block">
+                    ${countdownHtml(
+                      arrivals[0],
+                      !arrivals[0]?.scheduled
+                    )}
+
+                    ${
+                      arrivals.length > 1
+                        ? (
+                            `<div class="vb-next-times">`
+                            + `${nextTimes}`
+                            + `</div>`
+                          )
+                        : ""
+                    }
+                  </div>
+                </article>
+              `;
+            }
+          )
           .join("");
     } catch (error) {
       if (
-        renderToken !== boardRenderToken
+        renderToken
+          !== boardRenderToken
         || selectedStopId
-          !== String(stop.stop_id)
+          !== String(
+            stop.stop_id
+          )
       ) {
         return;
       }
@@ -2966,15 +4361,20 @@
         error
       );
 
-      panel.querySelector(
-        ".virtual-board-list"
-      ).innerHTML =
-        `<div class="virtual-board-error">Realtime данните не могат да бъдат заредени.</div>`;
+      panel
+        .querySelector(
+          ".virtual-board-list"
+        )
+        .innerHTML =
+          `<div class="virtual-board-error">Realtime данните не могат да бъдат заредени.</div>`;
     } finally {
       if (
-        renderToken !== boardRenderToken
+        renderToken
+          !== boardRenderToken
         || selectedStopId
-          !== String(stop.stop_id)
+          !== String(
+            stop.stop_id
+          )
       ) {
         return;
       }
@@ -2985,7 +4385,9 @@
         );
 
       if (refreshButton) {
-        refreshButton.disabled = false;
+        refreshButton.disabled =
+          false;
+
         refreshButton.classList.remove(
           "is-loading"
         );
@@ -2993,8 +4395,12 @@
         refreshButton.addEventListener(
           "click",
           () =>
-            refreshSelectedBoard(true),
-          { once: true }
+            refreshSelectedBoard(
+              true
+            ),
+          {
+            once: true
+          }
         );
       }
     }
@@ -3004,7 +4410,9 @@
     const panel =
       boardPanel();
 
-    if (!panel) return;
+    if (!panel) {
+      return;
+    }
 
     const favorites =
       getFavoriteStops();
@@ -3016,17 +4424,46 @@
             <div class="virtual-board-favorites-heading">
               <h3>Любими спирки</h3>
             </div>
+
             <div class="virtual-board-favorites-list">
-              ${favorites.map(stop => `
-                <button type="button" class="virtual-board-favorite-stop" data-stop-id="${escapeHtml(stop.stop_id)}">
-                  <span class="virtual-board-favorite-stop-star" aria-hidden="true">★</span>
-                  <span class="virtual-board-favorite-stop-info">
-                    <strong>${escapeHtml(stop.stop_name || "Спирка")}</strong>
-                    <span>[${escapeHtml(stop.stop_code || stop.stop_id || "")}]</span>
-                  </span>
-                  <span class="virtual-board-favorite-stop-arrow" aria-hidden="true">→</span>
-                </button>
-              `).join("")}
+              ${favorites.map(
+                stop => `
+                  <button
+                    type="button"
+                    class="virtual-board-favorite-stop"
+                    data-stop-id="${escapeHtml(stop.stop_id)}"
+                  >
+                    <span
+                      class="virtual-board-favorite-stop-star"
+                      aria-hidden="true"
+                    >★</span>
+
+                    <span
+                      class="virtual-board-favorite-stop-info"
+                    >
+                      <strong>
+                        ${escapeHtml(
+                          stop.stop_name
+                          || "Спирка"
+                        )}
+                      </strong>
+
+                      <span>
+                        [${escapeHtml(
+                          stop.stop_code
+                          || stop.stop_id
+                          || ""
+                        )}]
+                      </span>
+                    </span>
+
+                    <span
+                      class="virtual-board-favorite-stop-arrow"
+                      aria-hidden="true"
+                    >→</span>
+                  </button>
+                `
+              ).join("")}
             </div>
           </div>
         `
@@ -3043,49 +4480,79 @@
       .querySelectorAll(
         ".virtual-board-favorite-stop"
       )
-      .forEach(button => {
-        button.addEventListener(
-          "click",
-          () => {
-            const stop =
-              findStopById(
-                button.dataset.stopId
-              );
+      .forEach(
+        button => {
+          button.addEventListener(
+            "click",
+            () => {
+              const stop =
+                findStopById(
+                  button.dataset.stopId
+                );
 
-            if (stop) {
-              selectStopOnMap(stop);
+              if (stop) {
+                selectStopOnMap(
+                  stop
+                );
+              }
             }
-          }
-        );
-      });
+          );
+        }
+      );
   }
 
-  function findStopById(stopId) {
+  function findStopById(
+    stopId
+  ) {
     return (
-      transportData?.stops || []
+      transportData?.stops
+      || []
     ).find(
       stop =>
-        String(stop.stop_id)
-        === String(stopId)
-    ) || null;
+        String(
+          stop.stop_id
+        )
+        === String(
+          stopId
+        )
+    )
+    || null;
   }
 
-  function selectStopOnMap(stop) {
-    if (!stop || !map) return;
+  function selectStopOnMap(
+    stop
+  ) {
+    if (
+      !stop
+      || !map
+    ) {
+      return;
+    }
 
-    if (selectedStopMarker) {
+    if (
+      selectedStopMarker
+    ) {
       selectedStopMarker.setStyle({
-        fillColor: "#111827",
-        color: "#ffffff",
-        fillOpacity: 1
+        fillColor:
+          "#111827",
+
+        color:
+          "#ffffff",
+
+        fillOpacity:
+          1
       });
     }
 
     const lat =
-      Number(stop.stop_lat);
+      Number(
+        stop.stop_lat
+      );
 
     const lon =
-      Number(stop.stop_lon);
+      Number(
+        stop.stop_lon
+      );
 
     if (
       !Number.isFinite(lat)
@@ -3096,36 +4563,53 @@
 
     const marker =
       stopMarkersById.get(
-        String(stop.stop_id)
+        String(
+          stop.stop_id
+        )
       );
 
     if (marker) {
       marker.setStyle({
-        fillColor: "#BE1E2D",
-        color: "#ffffff",
-        fillOpacity: 1
+        fillColor:
+          "#BE1E2D",
+
+        color:
+          "#ffffff",
+
+        fillOpacity:
+          1
       });
 
-      selectedStopMarker = marker;
+      selectedStopMarker =
+        marker;
     } else {
-      selectedStopMarker = null;
+      selectedStopMarker =
+        null;
     }
 
-    renderStopBoard(stop);
+    renderStopBoard(
+      stop
+    );
 
     map.setView(
-      [lat, lon],
+      [
+        lat,
+        lon
+      ],
       Math.max(
         map.getZoom(),
         15
       ),
       {
-        animate: true
+        animate:
+          true
       }
     );
   }
 
-  function setupStopSearch(stops) {
+  function setupStopSearch(
+    stops
+  ) {
     const input =
       document.getElementById(
         "stopSearch"
@@ -3136,15 +4620,24 @@
         "stopSearchResults"
       );
 
-    if (!input || !results) return;
+    if (
+      !input
+      || !results
+    ) {
+      return;
+    }
 
     const normalized =
       value =>
-        String(value || "")
+        String(
+          value || ""
+        )
           .toLocaleLowerCase(
             "bg-BG"
           )
-          .normalize("NFD")
+          .normalize(
+            "NFD"
+          )
           .replace(
             /[\u0300-\u036f]/g,
             ""
@@ -3153,97 +4646,140 @@
     const searchStops =
       query => {
         const needle =
-          normalized(query)
-            .trim();
+          normalized(
+            query
+          ).trim();
 
-        if (!needle) return [];
+        if (!needle) {
+          return [];
+        }
 
         const seen =
           new Set();
 
         return stops
-          .filter(stop => {
-            const name =
-              normalized(
-                stop.name
-                || stop.stop_name
+          .filter(
+            stop => {
+              const name =
+                normalized(
+                  stop.name
+                  || stop.stop_name
+                );
+
+              const code =
+                normalized(
+                  stop.stop_code
+                  || stop.stop_id
+                );
+
+              return (
+                name.includes(
+                  needle
+                )
+                || code.includes(
+                  needle
+                )
               );
-
-            const code =
-              normalized(
-                stop.stop_code
-                || stop.stop_id
-              );
-
-            return (
-              name.includes(needle)
-              || code.includes(needle)
-            );
-          })
-          .filter(stop => {
-            const key =
-              String(
-                stop.stop_code
-                || stop.stop_id
-                || ""
-              ).trim();
-
-            if (
-              !key
-              || seen.has(key)
-            ) {
-              return false;
             }
+          )
+          .filter(
+            stop => {
+              const key =
+                String(
+                  stop.stop_code
+                  || stop.stop_id
+                  || ""
+                ).trim();
 
-            seen.add(key);
-            return true;
-          })
-          .slice(0, 8);
+              if (
+                !key
+                || seen.has(key)
+              ) {
+                return false;
+              }
+
+              seen.add(
+                key
+              );
+
+              return true;
+            }
+          )
+          .slice(
+            0,
+            8
+          );
       };
 
     const renderResults =
       matches => {
         results.innerHTML =
           matches.length
-            ? matches.map(stop => `
-                <button type="button" class="virtual-stop-search-result" data-stop-id="${escapeHtml(stop.stop_id)}">
-                  <strong>${escapeHtml(stop.name || stop.stop_name || "Спирка")}</strong>
-                  <span>${escapeHtml(stop.stop_code || stop.stop_id || "")}</span>
-                </button>
-              `).join("")
-            : `<div class="virtual-stop-search-empty">Няма намерени спирки.</div>`;
+            ? matches.map(
+                stop => `
+                  <button
+                    type="button"
+                    class="virtual-stop-search-result"
+                    data-stop-id="${escapeHtml(stop.stop_id)}"
+                  >
+                    <strong>
+                      ${escapeHtml(
+                        stop.name
+                        || stop.stop_name
+                        || "Спирка"
+                      )}
+                    </strong>
 
-        results.hidden = false;
+                    <span>
+                      ${escapeHtml(
+                        stop.stop_code
+                        || stop.stop_id
+                        || ""
+                      )}
+                    </span>
+                  </button>
+                `
+              ).join("")
+            : `
+                <div class="virtual-stop-search-empty">
+                  Няма намерени спирки.
+                </div>
+              `;
+
+        results.hidden =
+          false;
 
         results
           .querySelectorAll(
             "[data-stop-id]"
           )
-          .forEach(button => {
-            button.addEventListener(
-              "click",
-              () => {
-                const stop =
-                  findStopById(
-                    button.dataset.stopId
-                  );
+          .forEach(
+            button => {
+              button.addEventListener(
+                "click",
+                () => {
+                  const stop =
+                    findStopById(
+                      button.dataset.stopId
+                    );
 
-                if (stop) {
-                  input.value =
-                    stop.name
-                    || stop.stop_name
-                    || "";
+                  if (stop) {
+                    input.value =
+                      stop.name
+                      || stop.stop_name
+                      || "";
 
-                  results.hidden =
-                    true;
+                    results.hidden =
+                      true;
 
-                  selectStopOnMap(
-                    stop
-                  );
+                    selectStopOnMap(
+                      stop
+                    );
+                  }
                 }
-              }
-            );
-          });
+              );
+            }
+          );
       };
 
     input.addEventListener(
@@ -3263,7 +4799,9 @@
         }
 
         renderResults(
-          searchStops(query)
+          searchStops(
+            query
+          )
         );
       }
     );
@@ -3304,98 +4842,138 @@
         "locateUserButton"
       );
 
-    if (!button) return;
+    if (!button) {
+      return;
+    }
 
-    let userMarker = null;
+    let userMarker =
+      null;
 
-    const locate = () => {
-      if (!navigator.geolocation) {
-        window.alert(
-          "Този браузър не поддържа определяне на локация."
+    const locate =
+      () => {
+        if (
+          !navigator.geolocation
+        ) {
+          window.alert(
+            "Този браузър не поддържа определяне на локация."
+          );
+
+          return;
+        }
+
+        button.disabled =
+          true;
+
+        button.classList.add(
+          "is-loading"
         );
 
-        return;
-      }
+        navigator.geolocation
+          .getCurrentPosition(
+            position => {
+              const lat =
+                position.coords.latitude;
 
-      button.disabled = true;
-      button.classList.add(
-        "is-loading"
-      );
+              const lon =
+                position.coords.longitude;
 
-      navigator.geolocation.getCurrentPosition(
-        position => {
-          const lat =
-            position.coords.latitude;
+              if (!userMarker) {
+                userMarker =
+                  L.circleMarker(
+                    [
+                      lat,
+                      lon
+                    ],
+                    {
+                      radius:
+                        8,
 
-          const lon =
-            position.coords.longitude;
+                      weight:
+                        3,
 
-          if (!userMarker) {
-            userMarker =
-              L.circleMarker(
-                [lat, lon],
-                {
-                  radius: 8,
-                  weight: 3,
-                  color: "#ffffff",
-                  fillColor: "#2563eb",
-                  fillOpacity: 1
-                }
-              ).addTo(map);
+                      color:
+                        "#ffffff",
 
-            userMarker.bindTooltip(
-              "Вашата локация",
-              {
-                direction: "top",
-                offset: [0, -8]
+                      fillColor:
+                        "#2563eb",
+
+                      fillOpacity:
+                        1
+                    }
+                  ).addTo(
+                    map
+                  );
+
+                userMarker.bindTooltip(
+                  "Вашата локация",
+                  {
+                    direction:
+                      "top",
+
+                    offset:
+                      [0, -8]
+                  }
+                );
+              } else {
+                userMarker.setLatLng(
+                  [
+                    lat,
+                    lon
+                  ]
+                );
               }
-            );
-          } else {
-            userMarker.setLatLng(
-              [lat, lon]
-            );
-          }
 
-          map.setView(
-            [lat, lon],
-            Math.max(
-              map.getZoom(),
-              15
-            ),
+              map.setView(
+                [
+                  lat,
+                  lon
+                ],
+                Math.max(
+                  map.getZoom(),
+                  15
+                ),
+                {
+                  animate:
+                    true
+                }
+              );
+
+              button.disabled =
+                false;
+
+              button.classList.remove(
+                "is-loading"
+              );
+            },
+            error => {
+              console.warn(
+                "Грешка при определяне на локацията:",
+                error
+              );
+
+              button.disabled =
+                false;
+
+              button.classList.remove(
+                "is-loading"
+              );
+
+              window.alert(
+                "Не успяхме да определим вашата локация. Проверете разрешението за достъп до местоположението."
+              );
+            },
             {
-              animate: true
+              enableHighAccuracy:
+                true,
+
+              timeout:
+                10000,
+
+              maximumAge:
+                30000
             }
           );
-
-          button.disabled = false;
-          button.classList.remove(
-            "is-loading"
-          );
-        },
-        error => {
-          console.warn(
-            "Грешка при определяне на локацията:",
-            error
-          );
-
-          button.disabled =
-            false;
-
-          button.classList.remove(
-            "is-loading"
-          );
-
-          window.alert(
-            "Не успяхме да определим вашата локация. Проверете разрешението за достъп до местоположението."
-          );
-        },
-        {
-          enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 30000
-        }
-      );
-    };
+      };
 
     button.addEventListener(
       "click",
@@ -3403,19 +4981,30 @@
     );
   }
 
-  function addStopMarkers(stops) {
+  function addStopMarkers(
+    stops
+  ) {
     stopMarkers.clearLayers();
     stopMarkersById.clear();
-    selectedStopMarker = null;
+    selectedStopMarker =
+      null;
 
-    const renderer = L.svg();
+    const renderer =
+      L.svg();
 
-    for (const stop of stops) {
+    for (
+      const stop
+      of stops
+    ) {
       const lat =
-        Number(stop.stop_lat);
+        Number(
+          stop.stop_lat
+        );
 
       const lon =
-        Number(stop.stop_lon);
+        Number(
+          stop.stop_lon
+        );
 
       if (
         !Number.isFinite(lat)
@@ -3426,29 +5015,59 @@
 
       const clickTarget =
         L.circleMarker(
-          [lat, lon],
+          [
+            lat,
+            lon
+          ],
           {
-            radius: 16,
-            weight: 0,
-            stroke: false,
-            fillColor: "#111827",
-            fillOpacity: 0.01,
+            radius:
+              16,
+
+            weight:
+              0,
+
+            stroke:
+              false,
+
+            fillColor:
+              "#111827",
+
+            fillOpacity:
+              0.01,
+
             renderer,
-            pane: "markerPane"
+
+            pane:
+              "markerPane"
           }
         );
 
       const marker =
         L.circleMarker(
-          [lat, lon],
+          [
+            lat,
+            lon
+          ],
           {
-            radius: 7,
-            weight: 2,
-            color: "#ffffff",
-            fillColor: "#111827",
-            fillOpacity: 1,
+            radius:
+              7,
+
+            weight:
+              2,
+
+            color:
+              "#ffffff",
+
+            fillColor:
+              "#111827",
+
+            fillOpacity:
+              1,
+
             renderer,
-            pane: "markerPane"
+
+            pane:
+              "markerPane"
           }
         );
 
@@ -3462,22 +5081,30 @@
       marker.bindTooltip(
         stopTooltip,
         {
-          direction: "top",
-          offset: [0, -5]
+          direction:
+            "top",
+
+          offset:
+            [0, -5]
         }
       );
 
       clickTarget.bindTooltip(
         stopTooltip,
         {
-          direction: "top",
-          offset: [0, -12]
+          direction:
+            "top",
+
+          offset:
+            [0, -12]
         }
       );
 
       const select =
         () =>
-          selectStopOnMap(stop);
+          selectStopOnMap(
+            stop
+          );
 
       clickTarget.on(
         "click",
@@ -3498,36 +5125,44 @@
       );
 
       stopMarkersById.set(
-        String(stop.stop_id),
+        String(
+          stop.stop_id
+        ),
         marker
       );
     }
   }
 
-  function getActiveStops(stops) {
+  function getActiveStops(
+    stops
+  ) {
     const activeStopIds =
       new Set();
 
     for (
       const directionSet
       of Object.values(
-        transportData?.directions
+        transportData
+          ?.directions
         || {}
       )
     ) {
       for (
         const direction
         of Object.values(
-          directionSet || {}
+          directionSet
+          || {}
         )
       ) {
         for (
           const stop
-          of direction?.stops || []
+          of direction?.stops
+          || []
         ) {
           const stopId =
             String(
-              stop?.stop_id ?? ""
+              stop?.stop_id
+              ?? ""
             ).trim();
 
           if (stopId) {
@@ -3543,7 +5178,8 @@
       stop => {
         const stopId =
           String(
-            stop?.stop_id ?? ""
+            stop?.stop_id
+            ?? ""
           ).trim();
 
         if (
@@ -3556,16 +5192,25 @@
 
         const locationType =
           String(
-            stop?.location_type ?? "0"
+            stop?.location_type
+            ?? "0"
           ).trim();
 
-        return locationType === "0";
+        return (
+          locationType
+          === "0"
+        );
       }
     );
   }
 
-  function initMap(stops) {
-    if (typeof L === "undefined") {
+  function initMap(
+    stops
+  ) {
+    if (
+      typeof L
+      === "undefined"
+    ) {
       const mapElement =
         document.getElementById(
           "virtualMap"
@@ -3583,27 +5228,44 @@
       L.map(
         "virtualMap",
         {
-          center: SOFIA_CENTER,
-          zoom: 12,
-          minZoom: 10,
-          preferCanvas: true,
-          zoomControl: true
+          center:
+            SOFIA_CENTER,
+
+          zoom:
+            12,
+
+          minZoom:
+            10,
+
+          preferCanvas:
+            true,
+
+          zoomControl:
+            true
         }
       );
 
     L.tileLayer(
       "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
       {
-        maxZoom: 19,
+        maxZoom:
+          19,
+
         attribution:
           "&copy; OpenStreetMap contributors"
       }
-    ).addTo(map);
+    ).addTo(
+      map
+    );
 
     stopMarkers =
-      L.layerGroup().addTo(map);
+      L.layerGroup().addTo(
+        map
+      );
 
-    addStopMarkers(stops);
+    addStopMarkers(
+      stops
+    );
 
     setTimeout(
       () =>
@@ -3630,44 +5292,49 @@
       .querySelectorAll(
         "[data-arrival-timestamp]"
       )
-      .forEach(element => {
-        const timestamp =
-          Number(
-            element.dataset
-              .arrivalTimestamp
-          );
+      .forEach(
+        element => {
+          const timestamp =
+            Number(
+              element
+                .dataset
+                .arrivalTimestamp
+            );
 
-        if (
-          !Number.isFinite(timestamp)
-        ) {
-          return;
-        }
+          if (
+            !Number.isFinite(
+              timestamp
+            )
+          ) {
+            return;
+          }
 
-        const countdown =
-          formatArrivalCountdown(
-            timestamp,
-            nowSeconds
-          );
+          const countdown =
+            formatArrivalCountdown(
+              timestamp,
+              nowSeconds
+            );
 
-        if (
-          element.classList.contains(
-            "vb-arrival-minutes"
-          )
-        ) {
-          element.textContent =
+          if (
+            element.classList.contains(
+              "vb-arrival-minutes"
+            )
+          ) {
+            element.textContent =
+              countdown;
+
+            return;
+          }
+
+          element.dataset.tooltip =
             countdown;
 
-          return;
+          element.setAttribute(
+            "aria-label",
+            countdown
+          );
         }
-
-        element.dataset.tooltip =
-          countdown;
-
-        element.setAttribute(
-          "aria-label",
-          countdown
-        );
-      });
+      );
   }
 
   function startTimers() {
@@ -3688,7 +5355,9 @@
     refreshTimer =
       setInterval(
         () => {
-          if (selectedStopId) {
+          if (
+            selectedStopId
+          ) {
             refreshSelectedBoard();
           }
         },
@@ -3709,7 +5378,9 @@
     }
 
     const requestedStopId =
-      String(selectedStopId);
+      String(
+        selectedStopId
+      );
 
     const requestToken =
       boardRenderToken;
@@ -3719,7 +5390,9 @@
         requestedStopId
       );
 
-    if (!stop) return;
+    if (!stop) {
+      return;
+    }
 
     const refreshButton =
       document.getElementById(
@@ -3735,7 +5408,8 @@
         true;
     }
 
-    refreshInFlight = true;
+    refreshInFlight =
+      true;
 
     try {
       const data =
@@ -3744,7 +5418,8 @@
         );
 
       if (
-        requestToken !== boardRenderToken
+        requestToken
+          !== boardRenderToken
         || selectedStopId
           !== requestedStopId
       ) {
@@ -3757,7 +5432,8 @@
       );
     } catch (error) {
       if (
-        requestToken !== boardRenderToken
+        requestToken
+          !== boardRenderToken
         || selectedStopId
           !== requestedStopId
       ) {
@@ -3779,10 +5455,12 @@
           `<div class="virtual-board-error">Realtime данните не могат да бъдат заредени.</div>`;
       }
     } finally {
-      refreshInFlight = false;
+      refreshInFlight =
+        false;
 
       if (
-        requestToken === boardRenderToken
+        requestToken
+          === boardRenderToken
         && selectedStopId
           === requestedStopId
       ) {
@@ -3810,70 +5488,105 @@
 
       routeById =
         new Map(
-          (transportData.routes || [])
-            .map(route => [
-              String(route.route_id),
+          (
+            transportData.routes
+            || []
+          ).map(
+            route => [
+              String(
+                route.route_id
+              ),
               route
-            ])
+            ]
+          )
         );
 
       tripById =
         new Map(
-          (transportData.sourceTrips || [])
-            .map(trip => [
-              String(trip.trip_id),
+          (
+            transportData.sourceTrips
+            || []
+          ).map(
+            trip => [
+              String(
+                trip.trip_id
+              ),
               trip
-            ])
+            ]
+          )
         );
 
       const lines =
         convertGtfsRoutes(
-          transportData.routes || [],
-          transportData.trips || [],
-          transportData.directions || {}
+          transportData.routes
+          || [],
+          transportData.trips
+          || [],
+          transportData.directions
+          || {}
         );
 
       routeMetaById =
         new Map(
-          lines.map(line => [
-            String(line.id),
-            line
-          ])
+          lines.map(
+            line => [
+              String(line.id),
+              line
+            ]
+          )
         );
 
       routeMetaByNumber =
         new Map(
-          lines.map(line => [
-            String(line.number).trim(),
-            line
-          ])
+          lines.map(
+            line => [
+              String(
+                line.number
+              ).trim(),
+              line
+            ]
+          )
         );
 
       const allStops =
-        transportData.stops || [];
+        transportData.stops
+        || [];
 
       const stops =
         getActiveStops(
           allStops
         );
 
-      initMap(stops);
-      setupStopSearch(stops);
+      initMap(
+        stops
+      );
+
+      setupStopSearch(
+        stops
+      );
+
       setupGeolocation();
+
       renderEmptyBoard();
 
       const requestedStopId =
         new URLSearchParams(
           window.location.search
-        ).get("stop");
+        ).get(
+          "stop"
+        );
 
-      if (requestedStopId) {
+      if (
+        requestedStopId
+      ) {
         const requestedStop =
           findStopById(
             requestedStopId
           );
 
-        if (requestedStop) {
+        if (
+          requestedStop
+        ) {
           selectStopOnMap(
             requestedStop
           );
@@ -3894,7 +5607,10 @@
         panel.innerHTML = `
           <div class="virtual-board-error">
             <strong>Виртуалното табло не може да бъде заредено.</strong>
-            <span>${escapeHtml(error.message || "Неизвестна грешка.")}</span>
+            <span>${escapeHtml(
+              error.message
+              || "Неизвестна грешка."
+            )}</span>
           </div>
         `;
       }
