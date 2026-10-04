@@ -205,14 +205,22 @@ def merge_logical_trips(routes_data, logical_trips, logical_stop_times):
 
 
 def choose_direction_name(direction, stops_by_id):
-    headsigns = [normalize_display_name(value) for value in direction.get("headsigns", []) if normalize(value)]
-    if headsigns:
-        return Counter(headsigns).most_common(1)[0][0]
+    # Dimitar does not store a passenger-facing destination in directions.json;
+    # the UI derives it from the last stop. Prefer the OSM/SUMC merged terminal
+    # name here as well, with GTFS headsign only as a safety fallback for a
+    # malformed/incomplete stop mapping.
     stops = direction.get("stops", [])
     if stops:
         stop = stops_by_id.get(stops[-1])
         if stop:
-            return normalize_display_name(stop.get("stop_name"))
+            names = stop.get("names") if isinstance(stop.get("names"), dict) else {}
+            name = normalize(names.get("bg")) or normalize(stop.get("stop_name"))
+            if name:
+                return name
+
+    headsigns = [normalize_display_name(value) for value in direction.get("headsigns", []) if normalize(value)]
+    if headsigns:
+        return Counter(headsigns).most_common(1)[0][0]
     return ""
 
 

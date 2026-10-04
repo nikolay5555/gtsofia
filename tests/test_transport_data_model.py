@@ -11,6 +11,7 @@ DATA = ROOT / "data"
 sys.path.insert(0, str(ROOT / "Scripts"))
 
 from transport_common import normalize_display_name
+from stops_builder import build_stops
 
 
 def load(name: str):
@@ -76,6 +77,53 @@ class TransportDataModelTests(unittest.TestCase):
             self.assertEqual(normalize_display_name(raw), expected)
         for expected in samples.values():
             self.assertEqual(normalize_display_name(expected), expected)
+
+    def test_osm_stop_names_override_gtfs_and_preserve_metro_identity(self):
+        gtfs = [
+            {
+                "stop_id": "0328",
+                "stop_code": "0328",
+                "stop_name": "БУЛ. К. ВЕЛИЧКОВ",
+                "stop_lat": "42.700001",
+                "stop_lon": "23.300001",
+                "location_type": "0",
+            },
+            {
+                "stop_id": "M1",
+                "stop_code": "M1",
+                "stop_name": "СЛИВНИЦА",
+                "stop_lat": "42.700002",
+                "stop_lon": "23.300002",
+                "location_type": "0",
+            },
+            {
+                "stop_id": "0999",
+                "stop_code": "0999",
+                "stop_name": "GTFS FALLBACK",
+                "stop_lat": "42.700003",
+                "stop_lon": "23.300003",
+                "location_type": "0",
+            },
+        ]
+        osm = [
+            {
+                "code": "0328",
+                "coords": [42.7066917419, 23.2999191284],
+                "names": {"bg": "бул. К. Величков", "en": "bul. K. Velichkov"},
+            },
+            {
+                "code": "M1",
+                "coords": [42.7266082762, 23.2614822387],
+                "names": {"bg": "Сливница", "en": "Slivnitsa"},
+            },
+        ]
+        merged, by_id = build_stops(gtfs, osm_stops=osm)
+        self.assertEqual(by_id["0328"]["stop_name"], "бул. К. Величков")
+        self.assertEqual(by_id["0328"]["stop_lat"], str(42.7066917419))
+        self.assertEqual(by_id["M1"]["stop_name"], "Сливница")
+        self.assertEqual(by_id["M1"]["stop_code"], "M1")
+        self.assertEqual(by_id["0999"]["stop_name"], "Gtfs Fallback")
+        self.assertEqual(len(merged), 3)
 
     def test_calendar_is_compact(self):
         self.assertIn("serviceIdsByDate", self.calendar)

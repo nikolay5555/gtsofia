@@ -30,6 +30,7 @@ from directions_builder import (
     merge_partial_directions,
 )
 from routes_builder import build_routes
+from osm_stops import fetch_osm_stops
 from shapes_builder import load_shapes
 from stops_builder import build_public_stops, build_stops
 from transport_common import get_today, normalize
@@ -63,14 +64,14 @@ def write_json(path: Path, value) -> None:
         json.dump(value, file, ensure_ascii=False, separators=(",", ":"))
 
 
-def build_transport_data(routes_data, stops_data, trips_data, stop_times_data, calendar, calendar_dates, today, line_overrides, calendar_config, gtfs_dir: Path):
+def build_transport_data(routes_data, stops_data, trips_data, stop_times_data, calendar, calendar_dates, today, line_overrides, calendar_config, gtfs_dir: Path, osm_stops=None):
     service_day_types, calendar_result = build_calendar_context(
         calendar,
         calendar_dates,
         today,
         calendar_config=calendar_config,
     )
-    output_stops, stops_by_id = build_stops(stops_data)
+    output_stops, stops_by_id = build_stops(stops_data, osm_stops=osm_stops)
     source_trips = build_active_source_trips(trips_data, service_day_types)
     source_stop_times = build_stop_times(stop_times_data, source_trips)
 
@@ -101,7 +102,13 @@ def build_transport_data(routes_data, stops_data, trips_data, stop_times_data, c
     }
     shapes_result = load_shapes(gtfs_dir, selected_shape_ids)
 
-    public_stops = build_public_stops(output_stops)
+    used_stop_ids = {
+        normalize(stop_id)
+        for direction in directions_result
+        for stop_id in direction.get("stops", [])
+        if normalize(stop_id)
+    }
+    public_stops = build_public_stops(output_stops, used_stop_ids=used_stop_ids)
     result = {
         "meta": {
             "schemaVersion": 2,
@@ -154,6 +161,9 @@ def main():
         line_overrides = load_line_overrides(LINE_OVERRIDES_CONFIG_FILE)
         calendar_config = load_calendar_config(CALENDAR_CONFIG_FILE)
 
+        print("Fetching OSM stops and station names (Dimitar-compatible merge)...")
+        osm_stops = fetch_osm_stops()
+
         data = build_transport_data(
             routes_data,
             stops_data,
@@ -165,6 +175,7 @@ def main():
             line_overrides,
             calendar_config,
             GTFS_DIR,
+            osm_stops=osm_stops,
         )
         write_transport_data(data)
         remove_legacy_transport_json()

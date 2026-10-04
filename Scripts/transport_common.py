@@ -125,42 +125,36 @@ def normalize_display_name(value) -> str:
 
 
 def canonical_route_ref(value) -> str:
-    """Return the public route ref used by the application.
+    """Return the public route ref using Dimitar's normalization rules.
 
-    Mirrors Dimitar's normalization rules while preserving X-prefixed tourist
-    routes and normal service lettering. Metro refs are the one deliberate
-    application-specific exception: M1..M4 are exposed as 1..4.
+    Application-specific exception: metro refs M1..M4 are exposed as 1..4,
+    because the site deliberately does not display a leading M.
     """
     ref = normalize(value)
     if not ref:
         return ""
     ref = re.sub(r"\s+", "", ref).upper()
-    ref = ref.replace("Y", "У", 1) if ref.startswith("Y") else ref
+    number = re.sub(r"[A-ZА-Я]+", "", ref)
+
+    if ref.startswith(("E", "Е")):
+        return number
+    if ref.startswith("N"):
+        return f"N{number}"
+    if ref.startswith(("Y", "У")):
+        return f"У{number}"
+    if ref.endswith(("ТБ", "TB")):
+        return f"{number}ТБ"
+    if ref.endswith(("ТМ", "TM", "Т", "T")):
+        return f"{number}ТМ"
 
     metro = re.fullmatch(r"[MМ](\d+)", ref)
     if metro:
         return metro.group(1)
-
-    if re.fullmatch(r"E\d+", ref):
-        return ref[1:]
-
-    school = re.fullmatch(r"[УY](\d+)", ref)
-    if school:
-        return f"У{school.group(1)}"
-
-    night = re.fullmatch(r"N\d+", ref)
-    if night:
-        return night.group(0)
-
-    temporary = re.fullmatch(r"(\d+)(?:T|TM|Т|ТМ|TB|ТВ)", ref)
-    if temporary:
-        return f"{temporary.group(1)}ТМ"
-
     return ref
 
 
 def classify_route(route_row: dict, override: dict | None = None) -> tuple[str, str | None, str]:
-    """Return (main type, subtype, canonical route_ref)."""
+    """Return (main type, subtype, canonical route_ref) in Dimitar's model."""
     override = override or {}
     source_ref = override.get("route_ref") or route_row.get("route_short_name")
     route_ref = canonical_route_ref(source_ref)
@@ -168,7 +162,7 @@ def classify_route(route_row: dict, override: dict | None = None) -> tuple[str, 
     route_type = normalize(override.get("type"))
     if route_type:
         type_map = {"trolleybus": "trolley", "subway": "metro"}
-        route_type = type_map.get(route_type, route_type)
+        route_type = type_map.get(route_type.lower(), route_type.lower())
     else:
         route_type = {
             "0": "tram",
@@ -178,20 +172,27 @@ def classify_route(route_row: dict, override: dict | None = None) -> tuple[str, 
         }.get(normalize(route_row.get("route_type")), "other")
 
     upper_ref = route_ref.upper()
+    # Dimitar treats replacement and M-prefixed bus refs as bus routes.
+    if upper_ref.endswith(("ТБ", "ТМ")) or (upper_ref.startswith("М") and route_type == "bus"):
+        route_type = "bus"
+
+    # Some temporary CGM trolley route ids are represented as trolley in GTFS
+    # but belong in the bus section in the public timetable. Preserve the same
+    # rule used by Dimitar for refs >= 50.
+    digits = re.sub(r"[^0-9]", "", upper_ref)
+    if digits and int(digits) >= 50 and route_type == "trolley":
+        route_type = "bus"
+
     subtype = None
     if route_type == "bus":
-        if upper_ref.startswith("N"):
+        if upper_ref.endswith(("ТБ", "ТМ")):
+            subtype = "temporary"
+        elif upper_ref.startswith("N"):
             subtype = "night"
         elif upper_ref.startswith("У"):
             subtype = "school"
-        elif "Т" in upper_ref or "T" in upper_ref:
-            subtype = "temporary"
-
-    if subtype:
-        route_type = "bus"
 
     return route_type, subtype, route_ref
-
 
 def parse_date(value):
     value = normalize(value)
