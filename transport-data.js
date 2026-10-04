@@ -348,16 +348,20 @@ function canonicalLineRef(value) {
 }
 
 function getLineType(route) {
+    const override = getLineOverride(route);
+    if (override?.type) {
+        const value = String(override.type).trim().toLowerCase();
+        return value === 'trolleybus'
+            ? 'trolley'
+            : value === 'subway'
+                ? 'metro'
+                : value;
+    }
+
     const canonical = String(route?.type || route?.transport_type || '').trim().toLowerCase();
     if (canonical === 'trolleybus') return 'trolley';
     if (canonical === 'subway') return 'metro';
     if (['bus', 'tram', 'trolley', 'metro'].includes(canonical)) return canonical;
-
-    const override = getLineOverride(route);
-    if (override?.type) {
-        const value = String(override.type).trim().toLowerCase();
-        return value === 'trolleybus' ? 'trolley' : value === 'subway' ? 'metro' : value;
-    }
     return getTransportType(route?.route_type);
 }
 
