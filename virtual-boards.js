@@ -2468,42 +2468,62 @@
             continue;
           }
 
-          const destination =
-            normalizeDirectionText(
-              direction?.destination
-              || direction?.headsign
-              || terminalStopId
-            );
+const isPartialCourse =
+  !stopIdsMatch(
+    terminalStopId,
+    getDirectionTerminalStopId(
+      direction
+    )
+  );
 
-          if (
-            isSkippedStaticSchedule(
-              schedule,
-              routeId,
-              directionKey,
-              selectedStop,
-              stopIndex,
-              skippedTrips
-            )
-          ) {
-            continue;
-          }
+const terminalStop =
+  getStopById(
+    terminalStopId
+  );
 
-          if (
-            isConsumedRealtimeScheduledArrival(
-              selectedStop,
-              routeId,
-              destination,
-              timestamp
-            )
-          ) {
-            continue;
-          }
+const destination =
+  isPartialCourse
+    ? (
+        terminalStop?.stop_name
+        || direction?.destination
+        || direction?.headsign
+        || ""
+      )
+    : (
+        direction?.destination
+        || direction?.headsign
+        || terminalStop?.stop_name
+        || ""
+      );
 
-          const tripId =
-            String(
-              schedule?.original_trip_id
-              || ""
-            ).trim();
+if (
+  isSkippedStaticSchedule(
+    schedule,
+    routeId,
+    directionKey,
+    selectedStop,
+    stopIndex,
+    skippedTrips
+  )
+) {
+  continue;
+}
+
+if (
+  isConsumedRealtimeScheduledArrival(
+    selectedStop,
+    routeId,
+    destination,
+    timestamp
+  )
+) {
+  continue;
+}
+
+const tripId =
+  String(
+    schedule?.original_trip_id || ""
+  ).trim();
 
           if (
             !rowsByTerminal.has(
