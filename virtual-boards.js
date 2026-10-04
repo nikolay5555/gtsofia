@@ -1,10 +1,13 @@
+```javascript
 (() => {
   const SOFIA_TIME_ZONE = "Europe/Sofia";
   const REFRESH_MS = 15000;
   const SOFIA_CENTER = [42.6977, 23.3219];
+  const FAVORITE_STOPS_KEY = "gtsofia.favoriteStops";
 
   let map = null;
   let selectedStopId = null;
+  let selectedStopMarker = null;
   let refreshTimer = null;
   let countdownTimer = null;
   let refreshInFlight = false;
@@ -18,6 +21,8 @@
   let routeMetaById = new Map();
   let routeMetaByNumber = new Map();
   let tripById = new Map();
+
+  const boardPanel = () => document.getElementById("virtualBoardBody");
 
   // Realtime stop updates can disappear shortly after a vehicle passes the
   // selected stop. Remember the exact realtime course while it is observed,
@@ -342,10 +347,10 @@
       };
     }
 
-    const type = typeof getLineType === "function" ? getLineType(route) : "bus";
-    const subtype = typeof getLineSubtype === "function" ? getLineSubtype(route) : null;
-    const icon = typeof getTransportIcon === "function" ? getTransportIcon(type, number, subtype) : "";
-    const color = typeof getLineColor === "function" ? getLineColor(route, type) : "#BE1E2D";
+    const type = typeof getLineType === 'function' ? getLineType(route) : "bus";
+    const subtype = typeof getLineSubtype === 'function' ? getLineSubtype(route) : null;
+    const icon = typeof getTransportIcon === 'function' ? getTransportIcon(type, number, subtype) : "";
+    const color = typeof getLineColor === 'function' ? getLineColor(route, type) : "#BE1E2D";
     return {
       id: route.route_id,
       number,
@@ -1088,7 +1093,7 @@
       ++boardRenderToken;
       selectedStopId = null;
       lastExpiredPrimaryArrival = null;
-        if (selectedStopMarker) {
+      if (selectedStopMarker) {
         selectedStopMarker.setStyle({
           fillColor: "#111827",
           color: "#ffffff",
@@ -1124,7 +1129,7 @@
           arrivals: (route.times || [])
             .map(time => ({
               timestamp: Number(time?.timestamp),
-              delay: Number.isFinite(Number(time?.delay)) ? Number(time.delay) : null,
+              delay: Number.isFinite(Number(time?.delay)) ? Number(time?.delay) : null,
               scheduled: Boolean(time?.scheduled)
             }))
             .filter(time => Number.isFinite(time.timestamp))
@@ -1481,7 +1486,6 @@
     setTimeout(() => map.invalidateSize(), 100);
   }
 
-
   function updateBoardCountdowns() {
     const panel = boardPanel();
     if (!panel || !selectedStopId) return;
@@ -1568,7 +1572,6 @@
           button.classList.remove("is-loading");
         }
       }
-
     }
   }
 
@@ -1643,3 +1646,4 @@
     getSofiaDateKey
   };
 })();
+```
