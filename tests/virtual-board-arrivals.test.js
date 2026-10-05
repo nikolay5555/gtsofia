@@ -59,13 +59,13 @@ assert.equal(
 );
 assert.equal(
   internals.formatArrivalCountdown(countdownNow + 59.9, countdownNow),
-  'Сега',
-  'less than 60 seconds remaining must show Сега'
+  '0 мин.',
+  'less than 60 seconds remaining must show zero minutes'
 );
 assert.equal(
   internals.formatArrivalCountdown(countdownNow, countdownNow),
-  'Сега',
-  'at the arrival timestamp must show Сега'
+  '0 мин.',
+  'at the arrival timestamp must show zero minutes'
 );
 assert.equal(
   internals.formatArrivalCountdown(countdownNow + 60 + 59, countdownNow),
@@ -81,6 +81,16 @@ assert.equal(
   internals.formatArrivalCountdown(countdownNow + 60 + 30, countdownNow),
   '2 мин.',
   '1 minute 30 seconds remaining should round to two minutes'
+);
+assert.equal(
+  internals.formatArrivalCountdown(countdownNow - 30, countdownNow),
+  '0 мин.',
+  'already passed arrivals must stay at zero minutes until the board refreshes'
+);
+assert.equal(
+  internals.formatArrivalCountdown(countdownNow + 60 * 2 + 30, countdownNow),
+  '3 мин.',
+  '2 minutes 30 seconds remaining should round to three minutes'
 );
 assert.equal(
   internals.formatArrivalCountdown(countdownNow + 60 * 3 - 1, countdownNow),
