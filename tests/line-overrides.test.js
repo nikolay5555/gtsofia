@@ -19,7 +19,8 @@ context.transportData = {
   lineOverrides: [
     { cgm_id: 'TB34', route_ref: '20ТМ', type: 'bus' },
     { cgm_id: 'TB46', route_ref: '186', type: 'bus' },
-    { cgm_id: 'TB37', type: 'bus' }
+    { cgm_id: 'TB37', type: 'bus' },
+    { cgm_id: 'A259', route_ref: 'X43', type: 'bus' }
   ]
 };
 
@@ -84,11 +85,56 @@ const regularTrolley = {
 
 assert.equal(
   context.getLineType(regularTrolley),
-  'trolleybus'
+  'trolley'
 );
 assert.equal(
-  context.getLineDisplayNumber(regularTrolley, 'trolleybus'),
+  context.getLineDisplayNumber(regularTrolley, 'trolley'),
   '3'
 );
+
+const x43 = {
+  route_id: 'A259',
+  route_short_name: 'X43',
+  route_type: '3',
+  route_color: '006838'
+};
+assert.equal(context.getLineType(x43), 'bus');
+assert.equal(context.getLineSubtype(x43, 'bus', 'X43'), '');
+assert.equal(context.getLineDisplayNumber(x43, 'bus'), 'X43');
+assert.equal(context.getLineColor(x43, 'bus'), '#BE1E2D');
+assert.equal(context.getTransportIcon('bus', 'X43'), 'Icons/Active icons/bus.svg');
+
+const metro = {
+  route_id: 'M1',
+  route_short_name: 'M1',
+  route_type: '1'
+};
+assert.equal(context.getLineType(metro), 'metro');
+assert.equal(context.getLineDisplayNumber(metro, 'metro'), '1');
+
+const temporary = {
+  route_id: 'TMP1',
+  route_short_name: '10ТМ',
+  route_type: '3'
+};
+assert.equal(context.getLineType(temporary), 'bus');
+assert.equal(context.getLineSubtype(temporary, 'bus', '10ТМ'), 'temporary');
+
+const night = {
+  route_id: 'A224',
+  route_short_name: 'N1',
+  route_type: '3'
+};
+assert.equal(context.getLineType(night), 'bus');
+assert.equal(context.getLineSubtype(night, 'bus', 'N1'), 'night');
+assert.equal(context.getTransportIcon('bus', 'N1', 'night'), 'Icons/Active icons/night-bus.svg');
+
+const school = {
+  route_id: 'S1',
+  route_short_name: 'У1',
+  route_type: '3'
+};
+assert.equal(context.getLineType(school), 'bus');
+assert.equal(context.getLineSubtype(school, 'bus', 'У1'), 'school');
 
 console.log('line-overrides: all tests passed');

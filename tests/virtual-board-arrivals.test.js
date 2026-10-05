@@ -27,7 +27,7 @@ function createStorage(initialEntries = []) {
 function loadInternals(storage) {
   const exportedSource = source.replace(
     /\n\}\)\(\);\s*$/,
-    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
+    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    shouldUseStaticFallbackForDirection,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
   );
 
   const context = {
@@ -282,6 +282,33 @@ assert.equal(
   ),
   false,
   'sequence-only SKIPPED must not suppress a different stop in the same trip'
+);
+
+// Static fallback is directional, not line-wide: the same line may keep a
+// realtime course in one direction while the opposite direction uses static.
+assert.equal(
+  internals.shouldUseStaticFallbackForDirection(
+    { route_id: 'R1', direction_key: 'D1', destination: 'Център' },
+    { realtimeRoutes: [{ route_id: 'R1', direction_key: 'D1' }], activeDirections: [] }
+  ), false, 'same line + direction realtime must suppress static fallback'
+);
+assert.equal(
+  internals.shouldUseStaticFallbackForDirection(
+    { route_id: 'R1', direction_key: 'D2', destination: 'Квартал' },
+    { realtimeRoutes: [{ route_id: 'R1', direction_key: 'D1' }], activeDirections: [] }
+  ), true, 'realtime in the opposite direction must not suppress static fallback'
+);
+assert.equal(
+  internals.shouldUseStaticFallbackForDirection(
+    { route_id: 'R1', direction_key: 'D2', destination: 'Квартал' },
+    { realtimeRoutes: [], activeDirections: [{ route_id: 'R1', key: 'D2' }] }
+  ), false, 'an active realtime trip without an arrival row must still suppress that direction'
+);
+assert.equal(
+  internals.shouldUseStaticFallbackForDirection(
+    { route_id: 'R1', direction_key: 'D2', destination: 'Квартал' },
+    { realtimeRoutes: [], activeDirections: [{ route_id: 'R1', key: 'D1' }] }
+  ), true, 'an active trip in another direction must not suppress fallback'
 );
 
 console.log('virtual-board-arrivals: all tests passed');

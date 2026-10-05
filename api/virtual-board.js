@@ -1,6 +1,6 @@
 const FEED_URL = 'https://gtfs.sofiatraffic.bg/api/v1/trip-updates';
 const FEED_TIMEOUT_MS = 15000;
-const MAX_RESULTS_PER_ROUTE = 4;
+const MAX_RESULTS_PER_ROUTE = 3;
 const LOOK_AHEAD_SECONDS = 3 * 60 * 60;
 
 // GTFS-Realtime TripDescriptor.schedule_relationship.
@@ -470,12 +470,28 @@ function buildBoard(updates, stopCode, feedTimestamp) {
     if (seenActive.has(tripKey)) continue;
     seenActive.add(tripKey);
 
+    const terminalUpdate = (update.stopTimeUpdates || [])
+      .filter(item => {
+        if (!item?.stopId) return false;
+        const stopRelationship = Number.isFinite(Number(item?.scheduleRelationship))
+          ? Number(item.scheduleRelationship)
+          : STOP_RELATIONSHIP.SCHEDULED;
+        return stopRelationship !== STOP_RELATIONSHIP.SKIPPED
+          && stopRelationship !== STOP_RELATIONSHIP.NO_DATA;
+      })
+      .sort((a, b) => {
+        const sa = Number.isFinite(Number(a?.stopSequence)) ? Number(a.stopSequence) : -1;
+        const sb = Number.isFinite(Number(b?.stopSequence)) ? Number(b.stopSequence) : -1;
+        return sb - sa;
+      })[0] || null;
+
     activeTrips.push({
       trip_id: String(trip.tripId || ''),
       start_date: String(trip.startDate || update.tripProperties?.startDate || ''),
       start_time: String(trip.startTime || update.tripProperties?.startTime || ''),
       route_id: String(trip.routeId || ''),
       direction_id: String(trip.directionId || ''),
+      destination_stop_id: String(terminalUpdate?.stopId || ''),
       schedule_relationship: relationship,
       schedule_relationship_name: TRIP_RELATIONSHIP_NAME[relationship] || `UNKNOWN_${relationship}`
     });
@@ -491,11 +507,9 @@ function buildBoard(updates, stopCode, feedTimestamp) {
     status: routes.length ? 'ok' : 'empty',
     stop_code: String(stopCode),
     generated_at: feedTimestamp,
-    // Route IDs represented anywhere in the current GTFS-RT feed are
-    // considered realtime-supported. This is intentionally broader than
-    // active_trips: a route must not fall back to static GTFS merely because
-    // it has no arrival at this particular stop right now (or because a
-    // current trip is canceled/short-turned).
+    // Kept for API compatibility. The frontend must not use route-level
+    // presence here to suppress static fallback; fallback is directional and
+    // is based on active_trips/realtime route rows instead.
     realtime_route_ids: realtimeRouteIds,
     active_trips: activeTrips,
     // SKIPPED is intentionally exposed as an explicit suppression signal for

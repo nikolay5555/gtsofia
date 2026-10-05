@@ -5,20 +5,14 @@ let selectedStopIndex = 0;
 let selectedDayType = "weekday";
 let selectedCourse = null;
 
-const typeLabels = {
-  bus: "Автобуси",
-  trolleybus: "Тролейбуси",
-  tram: "Трамваи",
-  metro: "Метролинии",
-  night: "Нощни линии"
-};
-
-const typeOrder = [
-  "bus",
-  "trolleybus",
-  "tram",
-  "metro",
-  "night"
+const lineGroups = [
+  { type: "metro", subtype: "", label: "Метролинии" },
+  { type: "tram", subtype: "", label: "Трамваи" },
+  { type: "trolley", subtype: "", label: "Тролейбуси" },
+  { type: "bus", subtype: "", label: "Автобуси" },
+  { type: "bus", subtype: "school", label: "Училищни автобуси" },
+  { type: "bus", subtype: "temporary", label: "Заместващи автобуси" },
+  { type: "bus", subtype: "night", label: "Нощни автобуси" }
 ];
 
 function escapeHtml(value) {
@@ -100,12 +94,12 @@ function renderLineDropdown() {
 
   menu.innerHTML = "";
 
-  for (const type of typeOrder) {
+  for (const groupDefinition of lineGroups) {
     const lines =
       scheduleLines
-        .filter(
-          line =>
-            line.type === type
+        .filter(line =>
+          line.type === groupDefinition.type &&
+          String(line.subtype || "") === groupDefinition.subtype
         )
         .sort(
           (a, b) =>
@@ -133,7 +127,7 @@ function renderLineDropdown() {
 
     group.innerHTML = `
       <div class="schedule-dropdown-group-title">
-        ${typeLabels[type]}
+        ${groupDefinition.label}
       </div>`;
 
     for (const line of lines) {

@@ -285,7 +285,8 @@
       return {
         id,
         number,
-        type: /^N/i.test(number) ? "night" : "bus",
+        type: "bus",
+        subtype: /^N/i.test(number) ? "night" : "",
         icon: "",
         color: "#BE1E2D",
         textColor: "#FFFFFF"
@@ -293,12 +294,14 @@
     }
 
     const type = typeof getLineType === "function" ? getLineType(route) : "bus";
-    const icon = typeof getTransportIcon === "function" ? getTransportIcon(type, number) : "";
+    const subtype = typeof getLineSubtype === "function" ? getLineSubtype(route, type, number) : "";
+    const icon = typeof getTransportIcon === "function" ? getTransportIcon(type, number, subtype) : "";
     const color = typeof getLineColor === "function" ? getLineColor(route, type) : "#BE1E2D";
     return {
       id: route.route_id,
       number,
       type,
+      subtype,
       icon,
       color,
       textColor: route.route_text_color ? `#${route.route_text_color}` : "#FFFFFF"
@@ -737,7 +740,7 @@
         }
 
         arrivals.sort((a, b) => a - b);
-        const unique = [...new Set(arrivals)].slice(0, 4);
+        const unique = [...new Set(arrivals)].slice(0, 3);
         if (!unique.length) continue;
 
         result.push({
@@ -975,11 +978,6 @@
     }
     const generatedAt = data?.generated_at || Date.now();
     const skippedTrips = Array.isArray(data?.skipped_trips) ? data.skipped_trips : [];
-    const realtimeSupportedRouteIds = new Set(
-      (Array.isArray(data?.realtime_route_ids) ? data.realtime_route_ids : [])
-        .map(value => String(value || '').trim())
-        .filter(Boolean)
-    );
     const realtimeRoutes = Array.isArray(data?.routes)
       ? data.routes
           .filter(route => route && Array.isArray(route.times))
@@ -1125,7 +1123,7 @@
           .filter((time, index, list) =>
             index === 0 || Number(time.timestamp) !== Number(list[index - 1].timestamp)
           )
-          .slice(0, 4)
+          .slice(0, 3)
       }))
       .filter(route => route.times.length);
 
@@ -1300,18 +1298,10 @@
 
     // A realtime row suppresses its own logical direction. It may also
     // suppress a longer scheduled direction when the realtime course belongs
-    // to a shorter direction whose stop pattern is a true prefix of that
-    // longer route (an operational short-turn such as trolley 3).
+    // to a shorter direction whose stop pattern is a true prefix/suffix of
+    // it.
     const realtimeLogicalRoutes = mergedSurfaceRoutes.filter(route =>
       String(route.direction_key || '').trim()
-    );
-
-    const realtimeDirectionKeys = new Set(
-      mergedSurfaceRoutes.map(route => {
-        const routeId = String(route.route_id || '');
-        const destinationKey = normalizeDirectionText(route.destination || '');
-        return `${routeId}|${destinationKey}|${String(route.route_ref || '')}`;
-      })
     );
 
     // Only operational realtime trips may suppress static fallback. Explicit
@@ -1332,15 +1322,25 @@
       if (relationship === 'CANCELED' || relationship === 'DELETED') continue;
 
       const staticTrip = findStaticTrip(activeTripId);
-      if (!staticTrip) continue;
-      const activeDirection = getStaticDirectionForTrip(staticTrip);
+      const activeRouteId = String(activeTrip?.route_id || staticTrip?.route_id || '').trim();
+      if (!activeRouteId) continue;
+
+      const destinationStop = getStopById(activeTrip?.destination_stop_id);
+      const activeDirection = getStaticDirectionForTrip(staticTrip)
+        || resolveDirectionForRealtimeRoute(
+          activeRouteId,
+          stop.stop_id,
+          null,
+          destinationStop?.stop_name || '',
+          activeTrip?.direction_id || ''
+        );
       if (!activeDirection?.key) continue;
 
-      const activeKey = `${String(staticTrip.route_id || '')}|${String(activeDirection.key)}`;
+      const activeKey = `${activeRouteId}|${String(activeDirection.key)}`;
       if (seenActiveDirectionKeys.has(activeKey)) continue;
       seenActiveDirectionKeys.add(activeKey);
       activeDirections.push({
-        route_id: String(staticTrip.route_id || ''),
+        route_id: activeRouteId,
         key: String(activeDirection.key),
         trip_id: activeTripId,
         schedule_relationship: relationship
@@ -1359,21 +1359,13 @@
       }
 
       // Passenger-facing merge for equivalent named terminals (e.g. 94 /
-      // stop 1699 vs 1700).
-      const routeId = String(route.route_id || '');
-      // If this line is represented anywhere in the current GTFS-RT feed,
-      // never use its static timetable as a fallback. A missing realtime
-      // arrival at this stop can mean no vehicle is currently approaching,
-      // a short-turn/temporary organization, or another operational state.
-      // Falling back to the normal GTFS route would turn that absence into a
-      // misleading predicted arrival.
-      if (realtimeSupportedRouteIds.has(routeId)) {
-        return false;
-      }
-
-      const destinationKey = normalizeDirectionText(route.destination || '');
-      const displayedKey = `${routeId}|${destinationKey}|${String(route.route_ref || '')}`;
-      return !realtimeDirectionKeys.has(displayedKey);
+      // stop 1699 vs 1700). Realtime suppresses static fallback only for
+      // this exact line + direction. Opposite directions of the same line
+      // remain eligible for static fallback.
+      return shouldUseStaticFallbackForDirection(route, {
+        realtimeRoutes: mergedSurfaceRoutes,
+        activeDirections
+      });
     });
 
     // Some GTFS exports contain duplicate static directions with the same
@@ -1506,7 +1498,7 @@
             .filter(time => Number.isFinite(time.timestamp))
             .filter(time => getArrivalMinutes(time.timestamp) >= 0)
             .sort((a, b) => a.timestamp - b.timestamp)
-            .slice(0, 4)
+            .slice(0, 3)
         }))
         .filter(route => route.arrivals.length)
         .sort((a, b) => a.arrivals[0].timestamp - b.arrivals[0].timestamp);
@@ -2046,9 +2038,37 @@
   document.addEventListener("DOMContentLoaded", initializeVirtualBoards);
 
   // Small test seam; production pages do not use this object.
+  function shouldUseStaticFallbackForDirection(scheduledRoute, { realtimeRoutes = [], activeDirections = [] } = {}) {
+    const routeId = String(scheduledRoute?.route_id || '').trim();
+    const directionKey = String(scheduledRoute?.direction_key || '').trim();
+    if (!routeId) return true;
+
+    if (directionKey) {
+      const realtimeMatch = realtimeRoutes.some(route =>
+        String(route?.route_id || '').trim() === routeId &&
+        String(route?.direction_key || '').trim() === directionKey
+      );
+      if (realtimeMatch) return false;
+
+      const activeMatch = activeDirections.some(direction =>
+        String(direction?.route_id || '').trim() === routeId &&
+        String(direction?.key || '').trim() === directionKey
+      );
+      return !activeMatch;
+    }
+
+    const destinationKey = normalizeDirectionText(scheduledRoute?.destination || '');
+    if (!destinationKey) return true;
+    return !realtimeRoutes.some(route =>
+      String(route?.route_id || '').trim() === routeId &&
+      normalizeDirectionText(route?.destination || '') === destinationKey
+    );
+  }
+
   globalThis.__gtsofiaVirtualBoardTestInternals = {
     isServiceActiveOnDate,
     isScheduleRowActiveToday,
-    getSofiaDateKey
+    getSofiaDateKey,
+    shouldUseStaticFallbackForDirection
   };
 })();

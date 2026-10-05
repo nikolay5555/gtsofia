@@ -36,5 +36,10 @@
   {
     "type": "bus",
     "cgm_id": "TB41"
+  },
+  {
+    "type": "bus",
+    "cgm_id": "A259",
+    "route_ref": "X43"
   }
 ]

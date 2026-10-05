@@ -118,7 +118,7 @@ function getTransportType(routeType) {
             return 'bus';
 
         case '11':
-            return 'trolleybus';
+            return 'trolley';
 
         default:
             return 'other';
@@ -143,34 +143,47 @@ function getLineOverride(route) {
 }
 
 
-function getLineType(route) {
-    const number =
-        String(
-            route.route_short_name || ''
-        )
-            .trim()
-            .toUpperCase();
+function normalizeRouteRef(value) {
+    let ref = String(value || '').trim();
+    if (!ref) return '';
 
-    const nightBusLines =
-        new Set([
-            'N1',
-            'N2',
-            'N3',
-            'N4'
-        ]);
+    const number = ref.replace(/[a-zа-я]/gi, '');
 
-    if (
-        nightBusLines.has(
-            number
-        )
-    ) {
-        return 'night';
+    if (/^E/i.test(ref)) {
+        ref = number;
+    } else if (/^N/i.test(ref)) {
+        ref = `N${number}`;
+    } else if (/^Y/i.test(ref)) {
+        ref = `У${number}`;
     }
 
+    return ref;
+}
+
+
+function getLineType(route) {
     const override = getLineOverride(route);
+    const sourceNumber = String(route?.route_short_name || '').trim();
+    const normalizedNumber = normalizeRouteRef(
+        override?.route_ref || sourceNumber
+    ).toUpperCase();
+
+    // Dimitar's route normalization makes replacement services buses even
+    // when the source GTFS transport mode is different.
+    if (
+        normalizedNumber.includes('T') ||
+        normalizedNumber.includes('Т')
+    ) {
+        return 'bus';
+    }
 
     if (override?.type) {
-        return override.type;
+        const overrideType = String(override.type).trim().toLowerCase();
+        return overrideType === 'trolleybus'
+            ? 'trolley'
+            : overrideType === 'night'
+                ? 'bus'
+                : overrideType;
     }
 
     return getTransportType(
@@ -185,43 +198,53 @@ function getLineDisplayNumber(route, type) {
         route.route_short_name || ''
     ).trim();
 
-    if (override?.route_ref) {
-        return String(override.route_ref).trim();
-    }
+    const number = override?.route_ref
+        ? String(override.route_ref).trim()
+        : sourceNumber;
+
+    const normalized = normalizeRouteRef(number);
 
     return type === 'metro'
-        ? sourceNumber.replace(/^[МM]/i, '')
-        : sourceNumber.replace(/^E(?=186$)/i, '');
+        ? normalized.replace(/^[МM]/i, '')
+        : normalized;
 }
+
+
+function getLineSubtype(route, type, displayNumber) {
+    const override = getLineOverride(route);
+    const explicit = String(override?.subtype || '').trim().toLowerCase();
+    if (explicit) return explicit;
+
+    if (type !== 'bus') return '';
+
+    const number = String(
+        displayNumber ??
+        getLineDisplayNumber(route, type)
+    ).trim().toUpperCase();
+
+    // Dimitar's normalization: T/Т routes are replacement buses.
+    if (number.includes('Т') || number.includes('T')) {
+        return 'temporary';
+    }
+
+    if (number.startsWith('N')) {
+        return 'night';
+    }
+
+    if (number.startsWith('У')) {
+        return 'school';
+    }
+
+    return '';
+}
+
 
 function getTransportIcon(
     type,
-    number
+    number,
+    subtype = ''
 ) {
-    const lineNumber =
-        String(number || '')
-            .trim()
-            .toUpperCase();
-
-    if (
-        lineNumber === 'X43'
-    ) {
-        return 'Icons/Active icons/torist-bus.svg';
-    }
-
-    const nightBusLines =
-        new Set([
-            'N1',
-            'N2',
-            'N3',
-            'N4'
-        ]);
-
-    if (
-        nightBusLines.has(
-            lineNumber
-        )
-    ) {
+    if (type === 'bus' && subtype === 'night') {
         return 'Icons/Active icons/night-bus.svg';
     }
 
@@ -229,10 +252,7 @@ function getTransportIcon(
         case 'bus':
             return 'Icons/Active icons/bus.svg';
 
-        case 'night':
-            return 'Icons/Active icons/night-bus.svg';
-
-        case 'trolleybus':
+        case 'trolley':
             return 'Icons/Active icons/trolley.svg';
 
         case 'tram':
@@ -270,13 +290,10 @@ function getLineColor(
         case 'bus':
             return '#BE1E2D';
 
-        case 'night':
-            return '#BE1E2D';
-
         case 'tram':
             return '#F7941D';
 
-        case 'trolleybus':
+        case 'trolley':
             return '#27AAE1';
 
         case 'metro':
@@ -403,6 +420,12 @@ function convertGtfsRoutes(
                 type
             );
 
+            const subtype = getLineSubtype(
+                route,
+                type,
+                displayNumber
+            );
+
             return {
                 id:
                     routeId,
@@ -411,6 +434,8 @@ function convertGtfsRoutes(
                     displayNumber,
 
                 type,
+
+                subtype,
 
                 color:
                     getLineColor(
@@ -426,7 +451,8 @@ function convertGtfsRoutes(
                 icon:
                     getTransportIcon(
                         type,
-                        displayNumber
+                        displayNumber,
+                        subtype
                     ),
 
                 /*
@@ -473,6 +499,7 @@ function convertGtfsRoutes(
 window.getLineOverride = getLineOverride;
 window.getLineDisplayNumber = getLineDisplayNumber;
 window.getLineType = getLineType;
+window.getLineSubtype = getLineSubtype;
 window.getLineColor = getLineColor;
 window.getTransportIcon = getTransportIcon;
 
