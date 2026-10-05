@@ -2224,18 +2224,16 @@ function getMetroScheduledArrivals(
         continue;
       }
 
-const timestamp =
-  gtfsSecondsToTodayTimestamp(
-    seconds
-  );
+      let timestamp =
+        gtfsSecondsToTodayTimestamp(
+          seconds
+        );
 
-if (
-  timestamp < nowTimestamp
-) {
-  continue;
-}
-
-const groupKey =
+      if (
+        timestamp < nowTimestamp
+      ) {
+        timestamp += 86400;
+      }
 
       const groupKey =
         `${routeId}|${directionKey}|${terminalStopId}`;
