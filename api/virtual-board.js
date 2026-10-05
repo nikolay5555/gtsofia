@@ -1,27 +1,24 @@
 const FEED_URL = 'https://gtfs.sofiatraffic.bg/api/v1/trip-updates';
 const FEED_TIMEOUT_MS = 15000;
+
+// Keep the decoded/indexed feed in memory for a warm serverless instance.
+// This is independent from the browser refresh interval.
 const FEED_CACHE_TTL_MS = 15000;
+
 const MAX_RESULTS_PER_ROUTE = 3;
 const LOOK_AHEAD_SECONDS = 3 * 60 * 60;
 
-// Keep one TextDecoder instance instead of creating a new one for every
-// protobuf string field.
 const TEXT_DECODER = new TextDecoder();
 
-// The serverless instance may be reused between requests. Keeping the
-// decoded/indexed feed in module memory avoids downloading and parsing the
-// same GTFS-RT feed again for every stop request that lands on the same
-// warm instance.
+// Vercel/serverless instances can be reused between requests.
+// Keep one prepared feed and one in-flight fetch per warm instance.
 let feedCache = null;
 let feedFetchPromise = null;
 
 // GTFS-Realtime TripDescriptor.schedule_relationship.
-// Keep these values here instead of scattering magic numbers through the
-// parser/business logic because TripDescriptor and StopTimeUpdate use
-// different enums. See https://gtfs.org/documentation/realtime/reference/.
 const TRIP_RELATIONSHIP = Object.freeze({
   SCHEDULED: 0,
-  ADDED: 1,          // deprecated; keep for backwards-compatible producers
+  ADDED: 1,
   UNSCHEDULED: 2,
   CANCELED: 3,
   REPLACEMENT: 5,
@@ -38,11 +35,15 @@ const STOP_RELATIONSHIP = Object.freeze({
 });
 
 const TRIP_RELATIONSHIP_NAME = Object.freeze(
-  Object.fromEntries(Object.entries(TRIP_RELATIONSHIP).map(([name, value]) => [value, name]))
+  Object.fromEntries(
+    Object.entries(TRIP_RELATIONSHIP).map(([name, value]) => [value, name])
+  )
 );
 
 const STOP_RELATIONSHIP_NAME = Object.freeze(
-  Object.fromEntries(Object.entries(STOP_RELATIONSHIP).map(([name, value]) => [value, name]))
+  Object.fromEntries(
+    Object.entries(STOP_RELATIONSHIP).map(([name, value]) => [value, name])
+  )
 );
 
 function readVarint(bytes, state) {
@@ -51,10 +52,18 @@ function readVarint(bytes, state) {
 
   while (state.index < bytes.length) {
     const byte = bytes[state.index++];
+
     value |= BigInt(byte & 0x7f) << shift;
-    if ((byte & 0x80) === 0) return value;
+
+    if ((byte & 0x80) === 0) {
+      return value;
+    }
+
     shift += 7n;
-    if (shift > 70n) throw new Error('Invalid protobuf varint.');
+
+    if (shift > 70n) {
+      throw new Error('Invalid protobuf varint.');
+    }
   }
 
   throw new Error('Truncated protobuf varint.');
@@ -65,43 +74,73 @@ function readField(bytes, state) {
   const fieldNumber = tag >>> 3;
   const wireType = tag & 7;
 
-  if (!fieldNumber) throw new Error('Invalid protobuf field number.');
+  if (!fieldNumber) {
+    throw new Error('Invalid protobuf field number.');
+  }
 
   if (wireType === 0) {
-    return { fieldNumber, wireType, value: readVarint(bytes, state) };
+    return {
+      fieldNumber,
+      wireType,
+      value: readVarint(bytes, state)
+    };
   }
 
   if (wireType === 1) {
     const end = state.index + 8;
-    if (end > bytes.length) throw new Error('Truncated fixed64 field.');
+
+    if (end > bytes.length) {
+      throw new Error('Truncated fixed64 field.');
+    }
+
     const value = bytes.subarray(state.index, end);
     state.index = end;
-    return { fieldNumber, wireType, value };
+
+    return {
+      fieldNumber,
+      wireType,
+      value
+    };
   }
 
   if (wireType === 2) {
     const length = Number(readVarint(bytes, state));
+
     if (!Number.isSafeInteger(length) || length < 0) {
       throw new Error('Invalid protobuf length.');
     }
 
     const end = state.index + length;
-    if (end > bytes.length) throw new Error('Truncated length-delimited field.');
+
+    if (end > bytes.length) {
+      throw new Error('Truncated length-delimited field.');
+    }
 
     const value = bytes.subarray(state.index, end);
     state.index = end;
 
-    return { fieldNumber, wireType, value };
+    return {
+      fieldNumber,
+      wireType,
+      value
+    };
   }
 
   if (wireType === 5) {
     const end = state.index + 4;
-    if (end > bytes.length) throw new Error('Truncated fixed32 field.');
+
+    if (end > bytes.length) {
+      throw new Error('Truncated fixed32 field.');
+    }
 
     const value = bytes.subarray(state.index, end);
     state.index = end;
 
-    return { fieldNumber, wireType, value };
+    return {
+      fieldNumber,
+      wireType,
+      value
+    };
   }
 
   throw new Error(`Unsupported protobuf wire type: ${wireType}`);
@@ -113,7 +152,9 @@ function decodeString(bytes) {
 
 function toSignedInt32(value) {
   const n = Number(BigInt.asUintN(32, value));
-  return n >= 0x80000000 ? n - 0x100000000 : n;
+  return n >= 0x80000000
+    ? n - 0x100000000
+    : n;
 }
 
 function decodeTripDescriptor(bytes) {
@@ -167,7 +208,9 @@ function decodeStopTimeEvent(bytes) {
       const raw = field.value;
 
       if (raw > BigInt(Number.MAX_SAFE_INTEGER)) {
-        throw new Error('GTFS-RT timestamp exceeds JavaScript safe integer range.');
+        throw new Error(
+          'GTFS-RT timestamp exceeds JavaScript safe integer range.'
+        );
       }
 
       event.time = Number(raw);
@@ -175,7 +218,9 @@ function decodeStopTimeEvent(bytes) {
       const raw = field.value;
 
       if (raw > BigInt(Number.MAX_SAFE_INTEGER)) {
-        throw new Error('GTFS-RT scheduled timestamp exceeds JavaScript safe integer range.');
+        throw new Error(
+          'GTFS-RT scheduled timestamp exceeds JavaScript safe integer range.'
+        );
       }
 
       event.scheduledTime = Number(raw);
@@ -255,7 +300,9 @@ function decodeTripUpdate(bytes) {
     if (field.fieldNumber === 1 && field.wireType === 2) {
       result.trip = decodeTripDescriptor(field.value);
     } else if (field.fieldNumber === 2 && field.wireType === 2) {
-      result.stopTimeUpdates.push(decodeStopTimeUpdate(field.value));
+      result.stopTimeUpdates.push(
+        decodeStopTimeUpdate(field.value)
+      );
     } else if (field.fieldNumber === 4 && field.wireType === 0) {
       const raw = field.value;
 
@@ -309,7 +356,10 @@ function decodeGtfsRealtimeFeed(buffer) {
       while (headerState.index < field.value.length) {
         const headerField = readField(field.value, headerState);
 
-        if (headerField.fieldNumber === 3 && headerField.wireType === 0) {
+        if (
+          headerField.fieldNumber === 3
+          && headerField.wireType === 0
+        ) {
           const raw = headerField.value;
 
           if (raw <= BigInt(Number.MAX_SAFE_INTEGER)) {
@@ -317,7 +367,10 @@ function decodeGtfsRealtimeFeed(buffer) {
           }
         }
       }
-    } else if (field.fieldNumber === 2 && field.wireType === 2) {
+    } else if (
+      field.fieldNumber === 2
+      && field.wireType === 2
+    ) {
       const entity = decodeFeedEntity(field.value);
 
       if (entity.tripUpdate?.trip) {
@@ -328,14 +381,18 @@ function decodeGtfsRealtimeFeed(buffer) {
 
   return {
     updates,
-    feedTimestamp: feedTimestamp || Math.floor(Date.now() / 1000)
+    feedTimestamp:
+      feedTimestamp
+      || Math.floor(Date.now() / 1000)
   };
 }
 
 function normalizeStopKey(value) {
   const raw = String(value ?? '').trim();
 
-  if (!raw) return '';
+  if (!raw) {
+    return '';
+  }
 
   const withoutMetroPrefix = raw.replace(/^M/i, '');
   const digits = withoutMetroPrefix.replace(/\D/g, '');
@@ -345,10 +402,6 @@ function normalizeStopKey(value) {
   }
 
   return withoutMetroPrefix.toLowerCase();
-}
-
-function stopIdsMatch(left, right) {
-  return normalizeStopKey(left) === normalizeStopKey(right);
 }
 
 function eventTimestamp(update) {
@@ -380,17 +433,35 @@ function getTripKey(tripUpdate) {
 
   return [
     trip?.tripId || '',
-    trip?.startDate || tripUpdate?.tripProperties?.startDate || '',
-    trip?.startTime || tripUpdate?.tripProperties?.startTime || '',
+    trip?.startDate
+      || tripUpdate?.tripProperties?.startDate
+      || '',
+    trip?.startTime
+      || tripUpdate?.tripProperties?.startTime
+      || '',
     trip?.routeId || '',
     trip?.directionId || ''
   ].join('|');
 }
 
-function isCanceledOrDeleted(trip) {
-  const relationship = Number.isFinite(Number(trip?.scheduleRelationship))
+function getTripRelationship(trip) {
+  return Number.isFinite(
+    Number(trip?.scheduleRelationship)
+  )
     ? Number(trip.scheduleRelationship)
     : TRIP_RELATIONSHIP.SCHEDULED;
+}
+
+function getStopRelationship(stopUpdate) {
+  return Number.isFinite(
+    Number(stopUpdate?.scheduleRelationship)
+  )
+    ? Number(stopUpdate.scheduleRelationship)
+    : STOP_RELATIONSHIP.SCHEDULED;
+}
+
+function isCanceledOrDeleted(trip) {
+  const relationship = getTripRelationship(trip);
 
   return relationship === TRIP_RELATIONSHIP.CANCELED
     || relationship === TRIP_RELATIONSHIP.DELETED;
@@ -399,11 +470,11 @@ function isCanceledOrDeleted(trip) {
 function getTerminalStopId(tripUpdate) {
   return (tripUpdate?.stopTimeUpdates || [])
     .filter(item => {
-      if (!item?.stopId) return false;
+      if (!item?.stopId) {
+        return false;
+      }
 
-      const relationship = Number.isFinite(Number(item.scheduleRelationship))
-        ? Number(item.scheduleRelationship)
-        : STOP_RELATIONSHIP.SCHEDULED;
+      const relationship = getStopRelationship(item);
 
       return relationship !== STOP_RELATIONSHIP.SKIPPED
         && relationship !== STOP_RELATIONSHIP.NO_DATA;
@@ -421,6 +492,16 @@ function getTerminalStopId(tripUpdate) {
     })[0]?.stopId || '';
 }
 
+/**
+ * Prepare the decoded feed once.
+ *
+ * The important optimization is stopUpdatesByKey:
+ *
+ *   stop_id -> relevant stop updates
+ *
+ * This means buildBoard() no longer scans every trip and every stop update
+ * for every request.
+ */
 function prepareFeed(updates, feedTimestamp) {
   const stopUpdatesByKey = new Map();
   const sequenceOnlySkipped = [];
@@ -430,14 +511,15 @@ function prepareFeed(updates, feedTimestamp) {
 
   const realtimeRouteIds = new Set();
 
-  for (const update of updates || []) {
-    const trip = update?.trip;
+  for (const tripUpdate of updates || []) {
+    const trip = tripUpdate?.trip;
 
-    if (!trip) continue;
+    if (!trip) {
+      continue;
+    }
 
-    const relationship = Number.isFinite(Number(trip.scheduleRelationship))
-      ? Number(trip.scheduleRelationship)
-      : TRIP_RELATIONSHIP.SCHEDULED;
+    const tripRelationship = getTripRelationship(trip);
+    const tripKey = getTripKey(tripUpdate);
 
     const routeId = String(trip.routeId || '').trim();
 
@@ -445,28 +527,32 @@ function prepareFeed(updates, feedTimestamp) {
       realtimeRouteIds.add(routeId);
     }
 
-    // Compute active trips only once per feed instead of once per board request.
+    // Active trips are calculated only once for this feed.
     if (!isCanceledOrDeleted(trip)) {
-      const tripKey = getTripKey(update);
-
       if (!seenActive.has(tripKey)) {
         seenActive.add(tripKey);
 
         activeTrips.push({
           trip_id: String(trip.tripId || ''),
           start_date: String(
-            trip.startDate || update.tripProperties?.startDate || ''
+            trip.startDate
+              || tripUpdate.tripProperties?.startDate
+              || ''
           ),
           start_time: String(
-            trip.startTime || update.tripProperties?.startTime || ''
+            trip.startTime
+              || tripUpdate.tripProperties?.startTime
+              || ''
           ),
           route_id: String(trip.routeId || ''),
           direction_id: String(trip.directionId || ''),
-          destination_stop_id: String(getTerminalStopId(update)),
-          schedule_relationship: relationship,
+          destination_stop_id: String(
+            getTerminalStopId(tripUpdate)
+          ),
+          schedule_relationship: tripRelationship,
           schedule_relationship_name:
-            TRIP_RELATIONSHIP_NAME[relationship]
-            || `UNKNOWN_${relationship}`
+            TRIP_RELATIONSHIP_NAME[tripRelationship]
+              || `UNKNOWN_${tripRelationship}`
         });
       }
     }
@@ -475,39 +561,43 @@ function prepareFeed(updates, feedTimestamp) {
       continue;
     }
 
-    // Compute the terminal stop once per trip update.
-    const terminalStopId = getTerminalStopId(update);
+    // Calculate the terminal stop once per trip.
+    const terminalStopId = getTerminalStopId(tripUpdate);
 
-    for (const stopUpdate of update.stopTimeUpdates || []) {
-      const stopRelationship = Number.isFinite(
-        Number(stopUpdate.scheduleRelationship)
-      )
-        ? Number(stopUpdate.scheduleRelationship)
-        : STOP_RELATIONSHIP.SCHEDULED;
+    for (const stopUpdate of tripUpdate.stopTimeUpdates || []) {
+      const stopRelationship = getStopRelationship(stopUpdate);
 
+      // Keep sequence-only SKIPPED records separately.
       if (stopRelationship === STOP_RELATIONSHIP.SKIPPED) {
-        if (stopUpdate?.stopId) {
-          const stopKey = normalizeStopKey(stopUpdate.stopId);
-
-          if (!stopUpdatesByKey.has(stopKey)) {
-            stopUpdatesByKey.set(stopKey, []);
-          }
-
-          stopUpdatesByKey.get(stopKey).push({
-            tripUpdate: update,
-            stopUpdate,
-            terminalStopId
-          });
-        } else {
-          // Preserve the existing behavior for sequence-only SKIPPED records:
-          // they are available to the frontend so it can resolve the stop
-          // using the static trip pattern.
+        if (!stopUpdate?.stopId) {
           sequenceOnlySkipped.push({
-            tripUpdate: update,
+            tripUpdate,
             stopUpdate,
-            terminalStopId
+            tripKey,
+            tripRelationship,
+            terminalStopId,
+            stopRelationship
           });
+
+          continue;
         }
+
+        const stopKey = normalizeStopKey(
+          stopUpdate.stopId
+        );
+
+        if (!stopUpdatesByKey.has(stopKey)) {
+          stopUpdatesByKey.set(stopKey, []);
+        }
+
+        stopUpdatesByKey.get(stopKey).push({
+          tripUpdate,
+          stopUpdate,
+          tripKey,
+          tripRelationship,
+          terminalStopId,
+          stopRelationship
+        });
 
         continue;
       }
@@ -516,16 +606,37 @@ function prepareFeed(updates, feedTimestamp) {
         continue;
       }
 
-      const stopKey = normalizeStopKey(stopUpdate.stopId);
+      const stopKey = normalizeStopKey(
+        stopUpdate.stopId
+      );
 
       if (!stopUpdatesByKey.has(stopKey)) {
         stopUpdatesByKey.set(stopKey, []);
       }
 
+      // Pre-calculate values that otherwise would be recalculated for every
+      // board request.
       stopUpdatesByKey.get(stopKey).push({
-        tripUpdate: update,
+        tripUpdate,
         stopUpdate,
-        terminalStopId
+        tripKey,
+        tripRelationship,
+        terminalStopId,
+        stopRelationship,
+        timestamp: eventTimestamp(stopUpdate),
+        delay: eventDelay(stopUpdate),
+        scheduledTime:
+          Number.isFinite(
+            Number(stopUpdate?.arrival?.scheduledTime)
+          )
+            ? Number(stopUpdate.arrival.scheduledTime)
+            : Number.isFinite(
+                Number(stopUpdate?.departure?.scheduledTime)
+              )
+              ? Number(
+                  stopUpdate.departure.scheduledTime
+                )
+              : null
       });
     }
   }
@@ -541,6 +652,7 @@ function prepareFeed(updates, feedTimestamp) {
 
 async function fetchAndPrepareFeed() {
   const controller = new AbortController();
+
   const timeout = setTimeout(
     () => controller.abort(),
     FEED_TIMEOUT_MS
@@ -550,7 +662,8 @@ async function fetchAndPrepareFeed() {
     const upstream = await fetch(FEED_URL, {
       signal: controller.signal,
       headers: {
-        Accept: 'application/x-protobuf, application/octet-stream',
+        Accept:
+          'application/x-protobuf, application/octet-stream',
         'User-Agent': 'GTSofia virtual boards'
       }
     });
@@ -583,7 +696,9 @@ async function fetchAndPrepareFeed() {
 async function getRealtimeFeed() {
   const now = Date.now();
 
-  // Reuse the already decoded/indexed feed while it is fresh enough.
+  // Fast path:
+  // if this warm serverless instance already has a sufficiently fresh feed,
+  // no network request and no protobuf decoding are needed.
   if (
     feedCache
     && now - feedCache.cachedAt < FEED_CACHE_TTL_MS
@@ -591,8 +706,8 @@ async function getRealtimeFeed() {
     return feedCache.feed;
   }
 
-  // If multiple requests arrive at the same time, make only one upstream
-  // request and let all callers wait for that same Promise.
+  // If another request is already fetching the feed, wait for it instead of
+  // starting another upstream request.
   if (feedFetchPromise) {
     return feedFetchPromise;
   }
@@ -620,12 +735,9 @@ function buildBoard(feed, stopCode) {
   const grouped = new Map();
   const skippedTrips = new Map();
 
-  // This is the main optimization:
-  // instead of scanning every stop update in every trip in the feed,
-  // start from updates already indexed for this particular stop.
-  //
-  // Sequence-only SKIPPED records are also included because the frontend
-  // needs them to resolve them against the static trip pattern.
+  // IMPORTANT:
+  // We now read only the entries for this particular stop.
+  // The whole GTFS-RT feed is NOT scanned here.
   const candidates = [
     ...(feed.stopUpdatesByKey.get(target) || []),
     ...feed.sequenceOnlySkipped
@@ -636,15 +748,13 @@ function buildBoard(feed, stopCode) {
     const stopUpdate = candidate?.stopUpdate;
     const trip = tripUpdate?.trip;
 
-    if (!trip || !stopUpdate) continue;
+    if (!trip || !stopUpdate) {
+      continue;
+    }
 
-    const tripRelationship = Number.isFinite(
-      Number(trip.scheduleRelationship)
-    )
-      ? Number(trip.scheduleRelationship)
-      : TRIP_RELATIONSHIP.SCHEDULED;
+    const tripRelationship = candidate.tripRelationship;
+    const stopRelationship = candidate.stopRelationship;
 
-    // CANCELED/DELETED are terminal states for the whole trip.
     if (
       tripRelationship === TRIP_RELATIONSHIP.CANCELED
       || tripRelationship === TRIP_RELATIONSHIP.DELETED
@@ -652,20 +762,7 @@ function buildBoard(feed, stopCode) {
       continue;
     }
 
-    const stopRelationship = Number.isFinite(
-      Number(stopUpdate.scheduleRelationship)
-    )
-      ? Number(stopUpdate.scheduleRelationship)
-      : STOP_RELATIONSHIP.SCHEDULED;
-
     if (stopRelationship === STOP_RELATIONSHIP.SKIPPED) {
-      if (
-        stopUpdate?.stopId
-        && !stopIdsMatch(stopUpdate.stopId, target)
-      ) {
-        continue;
-      }
-
       const skippedKey = [
         trip.tripId || '',
         trip.startDate
@@ -679,7 +776,9 @@ function buildBoard(feed, stopCode) {
         stopUpdate.stopId
           ? normalizeStopKey(stopUpdate.stopId)
           : `seq:${
-              Number.isFinite(Number(stopUpdate.stopSequence))
+              Number.isFinite(
+                Number(stopUpdate.stopSequence)
+              )
                 ? Number(stopUpdate.stopSequence)
                 : ''
             }`
@@ -690,44 +789,52 @@ function buildBoard(feed, stopCode) {
           trip_id: trip.tripId || '',
           start_date:
             trip.startDate
-            || tripUpdate.tripProperties?.startDate
-            || '',
+              || tripUpdate.tripProperties?.startDate
+              || '',
           start_time:
             trip.startTime
-            || tripUpdate.tripProperties?.startTime
-            || '',
+              || tripUpdate.tripProperties?.startTime
+              || '',
           route_id: trip.routeId || '',
           direction_id: trip.directionId || '',
           stop_id: stopUpdate.stopId || '',
           stop_sequence:
-            Number.isFinite(Number(stopUpdate.stopSequence))
+            Number.isFinite(
+              Number(stopUpdate.stopSequence)
+            )
               ? Number(stopUpdate.stopSequence)
               : null,
-          stop_schedule_relationship: stopRelationship,
+          stop_schedule_relationship:
+            stopRelationship,
           stop_schedule_relationship_name:
             STOP_RELATIONSHIP_NAME[stopRelationship]
-            || `UNKNOWN_${stopRelationship}`
+              || `UNKNOWN_${stopRelationship}`
         });
       }
 
       continue;
     }
 
-    // A normal arrival must still be for the requested stop.
+    // Because candidates come from the stop index, the normal case is already
+    // guaranteed to belong to this stop.
+    if (!stopUpdate?.stopId) {
+      continue;
+    }
+
     if (
-      !stopUpdate?.stopId
-      || !stopIdsMatch(stopUpdate.stopId, target)
+      normalizeStopKey(stopUpdate.stopId)
+      !== target
     ) {
       continue;
     }
 
-    // NO_DATA explicitly says no realtime timing is available here.
-    // It must not suppress the static fallback.
-    if (stopRelationship === STOP_RELATIONSHIP.NO_DATA) {
+    if (
+      stopRelationship === STOP_RELATIONSHIP.NO_DATA
+    ) {
       continue;
     }
 
-    const timestamp = eventTimestamp(stopUpdate);
+    const timestamp = candidate.timestamp;
 
     if (!Number.isFinite(timestamp)) {
       continue;
@@ -741,51 +848,44 @@ function buildBoard(feed, stopCode) {
       continue;
     }
 
-    const delay = eventDelay(stopUpdate);
-    const key = getTripKey(tripUpdate);
-
-    if (!grouped.has(key)) {
-      grouped.set(key, {
+    if (!grouped.has(candidate.tripKey)) {
+      grouped.set(candidate.tripKey, {
         trip_id: trip.tripId || '',
         trip_start_date:
           trip.startDate
-          || tripUpdate.tripProperties?.startDate
-          || '',
+            || tripUpdate.tripProperties?.startDate
+            || '',
         trip_start_time:
           trip.startTime
-          || tripUpdate.tripProperties?.startTime
-          || '',
+            || tripUpdate.tripProperties?.startTime
+            || '',
         route_id: trip.routeId || '',
         direction_id: trip.directionId || '',
         schedule_relationship: tripRelationship,
         schedule_relationship_name:
           TRIP_RELATIONSHIP_NAME[tripRelationship]
-          || `UNKNOWN_${tripRelationship}`,
+            || `UNKNOWN_${tripRelationship}`,
         destination_stop_id:
           candidate.terminalStopId || '',
         times: []
       });
     }
 
-    grouped.get(key).times.push({
+    grouped.get(candidate.tripKey).times.push({
       timestamp,
-      delay: Number.isFinite(delay) ? delay : null,
-      stop_schedule_relationship: stopRelationship,
+      delay:
+        Number.isFinite(candidate.delay)
+          ? candidate.delay
+          : null,
+      stop_schedule_relationship:
+        stopRelationship,
       stop_schedule_relationship_name:
         STOP_RELATIONSHIP_NAME[stopRelationship]
-        || `UNKNOWN_${stopRelationship}`,
+          || `UNKNOWN_${stopRelationship}`,
       scheduled_time:
-        Number.isFinite(
-          Number(stopUpdate?.arrival?.scheduledTime)
-        )
-          ? Number(stopUpdate.arrival.scheduledTime)
-          : Number.isFinite(
-              Number(stopUpdate?.departure?.scheduledTime)
-            )
-            ? Number(
-                stopUpdate.departure.scheduledTime
-              )
-            : null
+        Number.isFinite(candidate.scheduledTime)
+          ? candidate.scheduledTime
+          : null
     });
   }
 
@@ -809,20 +909,12 @@ function buildBoard(feed, stopCode) {
     generated_at: feed.feedTimestamp,
 
     // Kept for API compatibility.
-    // The frontend must not use route-level presence here to suppress
-    // static fallback; fallback is directional and based on active_trips
-    // / realtime route rows instead.
     realtime_route_ids: feed.realtimeRouteIds,
 
     active_trips: feed.activeTrips,
 
-    // SKIPPED is an explicit suppression signal for static fallback.
-    // It is kept per trip + stop so unrelated scheduled courses on the
-    // same line/direction are not hidden.
     skipped_trips: [...skippedTrips.values()],
 
-    // Keep this field for compatibility with the current frontend while
-    // the richer active_trips representation is adopted.
     active_trip_ids: feed.activeTrips
       .map(item => item.trip_id)
       .filter(Boolean),
@@ -834,6 +926,7 @@ function buildBoard(feed, stopCode) {
 module.exports = async function handler(req, res) {
   if (req.method !== 'GET') {
     res.setHeader('Allow', 'GET');
+
     return res.status(405).json({
       error: 'Method not allowed'
     });
@@ -858,21 +951,31 @@ module.exports = async function handler(req, res) {
 
   try {
     const feed = await getRealtimeFeed();
-    const board = buildBoard(feed, stopCode);
+
+    const board = buildBoard(
+      feed,
+      stopCode
+    );
 
     if (requestedRouteIds.size) {
       board.active_trips =
-        (board.active_trips || []).filter(item =>
-          requestedRouteIds.has(
-            String(item?.route_id || '').trim()
-          )
+        (board.active_trips || []).filter(
+          item =>
+            requestedRouteIds.has(
+              String(
+                item?.route_id || ''
+              ).trim()
+            )
         );
 
-      board.active_trip_ids = board.active_trips
-        .map(item =>
-          String(item.trip_id || '').trim()
-        )
-        .filter(Boolean);
+      board.active_trip_ids =
+        board.active_trips
+          .map(item =>
+            String(
+              item.trip_id || ''
+            ).trim()
+          )
+          .filter(Boolean);
     }
 
     res.setHeader(
@@ -880,8 +983,8 @@ module.exports = async function handler(req, res) {
       'application/json; charset=utf-8'
     );
 
-    // Keep the browser from caching the board response.
-    // The server-side feed cache is independent from this.
+    // Browser should always ask for the current board.
+    // This does NOT disable the server-side in-memory feed cache above.
     res.setHeader(
       'Cache-Control',
       'no-store, max-age=0'
