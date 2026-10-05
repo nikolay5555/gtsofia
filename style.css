@@ -950,9 +950,9 @@ VIRTUAL BOARDS
 
 .virtual-stop-search-result strong {
   min-width: 0;
-  overflow: hidden;
+  /*overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: nowrap;*/
 }
 
 .virtual-stop-search-result span {
@@ -1189,9 +1189,9 @@ VIRTUAL BOARDS
 .vb-destination {
   min-width: 0;
   flex: 1 1 auto;
-  overflow: hidden;
+  /*overflow: hidden;
   white-space: nowrap;
-  text-overflow: ellipsis;
+  text-overflow: ellipsis;*/
   font-size: 20px;
   line-height: 1.2;
 }
@@ -1481,9 +1481,9 @@ RESPONSIVE
     font-size: 20px;
     flex: 1 1 auto;
     min-width: 0;
-    overflow: hidden;
+    /*overflow: hidden;
     white-space: nowrap;
-    text-overflow: ellipsis;
+    text-overflow: ellipsis;*/
   }
 
   .schedule-summary-stats {
