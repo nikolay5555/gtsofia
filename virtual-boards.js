@@ -1486,7 +1486,7 @@
       list.innerHTML = rows.map((row, index) => {
         const meta = getLineMeta(row.route_id || row.routeId, row.route_ref);
         const arrivals = row.arrivals;
-        const nextTimes = arrivals.slice(1, 4).map(time => {
+        const nextTimes = arrivals.slice(1, 3).map(time => {
           const tooltip = formatArrivalCountdown(time.timestamp);
           const clock = formatArrivalClock(time.timestamp);
           return `<span class="vb-next-time" tabindex="0" data-arrival-timestamp="${time.timestamp}" data-tooltip="${escapeHtml(tooltip)}" aria-label="${escapeHtml(tooltip)}">${escapeHtml(clock)}</span>`;
