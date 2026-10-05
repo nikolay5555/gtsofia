@@ -155,6 +155,135 @@
     ].join("|");
   }
 
+  /**
+   * Build a set of realtime scheduled-arrival identities that are present
+   * in the current API response.
+   *
+   * This is different from consumedRealtimeArrivals:
+   *
+   * - consumedRealtimeArrivals handles realtime trips that have already
+   *   passed and disappeared from the realtime feed;
+   * - this set prevents a currently visible realtime course from also being
+   *   added by the static timetable fallback during the same refresh.
+   *
+   * We add several destination aliases because realtime and static data can
+   * describe the same logical destination slightly differently, especially
+   * for partial courses.
+   */
+  function getRealtimeScheduledArrivalKeys(
+    stop,
+    realtimeRoutes
+  ) {
+    const keys = new Set();
+
+    const stopId = String(
+      stop?.stop_id
+      || stop?.stop_code
+      || ""
+    ).trim();
+
+    if (!stopId) {
+      return keys;
+    }
+
+    for (
+      const route
+      of realtimeRoutes || []
+    ) {
+      const routeId =
+        String(
+          route?.route_id || ""
+        ).trim();
+
+      if (!routeId) {
+        continue;
+      }
+
+      const staticTrip =
+        findStaticTrip(
+          route?.trip_id
+        );
+
+      const staticDirection =
+        getStaticDirectionForTrip(
+          staticTrip
+        )
+        || resolveDirectionForRealtimeRoute(
+          routeId,
+          stop?.stop_id,
+          staticTrip,
+          route?.destination
+            || "",
+          route?.direction_id
+            || route?.directionId
+            || ""
+        );
+
+      const destinationStop =
+        getStopById(
+          route?.destination_stop_id
+        );
+
+      const destinationCandidates = [
+        route?.destination,
+        destinationStop?.stop_name,
+        staticTrip?.trip_headsign,
+        staticDirection?.destination,
+        staticDirection?.headsign
+      ]
+        .map(
+          value =>
+            String(value ?? "").trim()
+        )
+        .filter(Boolean);
+
+      for (
+        const time
+        of route?.times || []
+      ) {
+        const scheduledTimestamp =
+          Number(
+            time?.scheduled_time
+          );
+
+        if (
+          !Number.isFinite(
+            scheduledTimestamp
+          )
+        ) {
+          continue;
+        }
+
+        for (
+          const destination
+          of new Set(
+            destinationCandidates.map(
+              normalizeDirectionText
+            )
+          )
+        ) {
+          if (!destination) {
+            continue;
+          }
+
+          const key =
+            getConsumedRealtimeArrivalKey(
+              stopId,
+              routeId,
+              destination,
+              scheduledTimestamp
+            );
+
+          if (key) {
+            keys.add(key);
+          }
+        }
+      }
+    }
+
+    return keys;
+  }
+
   function rememberConsumedRealtimeArrivals(
     stop,
     realtimeRoutes
@@ -810,28 +939,44 @@
     );
   }
 
-function formatArrivalCountdown(timestamp, nowSeconds = Date.now() / 1000) {
-  const seconds = Number(timestamp);
+  function formatArrivalCountdown(
+    timestamp,
+    nowSeconds = Date.now() / 1000
+  ) {
+    const seconds = Number(timestamp);
 
-  if (!Number.isFinite(seconds)) return "";
+    if (!Number.isFinite(seconds)) return "";
 
-  const remainingSeconds = seconds - nowSeconds;
+    const remainingSeconds = seconds - nowSeconds;
 
-  // Arrival has reached the stop.
-  if (remainingSeconds <= 0) {
-    return "0 мин.";
+    // Arrival has reached the stop.
+    if (remainingSeconds <= 0) {
+      return "0 мин.";
+    }
+
+    // During the final minute, show the remaining seconds instead of
+    // throwing away the precision provided by the realtime timestamp.
+    if (remainingSeconds < 60) {
+      const secondsLeft =
+        Math.min(
+          59,
+          Math.max(
+            1,
+            Math.ceil(remainingSeconds)
+          )
+        );
+
+      return `${secondsLeft} сек.`;
+    }
+
+    // Two minutes and above: keep the familiar minute-based display.
+    return `${Math.max(
+      1,
+      Math.round(
+        remainingSeconds / 60
+      )
+    )} мин.`;
   }
-
-  // During the final minute, show the remaining seconds instead of
-  // throwing away the precision provided by the realtime timestamp.
-  if (remainingSeconds < 60) {
-    const secondsLeft = Math.min(59, Math.max(1, Math.ceil(remainingSeconds)));
-    return `${secondsLeft} сек.`;
-  }
-
-  // Two minutes and above: keep the familiar minute-based display.
-  return `${Math.max(1, Math.round(remainingSeconds / 60))} мин.`;
-}
 
   function formatArrivalClock(
     timestamp
@@ -1553,7 +1698,8 @@ function formatArrivalCountdown(timestamp, nowSeconds = Date.now() / 1000) {
           toRad(lat2)
         )
         * Math.sin(
-          dLon / 2
+          dLon
+          / 2
         ) ** 2;
 
     return (
@@ -2409,7 +2555,8 @@ function formatArrivalCountdown(timestamp, nowSeconds = Date.now() / 1000) {
 
   function getSurfaceScheduledArrivals(
     stop,
-    skippedTrips = []
+    skippedTrips = [],
+    realtimeScheduledKeys = new Set()
   ) {
     const nowTimestamp =
       Date.now() / 1000;
@@ -2599,6 +2746,22 @@ function formatArrivalCountdown(timestamp, nowSeconds = Date.now() / 1000) {
             timestamp
           );
 
+        // Realtime course is already visible in this refresh.
+        //
+        // This is the important fix for the realtime + static duplicate:
+        // even when the realtime arrival is still in the future, the static
+        // fallback must not add the same scheduled course a second time.
+        if (
+          consumedKey
+          && realtimeScheduledKeys.has(
+            consumedKey
+          )
+        ) {
+          continue;
+        }
+
+        // Realtime course has already passed and disappeared from the feed.
+        // Keep suppressing its static counterpart for the TTL window.
         if (
           consumedKey
           && consumedRealtimeArrivals.has(
@@ -2967,7 +3130,7 @@ function formatArrivalCountdown(timestamp, nowSeconds = Date.now() / 1000) {
                             )
                           )
                             ? Number(
-                                time.scheduled_time
+                                time?.scheduled_time
                               )
                             : null
                       })
@@ -3153,12 +3316,22 @@ function formatArrivalCountdown(timestamp, nowSeconds = Date.now() / 1000) {
       mergedSurfaceRoutes
     );
 
+    // Keep a separate identity set for realtime courses that are still
+    // present in this response. This prevents the same course from being
+    // rendered once from realtime and once from the static fallback.
+    const realtimeScheduledKeys =
+      getRealtimeScheduledArrivalKeys(
+        stop,
+        mergedSurfaceRoutes
+      );
+
     const scheduledSurfaceRoutes =
       isMetroStop(stop)
         ? []
         : getSurfaceScheduledArrivals(
             stop,
-            skippedTrips
+            skippedTrips,
+            realtimeScheduledKeys
           );
 
     function directionPatternsShareLongPrefix(
@@ -3894,7 +4067,7 @@ function formatArrivalCountdown(timestamp, nowSeconds = Date.now() / 1000) {
                     )
                   )
                     ? Number(
-                        time.delay
+                        time?.delay
                       )
                     : null,
                 scheduled:
@@ -5535,6 +5708,7 @@ function formatArrivalCountdown(timestamp, nowSeconds = Date.now() / 1000) {
     isServiceActiveOnDate,
     isScheduleRowActiveToday,
     getSofiaDateKey,
-    shouldUseStaticFallbackForDirection
+    shouldUseStaticFallbackForDirection,
+    getRealtimeScheduledArrivalKeys
   };
 })();
