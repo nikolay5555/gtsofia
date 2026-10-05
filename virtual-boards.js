@@ -2531,11 +2531,6 @@
           .filter(Boolean)
       );
 
-    const staticStartTime =
-      parseGtfsTime(
-        scheduledRoute?.trip_start_time
-        || ""
-      );
 
     const staticDirectionKey =
       String(
@@ -2578,13 +2573,6 @@
           || ""
         ).trim();
 
-      const realtimeStartTime =
-        parseGtfsTime(
-          realtimeRoute?.trip_start_time
-          || realtimeRoute?.start_time
-          || ""
-        );
-
       const realtimeDirectionKey =
         String(
           realtimeRoute?.direction_id
@@ -2610,6 +2598,20 @@
           realtimeTripId
         );
 
+      /*
+       * An exact GTFS trip_id is already the identity of the concrete course.
+       * Do NOT additionally require start_time or stop timestamp to match: the
+       * realtime feed can legitimately report a different/normalized start
+       * time, and a stop update can omit scheduled_time altogether. Requiring
+       * either value here can let the same physical course fall through to the
+       * static timetable and produce the duplicate realtime + static rows.
+       */
+      if (
+        exactTripMatch
+      ) {
+        return true;
+      }
+
       for (
         const time
         of realtimeRoute?.times || []
@@ -2618,46 +2620,6 @@
           getRealtimeScheduledTimestamp(
             time
           );
-
-        if (
-          exactTripMatch
-        ) {
-          /*
-           * Same trip_id is the strongest available identity.
-           *
-           * A recurring GTFS trip_id may operate on multiple dates, but the
-           * static row is already restricted to today's active service.
-           * When both start times exist they must agree as well.
-           */
-          if (
-            staticStartTime != null
-            && realtimeStartTime != null
-            && Math.abs(
-              staticStartTime
-              - realtimeStartTime
-            ) > 1
-          ) {
-            continue;
-          }
-
-          /*
-           * When both scheduled stop times exist, require them to be close.
-           * This guards against malformed/stale static mappings.
-           */
-          if (
-            Number.isFinite(
-              realtimeScheduledTimestamp
-            )
-            && Math.abs(
-              staticTimestamp
-              - realtimeScheduledTimestamp
-            ) > 120
-          ) {
-            continue;
-          }
-
-          return true;
-        }
 
         if (
           !Number.isFinite(
