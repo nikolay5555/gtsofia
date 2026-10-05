@@ -1,6 +1,6 @@
 (() => {
   const SOFIA_TIME_ZONE = "Europe/Sofia";
-  const REFRESH_MS = 5000;
+  const REFRESH_MS = 15000;
   const SOFIA_CENTER = [42.6977, 23.3219];
 
   let map = null;
