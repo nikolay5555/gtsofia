@@ -5065,7 +5065,7 @@
       lastExpiredPrimaryArrival =
         primaryArrivalExpired;
 
-      refreshSelectedBoard();
+      refreshSelectedBoard(true);
     }
   }
 
