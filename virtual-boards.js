@@ -155,68 +155,6 @@
     ].join("|");
   }
 
-  /*
-   * The realtime backend identifies a concrete trip instance using:
-   *
-   *   trip_id + start_date + start_time + route_id + direction_id
-   *
-   * Keep exactly that identity on every arrival instead of relying only on
-   * the visual route/destination grouping used by the board.
-   */
-  function getRealtimeTripInstanceKey(
-    route,
-    time = {}
-  ) {
-    const tripId =
-      String(
-        time?.trip_id
-        || route?.trip_id
-        || ""
-      ).trim();
-
-    const startDate =
-      String(
-        time?.trip_start_date
-        || route?.trip_start_date
-        || route?.start_date
-        || ""
-      ).trim();
-
-    const startTime =
-      String(
-        time?.trip_start_time
-        || route?.trip_start_time
-        || route?.start_time
-        || ""
-      ).trim();
-
-    const routeId =
-      String(
-        time?.route_id
-        || route?.route_id
-        || ""
-      ).trim();
-
-    const directionId =
-      String(
-        time?.direction_id
-        || route?.direction_id
-        || ""
-      ).trim();
-
-    if (!tripId) {
-      return "";
-    }
-
-    return [
-      tripId,
-      startDate,
-      startTime,
-      routeId,
-      directionId
-    ].join("|");
-  }
-
   function rememberConsumedRealtimeArrivals(
     stop,
     realtimeRoutes
@@ -872,41 +810,28 @@
     );
   }
 
-  function formatArrivalCountdown(
-    timestamp,
-    nowSeconds = Date.now() / 1000
-  ) {
-    const seconds = Number(timestamp);
+function formatArrivalCountdown(timestamp, nowSeconds = Date.now() / 1000) {
+  const seconds = Number(timestamp);
 
-    if (!Number.isFinite(seconds)) return "";
+  if (!Number.isFinite(seconds)) return "";
 
-    const remainingSeconds =
-      seconds - nowSeconds;
+  const remainingSeconds = seconds - nowSeconds;
 
-    if (remainingSeconds <= 0) {
-      return "0 мин.";
-    }
-
-    if (remainingSeconds < 60) {
-      const secondsLeft =
-        Math.min(
-          59,
-          Math.max(
-            1,
-            Math.ceil(remainingSeconds)
-          )
-        );
-
-      return `${secondsLeft} сек.`;
-    }
-
-    return `${Math.max(
-      1,
-      Math.round(
-        remainingSeconds / 60
-      )
-    )} мин.`;
+  // Arrival has reached the stop.
+  if (remainingSeconds <= 0) {
+    return "0 мин.";
   }
+
+  // During the final minute, show the remaining seconds instead of
+  // throwing away the precision provided by the realtime timestamp.
+  if (remainingSeconds < 60) {
+    const secondsLeft = Math.min(59, Math.max(1, Math.ceil(remainingSeconds)));
+    return `${secondsLeft} сек.`;
+  }
+
+  // Two minutes and above: keep the familiar minute-based display.
+  return `${Math.max(1, Math.round(remainingSeconds / 60))} мин.`;
+}
 
   function formatArrivalClock(
     timestamp
@@ -2482,212 +2407,6 @@
     );
   }
 
-  /*
-   * Determines whether one concrete static schedule row is already
-   * represented by a realtime arrival.
-   *
-   * Matching priority:
-   *
-   * 1. Same realtime trip_id == static original_trip_id.
-   * 2. Same realtime trip_id == static trip_id.
-   * 3. When an exact trip id is unavailable, same route + direction +
-   *    scheduled stop timestamp.
-   *
-   * The start time is also checked when both sides provide it. This is
-   * important because the same original trip identity may be reused by
-   * technically distinct schedule instances.
-   */
-  function staticArrivalIsCoveredByRealtime(
-    scheduledRoute,
-    realtimeRoutes
-  ) {
-    const routeId =
-      String(
-        scheduledRoute?.route_id || ""
-      ).trim();
-
-    if (!routeId) {
-      return false;
-    }
-
-    const staticTripId =
-      String(
-        scheduledRoute?.static_trip_id
-        || ""
-      ).trim();
-
-    const staticOriginalTripId =
-      String(
-        scheduledRoute?.original_trip_id
-        || ""
-      ).trim();
-
-    const staticStartTime =
-      parseGtfsTime(
-        scheduledRoute?.trip_start_time
-        || ""
-      );
-
-    const staticScheduledTimestamp =
-      Number(
-        scheduledRoute?.times?.[0]?.timestamp
-      );
-
-    const staticDirectionKey =
-      String(
-        scheduledRoute?.direction_key
-        || ""
-      ).trim();
-
-    const staticDestinationKey =
-      normalizeDirectionText(
-        scheduledRoute?.destination
-        || ""
-      );
-
-    for (
-      const realtimeRoute
-      of realtimeRoutes || []
-    ) {
-      const realtimeRouteId =
-        String(
-          realtimeRoute?.route_id || ""
-        ).trim();
-
-      if (
-        realtimeRouteId !== routeId
-      ) {
-        continue;
-      }
-
-      const realtimeDirectionKey =
-        String(
-          realtimeRoute?.direction_key
-          || ""
-        ).trim();
-
-      const realtimeDestinationKey =
-        normalizeDirectionText(
-          realtimeRoute?.destination
-          || ""
-        );
-
-      for (
-        const time
-        of realtimeRoute?.times || []
-      ) {
-        const realtimeTripId =
-          String(
-            time?.trip_id
-            || realtimeRoute?.trip_id
-            || ""
-          ).trim();
-
-        const realtimeStartTime =
-          parseGtfsTime(
-            time?.trip_start_time
-            || realtimeRoute?.trip_start_time
-            || ""
-          );
-
-        const realtimeScheduledTimestamp =
-          Number(
-            time?.scheduled_time
-          );
-
-        const exactTripMatch =
-          !!realtimeTripId
-          && (
-            (
-              !!staticOriginalTripId
-              && realtimeTripId
-                === staticOriginalTripId
-            )
-            || (
-              !!staticTripId
-              && realtimeTripId
-                === staticTripId
-            )
-          );
-
-        if (exactTripMatch) {
-          if (
-            staticStartTime != null
-            && realtimeStartTime != null
-            && Math.abs(
-              staticStartTime
-              - realtimeStartTime
-            ) > 1
-          ) {
-            continue;
-          }
-
-          if (
-            Number.isFinite(
-              staticScheduledTimestamp
-            )
-            && Number.isFinite(
-              realtimeScheduledTimestamp
-            )
-            && Math.abs(
-              staticScheduledTimestamp
-              - realtimeScheduledTimestamp
-            ) > 5
-          ) {
-            continue;
-          }
-
-          return true;
-        }
-
-        /*
-         * Last-resort match for feeds where a trip identifier is missing.
-         * The scheduled stop timestamp is the important discriminator here.
-         */
-        if (
-          !Number.isFinite(
-            staticScheduledTimestamp
-          )
-          || !Number.isFinite(
-            realtimeScheduledTimestamp
-          )
-        ) {
-          continue;
-        }
-
-        if (
-          Math.abs(
-            staticScheduledTimestamp
-            - realtimeScheduledTimestamp
-          ) > 5
-        ) {
-          continue;
-        }
-
-        if (
-          staticDirectionKey
-          && realtimeDirectionKey
-          && staticDirectionKey
-            === realtimeDirectionKey
-        ) {
-          return true;
-        }
-
-        if (
-          !staticDirectionKey
-          && !realtimeDirectionKey
-          && staticDestinationKey
-          && staticDestinationKey
-            === realtimeDestinationKey
-        ) {
-          return true;
-        }
-      }
-    }
-
-    return false;
-  }
-
   function getSurfaceScheduledArrivals(
     stop,
     skippedTrips = []
@@ -2910,8 +2629,7 @@
               direction,
               meta,
               terminalStopId,
-              timestamp,
-              schedule
+              timestamp
             }
           );
         }
@@ -2950,27 +2668,6 @@
                 || ""
               );
 
-        const schedule =
-          row.schedule || {};
-
-        const staticTripId =
-          String(
-            schedule?.trip_id
-            || ""
-          ).trim();
-
-        const originalTripId =
-          String(
-            schedule?.original_trip_id
-            || ""
-          ).trim();
-
-        const tripStartTime =
-          String(
-            schedule?.start_time
-            || ""
-          ).trim();
-
         return {
           route_id:
             row.routeId,
@@ -2985,19 +2682,12 @@
             || row.route.route_short_name
             || "—",
           destination,
-          static_trip_id:
-            staticTripId,
-          original_trip_id:
-            originalTripId,
-          trip_start_time:
-            tripStartTime,
           times: [
             {
               timestamp:
                 row.timestamp,
               delay: null,
-              scheduled: true,
-              source: "static"
+              scheduled: true
             }
           ],
           meta:
@@ -3208,20 +2898,6 @@
                     || ""
                 );
 
-              const tripStartDate =
-                String(
-                  route?.trip_start_date
-                  || route?.start_date
-                  || ""
-                ).trim();
-
-              const tripStartTime =
-                String(
-                  route?.trip_start_time
-                  || route?.start_time
-                  || ""
-                ).trim();
-
               return {
                 ...route,
                 source: "realtime",
@@ -3249,10 +2925,6 @@
                 destination_stop_id:
                   route.destination_stop_id
                   || "",
-                trip_start_date:
-                  tripStartDate,
-                trip_start_time:
-                  tripStartTime,
                 destination:
                   route.destination
                   || staticTrip?.trip_headsign
@@ -3279,44 +2951,15 @@
                             : null,
                         scheduled: false,
                         source: "realtime",
-
-                        trip_id:
-                          String(
-                            route?.trip_id
-                            || ""
-                          ).trim(),
-
-                        trip_start_date:
-                          tripStartDate,
-
-                        trip_start_time:
-                          tripStartTime,
-
-                        route_id:
-                          String(
-                            route?.route_id
-                            || staticTrip?.route_id
-                            || ""
-                          ).trim(),
-
-                        direction_id:
-                          String(
-                            route?.direction_id
-                            || route?.directionId
-                            || ""
-                          ).trim(),
-
                         stop_schedule_relationship:
                           Number(
                             time?.stop_schedule_relationship
                           ),
-
                         stop_schedule_relationship_name:
                           String(
                             time?.stop_schedule_relationship_name
                             || "SCHEDULED"
                           ),
-
                         scheduled_time:
                           Number.isFinite(
                             Number(
@@ -3324,7 +2967,7 @@
                             )
                           )
                             ? Number(
-                                time?.scheduled_time
+                                time.scheduled_time
                               )
                             : null
                       })
@@ -4065,24 +3708,6 @@
     const surfaceFallbackRoutes =
       scheduledSurfaceRoutes.filter(
         route => {
-
-          /*
-           * First and strongest check:
-           * this exact static trip/arrival already exists in realtime.
-           *
-           * Do this BEFORE the broader direction fallback logic. Otherwise
-           * the static row can survive because its direction looks different
-           * even though it is literally the same trip.
-           */
-          if (
-            staticArrivalIsCoveredByRealtime(
-              route,
-              mergedSurfaceRoutes
-            )
-          ) {
-            return false;
-          }
-
           if (
             realtimeLogicalRoutes.some(
               realtimeRoute =>
@@ -5910,8 +5535,6 @@
     isServiceActiveOnDate,
     isScheduleRowActiveToday,
     getSofiaDateKey,
-    shouldUseStaticFallbackForDirection,
-    getRealtimeTripInstanceKey,
-    staticArrivalIsCoveredByRealtime
+    shouldUseStaticFallbackForDirection
   };
 })();
