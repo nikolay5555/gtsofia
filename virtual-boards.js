@@ -810,33 +810,28 @@
     );
   }
 
-  function formatArrivalCountdown(
-    timestamp,
-    nowSeconds = Date.now() / 1000
-  ) {
-    const seconds =
-      Number(timestamp);
+function formatArrivalCountdown(timestamp, nowSeconds = Date.now() / 1000) {
+  const seconds = Number(timestamp);
 
-    if (!Number.isFinite(seconds)) {
-      return "";
-    }
+  if (!Number.isFinite(seconds)) return "";
 
-    const remainingSeconds =
-      seconds - nowSeconds;
+  const remainingSeconds = seconds - nowSeconds;
 
-    if (remainingSeconds < 60) {
-      return "0 мин.";
-    }
-
-    return (
-      `${Math.max(
-        1,
-        Math.round(
-          remainingSeconds / 60
-        )
-      )} мин.`
-    );
+  // Arrival has reached the stop.
+  if (remainingSeconds <= 0) {
+    return "0 мин.";
   }
+
+  // During the final minute, show the remaining seconds instead of
+  // throwing away the precision provided by the realtime timestamp.
+  if (remainingSeconds < 60) {
+    const secondsLeft = Math.min(59, Math.max(1, Math.ceil(remainingSeconds)));
+    return `${secondsLeft} сек.`;
+  }
+
+  // Two minutes and above: keep the familiar minute-based display.
+  return `${Math.max(1, Math.round(remainingSeconds / 60))} мин.`;
+}
 
   function formatArrivalClock(
     timestamp
