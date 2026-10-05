@@ -5090,7 +5090,7 @@
           if (
             selectedStopId
           ) {
-            refreshSelectedBoard();
+            refreshSelectedBoard(true);
           }
         },
         REFRESH_MS
