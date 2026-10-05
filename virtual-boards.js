@@ -2060,304 +2060,312 @@
       : [];
   }
 
-function getMetroScheduledArrivals(
-  stop
-) {
-  const selectedStop =
-    String(
-      stop?.stop_id
-      || stop?.stop_code
-      || ""
-    ).trim();
-
-  if (!selectedStop) {
-    return [];
-  }
-
-  const stopKey =
-    normalizeStopKey(
-      selectedStop
-    );
-
-  const entries =
-    metroDirectionsByStop.get(
-      stopKey
-    ) || [];
-
-  if (!entries.length) {
-    return [];
-  }
-
-  const nowTimestamp =
-    Date.now() / 1000;
-
-  const dayType =
-    getCurrentScheduleDayType();
-
-  /*
-   * IMPORTANT:
-   * Metro courses may have different terminal stops while belonging
-   * to the same static direction. Therefore the grouping key must include
-   * the concrete terminal derived from THIS schedule row.
-   */
-  const byTerminal =
-    new Map();
-
-  for (
-    const entry
-    of entries
+  function getMetroScheduledArrivals(
+    stop
   ) {
-    const {
-      routeId,
-      route,
-      directionKey,
-      direction,
-      stopIndex,
-      meta,
-      scheduleSet
-    } = entry;
+    const selectedStop =
+      String(
+        stop?.stop_id
+        || stop?.stop_code
+        || ""
+      ).trim();
 
-    const pattern =
-      Array.isArray(
-        direction?.pattern
-      )
-        ? direction.pattern.map(
-            String
-          )
-        : [];
-
-    if (!pattern.length) {
-      continue;
+    if (!selectedStop) {
+      return [];
     }
+
+    const stopKey =
+      normalizeStopKey(
+        selectedStop
+      );
+
+    const entries =
+      metroDirectionsByStop.get(
+        stopKey
+      ) || [];
+
+    if (!entries.length) {
+      return [];
+    }
+
+    const nowTimestamp =
+      Date.now() / 1000;
+
+    const dayType =
+      getCurrentScheduleDayType();
 
     /*
-     * A direction whose static pattern already ends at the selected stop
-     * represents an arrival, not a departure from that stop.
+     * Metro courses may have different terminal stops while belonging
+     * to the same static direction. Therefore the grouping key must include
+     * the concrete terminal derived from THIS schedule row.
      */
-    if (
-      isTerminalDirectionForStop(
-        routeId,
-        selectedStop,
-        direction
-      )
-    ) {
-      continue;
-    }
-
-    const daySchedules =
-      scheduleSet?.[
-        directionKey
-      ]?.[dayType];
-
-    if (
-      !Array.isArray(
-        daySchedules
-      )
-    ) {
-      continue;
-    }
+    const byTerminal =
+      new Map();
 
     for (
-      const schedule
-      of daySchedules
+      const entry
+      of entries
     ) {
-      if (
-        !isScheduleRowActiveToday(
-          schedule
+      const {
+        routeId,
+        route,
+        directionKey,
+        direction,
+        stopIndex,
+        meta,
+        scheduleSet
+      } = entry;
+
+      const pattern =
+        Array.isArray(
+          direction?.pattern
         )
-      ) {
-        continue;
-      }
+          ? direction.pattern.map(
+              String
+            )
+          : [];
 
-      const seconds =
-        getCachedScheduleTime(
-          schedule,
-          stopIndex
-        );
-
-      if (seconds == null) {
+      if (!pattern.length) {
         continue;
       }
 
       /*
-       * IMPORTANT:
-       * The terminal is determined from the concrete schedule row,
-       * not from direction.pattern's last stop.
-       */
-      const terminalIndex =
-        getCachedScheduleTerminalIndex(
-          schedule,
-          pattern.length
-        );
-
-      if (
-        terminalIndex < stopIndex
-      ) {
-        continue;
-      }
-
-      const terminalStopId =
-        String(
-          pattern[
-            terminalIndex
-          ]
-          || getDirectionTerminalStopId(
-            direction
-          )
-          || ""
-        ).trim();
-
-      if (!terminalStopId) {
-        continue;
-      }
-
-      /*
-       * A course whose actual static terminal is the selected stop
-       * should not appear as a departure.
+       * A direction whose static pattern already ends at the selected stop
+       * represents an arrival, not a departure from that stop.
        */
       if (
-        stopIdsMatch(
-          terminalStopId,
-          selectedStop
+        isTerminalDirectionForStop(
+          routeId,
+          selectedStop,
+          direction
         )
       ) {
         continue;
       }
 
-      let timestamp =
-        gtfsSecondsToTodayTimestamp(
-          seconds
-        );
+      const daySchedules =
+        scheduleSet?.[
+          directionKey
+        ]?.[dayType];
 
       if (
-        timestamp < nowTimestamp
-      ) {
-        timestamp += 86400;
-      }
-
-      const groupKey =
-        `${routeId}|${directionKey}|${terminalStopId}`;
-
-      if (
-        !byTerminal.has(
-          groupKey
+        !Array.isArray(
+          daySchedules
         )
       ) {
-        byTerminal.set(
-          groupKey,
-          {
-            routeId,
-            route,
-            directionKey,
-            direction,
-            meta,
-            terminalStopId,
-            timestamps: []
-          }
-        );
+        continue;
       }
 
-      byTerminal
-        .get(groupKey)
-        .timestamps
-        .push(timestamp);
-    }
-  }
-
-  const result = [];
-
-  for (
-    const target
-    of byTerminal.values()
-  ) {
-    const unique =
-      [...new Set(
-        target.timestamps
-      )]
-        .sort(
-          (a, b) => a - b
-        )
-        .slice(0, 3);
-
-    if (!unique.length) {
-      continue;
-    }
-
-    const staticTerminalId =
-      getDirectionTerminalStopId(
-        target.direction
-      );
-
-    const isPartialCourse =
-      !stopIdsMatch(
-        target.terminalStopId,
-        staticTerminalId
-      );
-
-    const terminalStop =
-      getStopById(
-        target.terminalStopId
-      );
-
-    const destination =
-      isPartialCourse
-        ? (
-            terminalStop?.stop_name
-            || target.direction?.destination
-            || target.direction?.headsign
-            || ""
+      for (
+        const schedule
+        of daySchedules
+      ) {
+        if (
+          !isScheduleRowActiveToday(
+            schedule
           )
-        : (
-            target.direction?.destination
-            || target.direction?.headsign
-            || terminalStop?.stop_name
-            || ""
+        ) {
+          continue;
+        }
+
+        const seconds =
+          getCachedScheduleTime(
+            schedule,
+            stopIndex
           );
 
-    result.push({
-      route_id:
-        target.routeId,
+        if (seconds == null) {
+          continue;
+        }
 
-      direction_key:
-        target.directionKey,
+        /*
+         * The terminal is determined from the concrete schedule row,
+         * not from direction.pattern's last stop.
+         */
+        const terminalIndex =
+          getCachedScheduleTerminalIndex(
+            schedule,
+            pattern.length
+          );
 
-      direction:
-        target.direction,
+        if (
+          terminalIndex < 0
+          || terminalIndex < stopIndex
+        ) {
+          continue;
+        }
 
-      terminal_stop_id:
-        target.terminalStopId,
+        const terminalStopId =
+          String(
+            pattern[
+              terminalIndex
+            ]
+            || ""
+          ).trim();
 
-      route_ref:
-        target.meta.number
-        || target.route.route_short_name
-        || "—",
+        if (!terminalStopId) {
+          continue;
+        }
 
-      destination,
+        /*
+         * A course whose actual static terminal is the selected stop
+         * should not appear as a departure.
+         */
+        if (
+          stopIdsMatch(
+            terminalStopId,
+            selectedStop
+          )
+        ) {
+          continue;
+        }
 
-      times:
-        unique.map(
-          timestamp => ({
-            timestamp,
-            delay: null,
-            scheduled: true,
-            source: "static"
-          })
-        ),
+        /*
+         * IMPORTANT:
+         * Do NOT move an expired metro course to tomorrow.
+         *
+         * This keeps the metro board tied to the current service day.
+         * Once the last course for this station has passed, no static
+         * rows remain and the board displays "Няма предстоящи заминавания."
+         *
+         * GTFS times beyond 24:00 are still preserved naturally, because
+         * gtfsSecondsToTodayTimestamp() converts them to the corresponding
+         * next-day clock time as part of the same service day.
+         */
+        const timestamp =
+          gtfsSecondsToTodayTimestamp(
+            seconds
+          );
 
-      meta:
-        target.meta,
+        if (
+          timestamp < nowTimestamp
+        ) {
+          continue;
+        }
 
-      scheduled: true,
-      source: "static"
-    });
+        const groupKey =
+          `${routeId}|${directionKey}|${terminalStopId}`;
+
+        if (
+          !byTerminal.has(
+            groupKey
+          )
+        ) {
+          byTerminal.set(
+            groupKey,
+            {
+              routeId,
+              route,
+              directionKey,
+              direction,
+              meta,
+              terminalStopId,
+              timestamps: []
+            }
+          );
+        }
+
+        byTerminal
+          .get(groupKey)
+          .timestamps
+          .push(timestamp);
+      }
+    }
+
+    const result = [];
+
+    for (
+      const target
+      of byTerminal.values()
+    ) {
+      const unique =
+        [...new Set(
+          target.timestamps
+        )]
+          .sort(
+            (a, b) => a - b
+          )
+          .slice(0, 3);
+
+      if (!unique.length) {
+        continue;
+      }
+
+      const staticTerminalId =
+        getDirectionTerminalStopId(
+          target.direction
+        );
+
+      const isPartialCourse =
+        !stopIdsMatch(
+          target.terminalStopId,
+          staticTerminalId
+        );
+
+      const terminalStop =
+        getStopById(
+          target.terminalStopId
+        );
+
+      const destination =
+        isPartialCourse
+          ? (
+              terminalStop?.stop_name
+              || target.direction?.destination
+              || target.direction?.headsign
+              || ""
+            )
+          : (
+              target.direction?.destination
+              || target.direction?.headsign
+              || terminalStop?.stop_name
+              || ""
+            );
+
+      result.push({
+        route_id:
+          target.routeId,
+
+        direction_key:
+          target.directionKey,
+
+        direction:
+          target.direction,
+
+        terminal_stop_id:
+          target.terminalStopId,
+
+        route_ref:
+          target.meta.number
+          || target.route.route_short_name
+          || "—",
+
+        destination,
+
+        times:
+          unique.map(
+            timestamp => ({
+              timestamp,
+              delay: null,
+              scheduled: true,
+              source: "static"
+            })
+          ),
+
+        meta:
+          target.meta,
+
+        scheduled: true,
+        source: "static"
+      });
+    }
+
+    return result.sort(
+      (a, b) =>
+        a.times[0].timestamp
+        - b.times[0].timestamp
+    );
   }
-
-  return result.sort(
-    (a, b) =>
-      a.times[0].timestamp
-      - b.times[0].timestamp
-  );
-}
 
   function isSkippedStaticSchedule(
     schedule,
