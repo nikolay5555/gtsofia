@@ -477,7 +477,7 @@ grid.appendChild(title);
 
               switch (item.type) {
                 case "bus":
-                  if (["X43"].includes(line)) {
+                  if (["<lines for tourist logic here>"].includes(line)) {
                     meta = { color: "#006838", text: "white" };
                   } else {
                     meta = { color: "#BD202E", text: "white" };
