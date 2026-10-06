@@ -2091,6 +2091,9 @@
     const nowTimestamp =
       Date.now() / 1000;
 
+    const partialDisplayLeadSeconds =
+      30 * 60;
+
     const dayType =
       getCurrentScheduleDayType();
 
@@ -2278,19 +2281,6 @@
       const target
       of byTerminal.values()
     ) {
-      const unique =
-        [...new Set(
-          target.timestamps
-        )]
-          .sort(
-            (a, b) => a - b
-          )
-          .slice(0, 3);
-
-      if (!unique.length) {
-        continue;
-      }
-
       const staticTerminalId =
         getDirectionTerminalStopId(
           target.direction
@@ -2301,6 +2291,36 @@
           target.terminalStopId,
           staticTerminalId
         );
+
+      /*
+       * IMPORTANT:
+       * Partial metro courses should only appear 30 minutes before their
+       * concrete departure. Normal/full-length courses keep the old behavior.
+       *
+       * The filtering is intentionally done BEFORE slice(0, 3), otherwise
+       * a hidden partial course could occupy one of the first three slots
+       * and prevent a later visible course from being displayed.
+       */
+      const unique =
+        [...new Set(
+          target.timestamps
+        )]
+          .sort(
+            (a, b) => a - b
+          )
+          .filter(
+            timestamp =>
+              !isPartialCourse
+              || (
+                timestamp - nowTimestamp
+                <= partialDisplayLeadSeconds
+              )
+          )
+          .slice(0, 3);
+
+      if (!unique.length) {
+        continue;
+      }
 
       const terminalStop =
         getStopById(
