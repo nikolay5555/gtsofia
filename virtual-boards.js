@@ -826,15 +826,12 @@
       return "0 мин.";
     }
 
-    // Show a whole-minute ETA using the nearest-minute rounding rule.
-    // Keep any future arrival at a minimum of one minute so the board never
-    // shows "0 мин." while the vehicle is still on its way.
+    // Show the ETA rounded to the nearest whole minute.
+    // This intentionally allows "0 мин." for arrivals less than 30 seconds
+    // away, which is the mathematically correct nearest-minute value.
     const minutes =
-      Math.max(
-        1,
-        Math.round(
-          remainingSeconds / 60
-        )
+      Math.round(
+        remainingSeconds / 60
       );
 
     return `${minutes} мин.`;
