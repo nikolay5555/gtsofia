@@ -826,28 +826,18 @@
       return "0 мин.";
     }
 
-    // During the final minute, show the remaining seconds instead of
-    // throwing away the precision provided by the realtime timestamp.
-    if (remainingSeconds < 60) {
-      const secondsLeft =
-        Math.min(
-          59,
-          Math.max(
-            1,
-            Math.ceil(remainingSeconds)
-          )
-        );
+    // Show a whole-minute ETA using the nearest-minute rounding rule.
+    // Keep any future arrival at a minimum of one minute so the board never
+    // shows "0 мин." while the vehicle is still on its way.
+    const minutes =
+      Math.max(
+        1,
+        Math.round(
+          remainingSeconds / 60
+        )
+      );
 
-      return `${secondsLeft} сек.`;
-    }
-
-    // Two minutes and above: keep the familiar minute-based display.
-    return `${Math.max(
-      1,
-      Math.round(
-        remainingSeconds / 60
-      )
-    )} мин.`;
+    return `${minutes} мин.`;
   }
 
   function formatArrivalClock(

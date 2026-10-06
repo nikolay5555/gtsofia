@@ -55,12 +55,17 @@ const countdownNow = 1_000;
 assert.equal(
   internals.formatArrivalCountdown(countdownNow + 60, countdownNow),
   '1 мин.',
-  'exactly 60 seconds remaining must still show one minute'
+  'exactly 60 seconds remaining must show one minute'
 );
 assert.equal(
   internals.formatArrivalCountdown(countdownNow + 59.9, countdownNow),
-  '0 мин.',
-  'less than 60 seconds remaining must show zero minutes'
+  '1 мин.',
+  'any positive time below one minute must stay at one minute'
+);
+assert.equal(
+  internals.formatArrivalCountdown(countdownNow + 29.9, countdownNow),
+  '1 мин.',
+  'the final seconds must not be displayed separately'
 );
 assert.equal(
   internals.formatArrivalCountdown(countdownNow, countdownNow),
@@ -73,9 +78,9 @@ assert.equal(
   '1 minute 59 seconds remaining should round to two minutes'
 );
 assert.equal(
-  internals.formatArrivalCountdown(countdownNow + 60 + 29, countdownNow),
+  internals.formatArrivalCountdown(countdownNow + 60 + 29.9, countdownNow),
   '1 мин.',
-  '1 minute 29 seconds remaining should still show one minute'
+  '1 minute 29.9 seconds remaining should still show one minute'
 );
 assert.equal(
   internals.formatArrivalCountdown(countdownNow + 60 + 30, countdownNow),
@@ -86,6 +91,11 @@ assert.equal(
   internals.formatArrivalCountdown(countdownNow - 30, countdownNow),
   '0 мин.',
   'already passed arrivals must stay at zero minutes until the board refreshes'
+);
+assert.equal(
+  internals.formatArrivalCountdown(countdownNow + 60 * 2 + 29.9, countdownNow),
+  '2 мин.',
+  '2 minutes 29.9 seconds remaining should round down to two minutes'
 );
 assert.equal(
   internals.formatArrivalCountdown(countdownNow + 60 * 2 + 30, countdownNow),
