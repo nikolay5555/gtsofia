@@ -5,6 +5,7 @@ import io
 import json
 import shutil
 import urllib.request
+import urllib.parse
 import zipfile
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
@@ -447,6 +448,191 @@ def build_calendar_context(
 
 
 # ============================================================
+# OpenStreetMap stop names
+# ============================================================
+
+OSM_OVERPASS_URL = "https://maps.mail.ru/osm/tools/overpass/api/interpreter"
+OSM_NETWORK_NAME = "Градски транспорт София"
+OSM_STOP_TYPES = (
+    ("subway", "station"),
+    ("tram", "stop_position"),
+    ("bus", "platform"),
+    ("trolleybus", "platform"),
+)
+
+
+def transliterate(text):
+    """Use the same Bulgarian-to-Latin mapping as Dimitar's stop importer."""
+
+    cyrillic = "А,Б,В,Г,Д,Е,Ж,З,И,Й,К,Л,М,Н,О,П,Р,С,Т,У,Ф,Х,Ц,Ч,Ш,Щ,Ъ,Ь,Ю,Я".split(",")
+    latin = "A,B,V,G,D,E,ZH,Z,I,Y,K,L,M,N,O,P,R,S,T,U,F,H,TS,CH,SH,SHT,A,A,YU,YA".split(",")
+
+    if len(cyrillic) != len(latin):
+        raise ValueError("Cyrillic and Latin arrays must be of the same length")
+
+    result = []
+    for char in str(text or ""):
+        index = cyrillic.index(char.upper()) if char.upper() in cyrillic else -1
+        if index == -1:
+            result.append(char)
+        else:
+            latin_char = latin[index]
+            result.append(latin_char.lower() if char == char.lower() else latin_char)
+
+    return "".join(result)
+
+
+def validate_osm_stop_names(stop):
+    """Report unsupported OSM name tags in the same way as the reference importer."""
+
+    tags = stop.get("tags") or {}
+    stop_url = f"https://www.osm.org/{stop.get('type', 'node')}/{stop.get('id', '')}"
+
+    if tags.get("short_name"):
+        print(
+            f"Warning: stop ref {tags.get('ref', '')} has short_name without language: "
+            f"{stop_url}"
+        )
+    if tags.get("full_name"):
+        print(
+            f"Warning: stop ref {tags.get('ref', '')} has full_name without language: "
+            f"{stop_url}"
+        )
+
+    supported_languages = {"bg", "en"}
+    names = {key for key in tags if key == "name" or key.startswith("name:")}
+    short_names = {key for key in tags if key.startswith("short_name:")}
+    full_names = {key for key in tags if key.startswith("full_name:")}
+    ignore_keys = {"int_name", "old_name", "noname"}
+    named_keys = names | short_names | full_names
+    other_names = {
+        key for key in tags
+        if "name" in key
+        and key not in named_keys
+        and key not in ignore_keys
+    }
+    # Retained for parity with the reference importer: other name-like tags
+    # are recognized but not currently actionable.
+    _ = other_names
+
+    unsupported_languages = {
+        key.split(":")[1] if ":" in key else "bg"
+        for key in named_keys
+        if (key.split(":")[1] if ":" in key else "bg") not in supported_languages
+    }
+    if unsupported_languages:
+        print(
+            f"Warning: stop ref {tags.get('ref', '')} has unsupported language name tags "
+            f"{sorted(unsupported_languages)}: {stop_url}"
+        )
+
+
+def osm_stop_code(stop):
+    tags = stop.get("tags") or {}
+    ref = normalize(tags.get("ref"))
+    if not ref:
+        return ""
+
+    if tags.get("subway") == "yes":
+        return f"M{ref}"
+
+    return ref.zfill(4)
+
+
+def build_osm_stop_index(osm_stops):
+    """Index OSM stops by ref, keeping the same stop-position/platform precedence."""
+
+    priority = {
+        "stop_position": 1,
+        "platform": 2,
+    }
+    by_code = {}
+
+    ordered_stops = sorted(
+        osm_stops or [],
+        key=lambda stop: priority.get(
+            (stop.get("tags") or {}).get("public_transport", ""),
+            999,
+        ),
+    )
+
+    for osm_stop in ordered_stops:
+        tags = osm_stop.get("tags") or {}
+        code = osm_stop_code(osm_stop)
+        if not code:
+            continue
+
+        if code in by_code:
+            print(
+                f"Warning: duplicate OSM stop code {code}: "
+                f"https://www.osm.org/{osm_stop.get('type', 'node')}/{osm_stop.get('id', '')}"
+            )
+
+        names = {
+            "bg": normalize(tags.get("name")),
+            "en": normalize(tags.get("name:en")),
+        }
+        if not names["en"]:
+            names["en"] = transliterate(names["bg"])
+
+        if tags.get("short_name:bg"):
+            names["bg_short"] = tags["short_name:bg"]
+        if tags.get("short_name:en"):
+            names["en_short"] = tags["short_name:en"]
+        if tags.get("full_name:bg"):
+            names["bg_full"] = tags["full_name:bg"]
+        if tags.get("full_name:en"):
+            names["en_full"] = tags["full_name:en"]
+
+        by_code[code] = {
+            "names": names,
+            "tags": tags,
+        }
+
+    return by_code
+
+
+def fetch_osm_stops():
+    """Fetch tagged Sofia public-transport stops; failure must not block GTFS generation."""
+
+    elements = "".join(
+        f"node[{transport}=yes][public_transport={public_transport}]"
+        f'[ref][network="{OSM_NETWORK_NAME}"];'
+        for transport, public_transport in OSM_STOP_TYPES
+    )
+    query = f"[out:json][timeout:25];({elements});out geom;"
+    request = urllib.request.Request(
+        OSM_OVERPASS_URL,
+        data=urllib.parse.urlencode({"data": query}).encode("utf-8"),
+        headers={
+            "User-Agent": "github/nikolay5555/gtsofia",
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=45) as response:
+            payload = json.load(response)
+
+        osm_stops = payload.get("elements", [])
+        if not isinstance(osm_stops, list):
+            raise ValueError("Overpass response does not contain an elements array")
+
+        for stop in osm_stops:
+            validate_osm_stop_names(stop)
+
+        print(f"Fetched {len(osm_stops)} OSM stops.")
+        return osm_stops
+    except Exception as error:
+        print(
+            "Warning: could not fetch OSM stop names; using GTFS names instead. "
+            f"Reason: {error}"
+        )
+        return []
+
+
+# ============================================================
 # Stops
 # ============================================================
 
@@ -495,44 +681,70 @@ def build_stop_index(stops):
 
 
 def build_stops(
-    stops_data
+    stops_data,
+    osm_stops=None,
 ):
     """
-    Keep the existing stop structure and normalized IDs.
+    Keep existing GTFS stop IDs, while using OSM names where a stop ref matches.
 
-    Stop names and metadata come directly from the official GTFS feed.
-    Duplicate stop_ids are retained in the output, but the lookup index
-    chooses the most useful public stop record.
+    The GTFS stop_name remains a fallback when OSM has no Bulgarian name.
+    Unmatched GTFS stops also receive the same bg/en names structure used
+    by Dimitar's importer. Duplicate stop_ids are retained in the output.
     """
 
+    osm_by_code = build_osm_stop_index(osm_stops or [])
     result = []
 
     for row in stops_data:
-
-        original_id = normalize(
-            row.get(
-                "stop_id"
-            )
-        )
-
-        normalized_id = normalize_stop_id(
-            original_id
-        )
+        original_id = normalize(row.get("stop_id"))
+        normalized_id = normalize_stop_id(original_id)
 
         if not normalized_id:
             continue
 
-        stop = dict(
-            row
+        stop = dict(row)
+        stop["stop_id"] = normalized_id
+
+        gtfs_name = normalize(stop.get("stop_name"))
+        stop["names"] = {
+            "bg": gtfs_name,
+            "en": transliterate(gtfs_name),
+        }
+
+        # Dimitar's GTFS fallback identifies metro stops from stop_id and
+        # other stops from stop_code. Also try the normalized stop_id to
+        # accommodate GTFS rows where stop_code is missing or inconsistent.
+        candidate_codes = []
+        if normalized_id.startswith("M"):
+            candidate_codes.append(normalized_id)
+        stop_code = normalize(stop.get("stop_code"))
+        if stop_code:
+            candidate_codes.append(normalize_stop_id(stop_code))
+        candidate_codes.append(normalized_id)
+
+        osm_match = next(
+            (osm_by_code[code] for code in candidate_codes if code in osm_by_code),
+            None,
         )
 
-        stop[
-            "stop_id"
-        ] = normalized_id
+        if osm_match:
+            osm_names = dict(osm_match["names"])
+            # Avoid blank labels if an OSM object has a ref but no name tag.
+            osm_names["bg"] = osm_names.get("bg") or gtfs_name
+            osm_names["en"] = osm_names.get("en") or transliterate(osm_names["bg"])
 
-        result.append(
-            stop
-        )
+            stop["names"] = osm_names
+            stop["stop_name"] = osm_names["bg"]
+
+            tags = osm_match["tags"]
+            if tags.get("request_stop") == "yes":
+                stop["request_stop"] = True
+            if tags.get("local_ref"):
+                stop["local_ref"] = tags["local_ref"]
+            if tags.get("local_ref:metro"):
+                stop["metro_ref"] = tags["local_ref:metro"]
+
+        result.append(stop)
 
     return (
         result,
@@ -2210,9 +2422,16 @@ def main():
         # GTFS stops
         # --------------------------------------------------------
 
+        print(
+            "Fetching OSM stop names"
+        )
+
+        osm_stops = fetch_osm_stops()
+
         output_stops, stops_by_id = (
             build_stops(
-                stops_data
+                stops_data,
+                osm_stops
             )
         )
 
