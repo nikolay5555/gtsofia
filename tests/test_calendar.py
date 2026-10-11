@@ -147,5 +147,125 @@ class CalendarTests(unittest.TestCase):
         self.assertEqual(service_types["A"], ["weekday", "weekend"])
 
 
+
+class OSMStopNameTests(unittest.TestCase):
+    def test_transliteration_matches_reference_mapping(self):
+        self.assertEqual(module.transliterate("София"), "Sofiya")
+        self.assertEqual(module.transliterate("Ж.к. Изток"), "Zh.k. Iztok")
+
+    def test_osm_names_override_gtfs_and_preserve_local_references(self):
+        gtfs_stops = [
+            {
+                "stop_id": "0012",
+                "stop_code": "12",
+                "stop_name": "Старо GTFS име",
+                "stop_lat": "42.0",
+                "stop_lon": "23.0",
+            }
+        ]
+        osm_stops = [
+            {
+                "type": "node",
+                "id": 123,
+                "lat": 42.1,
+                "lon": 23.1,
+                "tags": {
+                    "bus": "yes",
+                    "public_transport": "platform",
+                    "ref": "12",
+                    "name": "Ново OSM име",
+                    "name:en": "New OSM name",
+                    "short_name:bg": "Ново",
+                    "full_name:bg": "Пълно ново OSM име",
+                    "local_ref": "3",
+                    "local_ref:metro": "2",
+                },
+            }
+        ]
+
+        stops, by_id = module.build_stops(gtfs_stops, osm_stops)
+        stop = stops[0]
+
+        self.assertEqual(stop["stop_name"], "Ново OSM име")
+        self.assertEqual(stop["names"]["bg"], "Ново OSM име")
+        self.assertEqual(stop["names"]["en"], "New OSM name")
+        self.assertEqual(stop["names"]["bg_short"], "Ново")
+        self.assertEqual(stop["names"]["bg_full"], "Пълно ново OSM име")
+        self.assertEqual(stop["local_ref"], "3")
+        self.assertEqual(stop["metro_ref"], "2")
+        self.assertIs(by_id["0012"], stop)
+
+    def test_missing_english_osm_name_is_transliterated(self):
+        gtfs_stops = [
+            {"stop_id": "7", "stop_code": "7", "stop_name": "GTFS name"}
+        ]
+        osm_stops = [
+            {
+                "type": "node",
+                "id": 7,
+                "tags": {
+                    "bus": "yes",
+                    "public_transport": "platform",
+                    "ref": "7",
+                    "name": "Спирка София",
+                },
+            }
+        ]
+
+        stops, _ = module.build_stops(gtfs_stops, osm_stops)
+        self.assertEqual(stops[0]["stop_name"], "Спирка София")
+        self.assertEqual(stops[0]["names"]["en"], "Spirka Sofiya")
+
+    def test_platform_wins_when_osm_codes_are_duplicated(self):
+        gtfs_stops = [
+            {"stop_id": "2", "stop_code": "2", "stop_name": "GTFS name"}
+        ]
+        osm_stops = [
+            {
+                "type": "node",
+                "id": 20,
+                "tags": {
+                    "tram": "yes",
+                    "public_transport": "stop_position",
+                    "ref": "2",
+                    "name": "Име от stop_position",
+                },
+            },
+            {
+                "type": "node",
+                "id": 21,
+                "tags": {
+                    "bus": "yes",
+                    "public_transport": "platform",
+                    "ref": "2",
+                    "name": "Име от platform",
+                },
+            },
+        ]
+
+        stops, _ = module.build_stops(gtfs_stops, osm_stops)
+        self.assertEqual(stops[0]["stop_name"], "Име от platform")
+
+    def test_gtfs_name_is_fallback_when_osm_name_is_missing(self):
+        gtfs_stops = [
+            {"stop_id": "3", "stop_code": "3", "stop_name": "Запазено GTFS име"}
+        ]
+        osm_stops = [
+            {
+                "type": "node",
+                "id": 30,
+                "tags": {
+                    "bus": "yes",
+                    "public_transport": "platform",
+                    "ref": "3",
+                },
+            }
+        ]
+
+        stops, _ = module.build_stops(gtfs_stops, osm_stops)
+        self.assertEqual(stops[0]["stop_name"], "Запазено GTFS име")
+        self.assertEqual(stops[0]["names"]["bg"], "Запазено GTFS име")
+
+
 if __name__ == "__main__":
     unittest.main()
