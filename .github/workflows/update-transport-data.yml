@@ -2,8 +2,6 @@ name: Update transport data
 
 on:
   schedule:
-    # GitHub schedules are delayed occasionally under load. Use a non-round
-    # minute and pin the schedule to Sofia time so DST is handled for us.
     - cron: '11 1 * * *'
 
   workflow_dispatch:
