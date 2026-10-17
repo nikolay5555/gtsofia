@@ -43,7 +43,7 @@
   },
   {
     "type": "bus",
-    "cgm_id": "A144",
+    "gtfs_route_short_name": "12T",
     "route_ref": "12TM"
   }
 ]
