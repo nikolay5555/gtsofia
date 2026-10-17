@@ -161,15 +161,35 @@ function normalizeRouteRef(value) {
 }
 
 
+function normalizeLineType(value) {
+    const type = String(value || '').trim().toLowerCase();
+
+    switch (type) {
+        case 'trolleybus':
+            return 'trolley';
+        case 'night':
+            return 'bus';
+        default:
+            return type;
+    }
+}
+
 function getLineType(route) {
     const override = getLineOverride(route);
+
+    // An explicit override is authoritative. In particular, a route whose
+    // number contains T/Т must not silently turn a configured tram/trolley
+    // line into a bus.
+    if (override?.type) {
+        return normalizeLineType(override.type);
+    }
+
     const sourceNumber = String(route?.route_short_name || '').trim();
     const normalizedNumber = normalizeRouteRef(
         override?.route_ref || sourceNumber
     ).toUpperCase();
 
-    // Dimitar's route normalization makes replacement services buses even
-    // when the source GTFS transport mode is different.
+    // Replacement services are buses by default when there is no override.
     if (
         normalizedNumber.includes('T') ||
         normalizedNumber.includes('Т')
@@ -177,18 +197,7 @@ function getLineType(route) {
         return 'bus';
     }
 
-    if (override?.type) {
-        const overrideType = String(override.type).trim().toLowerCase();
-        return overrideType === 'trolleybus'
-            ? 'trolley'
-            : overrideType === 'night'
-                ? 'bus'
-                : overrideType;
-    }
-
-    return getTransportType(
-        route.route_type
-    );
+    return getTransportType(route?.route_type);
 }
 
 
@@ -267,41 +276,35 @@ function getTransportIcon(
 }
 
 
+const TRANSPORT_TYPE_COLORS = Object.freeze({
+    bus: '#BE1E2D',
+    tram: '#F7941D',
+    trolley: '#27AAE1',
+    metro: '#1C75BC'
+});
+
 function getLineColor(
     route,
     type
 ) {
     const override = getLineOverride(route);
 
+    // A configured color remains an optional, explicit exception to the
+    // standard palette for the selected transport type.
     if (override?.color) {
-        return String(override.color).startsWith('#')
-            ? String(override.color)
-            : `#${override.color}`;
+        const color = String(override.color).trim();
+        return color.startsWith('#') ? color : `#${color}`;
     }
 
-    // When the transport type is masked by an override, do not let
-    // the original CGM route color leak through (e.g. trolleybus blue
-    // on a line that the UI masks as a bus).
-    if (!override?.type && route.route_color) {
-        return `#${route.route_color}`;
+    // Keep the original GTFS line color only when the line type itself was
+    // not overridden. Otherwise always use the selected type's standard pill.
+    if (!override?.type && route?.route_color) {
+        const color = String(route.route_color).trim();
+        return color.startsWith('#') ? color : `#${color}`;
     }
 
-    switch (type) {
-        case 'bus':
-            return '#BE1E2D';
-
-        case 'tram':
-            return '#F7941D';
-
-        case 'trolley':
-            return '#27AAE1';
-
-        case 'metro':
-            return '#1C75BC';
-
-        default:
-            return '#BE1E2D';
-    }
+    return TRANSPORT_TYPE_COLORS[normalizeLineType(type)]
+        || TRANSPORT_TYPE_COLORS.bus;
 }
 
 function getDirections(
@@ -499,6 +502,7 @@ function convertGtfsRoutes(
 window.getLineOverride = getLineOverride;
 window.getLineDisplayNumber = getLineDisplayNumber;
 window.getLineType = getLineType;
+window.normalizeLineType = normalizeLineType;
 window.getLineSubtype = getLineSubtype;
 window.getLineColor = getLineColor;
 window.getTransportIcon = getTransportIcon;
