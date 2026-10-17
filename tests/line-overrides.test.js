@@ -20,7 +20,10 @@ context.transportData = {
     { cgm_id: 'TB34', route_ref: '20ТМ', type: 'bus' },
     { cgm_id: 'TB46', route_ref: '186', type: 'bus' },
     { cgm_id: 'TB37', type: 'bus' },
-    { cgm_id: 'A259', route_ref: 'X43', type: 'bus' }
+    { cgm_id: 'A259', route_ref: 'X43', type: 'bus' },
+    { cgm_id: 'OVR_TRAM', route_ref: '12ТМ', type: 'tram' },
+    { cgm_id: 'OVR_TROLLEY', type: 'trolley' },
+    { cgm_id: 'OVR_CUSTOM', type: 'bus', color: '123456' }
   ]
 };
 
@@ -103,6 +106,40 @@ assert.equal(context.getLineSubtype(x43, 'bus', 'X43'), '');
 assert.equal(context.getLineDisplayNumber(x43, 'bus'), 'X43');
 assert.equal(context.getLineColor(x43, 'bus'), '#BE1E2D');
 assert.equal(context.getTransportIcon('bus', 'X43'), 'Icons/Active icons/bus.svg');
+
+// A configured type takes priority over the replacement-bus number heuristic
+// and provides its standard icon + pill background without a manual color.
+const overriddenTram = {
+  route_id: 'OVR_TRAM',
+  route_short_name: '12ТМ',
+  route_type: '11',
+  route_color: '123456'
+};
+assert.equal(context.getLineType(overriddenTram), 'tram');
+assert.equal(context.getLineColor(overriddenTram, 'tram'), '#F7941D');
+assert.equal(context.getTransportIcon('tram', '12ТМ'), 'Icons/Active icons/tram.svg');
+
+const overriddenTrolley = {
+  route_id: 'OVR_TROLLEY',
+  route_short_name: '99',
+  route_type: '3',
+  route_color: '123456'
+};
+assert.equal(context.getLineType(overriddenTrolley), 'trolley');
+assert.equal(context.getLineColor(overriddenTrolley, 'trolley'), '#27AAE1');
+assert.equal(context.getTransportIcon('trolley', '99'), 'Icons/Active icons/trolley.svg');
+
+const customColor = {
+  route_id: 'OVR_CUSTOM',
+  route_short_name: '88',
+  route_type: '11',
+  route_color: '006838'
+};
+assert.equal(context.getLineType(customColor), 'bus');
+assert.equal(context.getLineColor(customColor, 'bus'), '#123456');
+
+// Without a type override, preserve the source GTFS route color.
+assert.equal(context.getLineColor({ route_id: 'NO_OVERRIDE', route_color: 'abcdef' }, 'tram'), '#abcdef');
 
 const metro = {
   route_id: 'M1',
