@@ -39,7 +39,6 @@
   },
   {
     "type": "bus",
-    "cgm_id": "A259",
-    "color": "#BE1E2D"
+    "cgm_id": "A259"
   }
 ]
