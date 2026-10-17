@@ -40,5 +40,10 @@
   {
     "type": "bus",
     "cgm_id": "A259"
+  },
+  {
+    "type": "bus",
+    "cgm_id": "A144",
+    "route_ref": "12TM"
   }
 ]
