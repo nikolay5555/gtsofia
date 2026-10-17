@@ -1,11 +1,6 @@
 [
   {
     "type": "bus",
-    "cgm_id": "A144",
-    "route_ref": "12TM"
-  },
-  {
-    "type": "bus",
     "cgm_id": "TB34",
     "route_ref": "20ТМ"
   },
