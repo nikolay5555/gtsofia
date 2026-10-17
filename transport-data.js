@@ -128,36 +128,20 @@ function getTransportType(routeType) {
 
 function getLineOverride(route) {
     const routeId = String(route?.route_id || '').trim();
-    const routeNumber = String(
-        route?.route_short_name || ''
-    ).trim();
-
-    const overrides = Array.isArray(
-        window.transportData?.lineOverrides
-    )
+    const routeNumber = String(route?.route_short_name || '').trim();
+    const overrides = Array.isArray(window.transportData?.lineOverrides)
         ? window.transportData.lineOverrides
         : [];
 
-    // Exact CGM ID match has priority.
-    const byId = overrides.find(override =>
-        override?.cgm_id &&
-        String(override.cgm_id).trim() === routeId
-    );
-
-    if (byId) return byId;
-
-    // Fallback to the configured public line number.
-    const normalize = value => String(value || '')
-        .trim()
-        .toUpperCase()
-        .replace(/T/g, 'Т')
-        .replace(/M/g, 'М');
-
     return overrides.find(override =>
-        override?.route_ref &&
-        normalize(override.route_ref) === normalize(routeNumber)
+        String(override?.cgm_id || '').trim() === routeId ||
+        (
+            !override?.cgm_id &&
+            String(override?.route_ref || '').trim() === routeNumber
+        )
     ) || null;
 }
+
 
 function normalizeRouteRef(value) {
     let ref = String(value || '').trim();
