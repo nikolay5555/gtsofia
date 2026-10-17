@@ -133,14 +133,19 @@ function getLineOverride(route) {
         ? window.transportData.lineOverrides
         : [];
 
-    return overrides.find(override =>
-        String(override?.cgm_id || '').trim() === routeId ||
-        (
-            !override?.cgm_id &&
-            String(override?.route_ref || '').trim() === routeNumber
-        )
-    ) || null;
-}
+    return overrides.find(override => {
+  const cgmId = String(override?.cgm_id || '').trim();
+  const routeRef = String(override?.route_ref || '').trim();
+  const gtfsShortName = String(
+    override?.gtfs_route_short_name || ''
+  ).trim();
+
+  return (
+    (cgmId && cgmId === routeId) ||
+    (gtfsShortName && gtfsShortName === routeNumber) ||
+    (!cgmId && !gtfsShortName && routeRef === routeNumber)
+  );
+}) || null;
 
 
 function normalizeRouteRef(value) {
