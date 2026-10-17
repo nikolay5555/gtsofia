@@ -127,58 +127,19 @@ function getTransportType(routeType) {
 
 
 function getLineOverride(route) {
-    const routeId = String(
-        route?.route_id || ''
-    ).trim();
-
-    const routeNumber = String(
-        route?.route_short_name || ''
-    ).trim();
-
-    const overrides = Array.isArray(
-        window.transportData?.lineOverrides
-    )
+    const routeId = String(route?.route_id || '').trim();
+    const routeNumber = String(route?.route_short_name || '').trim();
+    const overrides = Array.isArray(window.transportData?.lineOverrides)
         ? window.transportData.lineOverrides
         : [];
 
-    return overrides.find(override => {
-        const cgmId = String(
-            override?.cgm_id || ''
-        ).trim();
-
-        const gtfsShortName = String(
-            override?.gtfs_route_short_name || ''
-        ).trim();
-
-        const routeRef = String(
-            override?.route_ref || ''
-        ).trim();
-
-        // 1. Основно съпоставяне по CGM ID.
-        if (cgmId && cgmId === routeId) {
-            return true;
-        }
-
-        // 2. Съпоставяне по оригиналното GTFS име.
-        if (
-            gtfsShortName &&
-            gtfsShortName === routeNumber
-        ) {
-            return true;
-        }
-
-        // 3. Старият fallback остава за съвместимост.
-        if (
-            !cgmId &&
-            !gtfsShortName &&
-            routeRef &&
-            routeRef === routeNumber
-        ) {
-            return true;
-        }
-
-        return false;
-    }) || null;
+    return overrides.find(override =>
+        String(override?.cgm_id || '').trim() === routeId ||
+        (
+            !override?.cgm_id &&
+            String(override?.route_ref || '').trim() === routeNumber
+        )
+    ) || null;
 }
 
 
