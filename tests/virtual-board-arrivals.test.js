@@ -27,7 +27,7 @@ function createStorage(initialEntries = []) {
 function loadInternals(storage) {
   const exportedSource = source.replace(
     /\n\}\)\(\);\s*$/,
-    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    shouldUseStaticFallbackForDirection,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
+    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    getDirectionDestination,\n    shouldUseStaticFallbackForDirection,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
   );
 
   const context = {
@@ -162,6 +162,48 @@ assert.equal(
   internals.isServiceActiveOnDate('WEEKLY', new Date('2026-10-01T10:00:00+03:00')),
   false,
   'compact removals must override an otherwise active weekly service'
+);
+
+// Virtual-board destinations must prefer the OSM-enriched terminal stop name
+// over stored direction labels or GTFS trip_headsign values.
+internals.setTestState({
+  transportData: {
+    stops: [
+      { stop_id: '0020', stop_name: 'OSM крайна спирка' },
+      { stop_id: '0030', stop_name: 'OSM крайна спирка на съкратен курс' }
+    ],
+    calendar: { serviceIdsByDate: {}, servicePatterns: [], exceptions: [] }
+  },
+  trips: []
+});
+const staticDirection = {
+  pattern: ['0010', '0020'],
+  destination: 'Име от GTFS в статичните данни',
+  headsign: 'GTFS headsign'
+};
+assert.equal(
+  internals.getDirectionDestination(staticDirection),
+  'OSM крайна спирка',
+  'the OSM-enriched terminal stop name must beat stored destination/headsign text'
+);
+assert.equal(
+  internals.getDirectionDestination(staticDirection, '0030', 'GTFS fallback'),
+  'OSM крайна спирка на съкратен курс',
+  'a shortened realtime course must use its own terminal stop name'
+);
+assert.equal(
+  internals.getDirectionDestination({ pattern: ['0099'], destination: '', headsign: 'GTFS fallback' }),
+  'GTFS fallback',
+  'GTFS headsign remains a fallback when no usable terminal stop name exists'
+);
+assert.equal(
+  internals.getDirectionDestination(
+    { pattern: ['0020'], destination: 'OSM крайна спирка', headsign: 'Static headsign' },
+    'UNKNOWN-TERMINAL',
+    'GTFS destination for unknown realtime terminal'
+  ),
+  'GTFS destination for unknown realtime terminal',
+  'an unknown realtime terminal should use GTFS fallback rather than the wrong static terminal'
 );
 
 const nowSeconds = Date.now() / 1000;

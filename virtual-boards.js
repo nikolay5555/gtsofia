@@ -1734,6 +1734,48 @@
       : "";
   }
 
+  function getDirectionDestination(
+    direction,
+    terminalStopId = "",
+    ...fallbackNames
+  ) {
+    // Show the actual terminal stop name first. The generated stop data uses
+    // OSM names where available and GTFS names only as a fallback.
+    const explicitTerminalName = getStopById(
+      terminalStopId
+    )?.stop_name;
+
+    const directionTerminalName = getStopById(
+      getDirectionTerminalStopId(direction)
+    )?.stop_name;
+
+    const candidates = [explicitTerminalName];
+
+    // If a realtime course reports a different terminal that is not in the
+    // stop index, prefer its GTFS labels over the full route's static end stop.
+    // Otherwise the static direction is the correct fallback.
+    if (String(terminalStopId ?? "").trim()) {
+      candidates.push(...fallbackNames);
+    }
+
+    candidates.push(
+      directionTerminalName,
+      direction?.destination,
+      direction?.headsign
+    );
+
+    if (!String(terminalStopId ?? "").trim()) {
+      candidates.push(...fallbackNames);
+    }
+
+    for (const candidate of candidates) {
+      const name = String(candidate ?? "").trim();
+      if (name) return name;
+    }
+
+    return "";
+  }
+
   function getDirectionIdentity(
     direction,
     fallback = ""
@@ -2329,25 +2371,10 @@
         continue;
       }
 
-      const terminalStop =
-        getStopById(
-          target.terminalStopId
-        );
-
-      const destination =
-        isPartialCourse
-          ? (
-              terminalStop?.stop_name
-              || target.direction?.destination
-              || target.direction?.headsign
-              || ""
-            )
-          : (
-              target.direction?.destination
-              || target.direction?.headsign
-              || terminalStop?.stop_name
-              || ""
-            );
+      const destination = getDirectionDestination(
+        target.direction,
+        target.terminalStopId
+      );
 
       result.push({
         route_id:
@@ -3105,33 +3132,10 @@
       ...rowsByTerminal.values()
     ]
       .map(row => {
-        const isPartialCourse =
-          !stopIdsMatch(
-            row.terminalStopId,
-            getDirectionTerminalStopId(
-              row.direction
-            )
-          );
-
-        const terminalStop =
-          getStopById(
-            row.terminalStopId
-          );
-
-        const destination =
-          isPartialCourse
-            ? (
-                terminalStop?.stop_name
-                || row.direction?.destination
-                || row.direction?.headsign
-                || ""
-              )
-            : (
-                row.direction?.destination
-                || row.direction?.headsign
-                || terminalStop?.stop_name
-                || ""
-              );
+        const destination = getDirectionDestination(
+          row.direction,
+          row.terminalStopId
+        );
 
         const schedule =
           row.schedule
@@ -3415,12 +3419,12 @@
                 destination_stop_id:
                   route.destination_stop_id
                   || "",
-                destination:
-                  route.destination
-                  || staticTrip?.trip_headsign
-                  || staticDirection?.destination
-                  || staticDirection?.headsign
-                  || "",
+                destination: getDirectionDestination(
+                  staticDirection,
+                  route.destination_stop_id,
+                  route.destination,
+                  staticTrip?.trip_headsign
+                ),
                 times:
                   route.times
                     .map(
@@ -3525,48 +3529,18 @@
             || ""
         );
 
-      const staticTerminalId =
-        getDirectionTerminalStopId(
-          staticDirection
-        );
-
       const realtimeTerminalId =
         String(
           route.destination_stop_id
           || ""
         ).trim();
 
-      const isPartialRealtime =
-        !!realtimeTerminalId
-        && !stopIdsMatch(
-          realtimeTerminalId,
-          staticTerminalId
-        );
-
-      const realtimeTerminal =
-        isPartialRealtime
-          ? getStopById(
-              realtimeTerminalId
-            )
-          : null;
-
-      const destination =
-        isPartialRealtime
-          ? (
-              realtimeTerminal?.stop_name
-              || route.destination
-              || staticTrip?.trip_headsign
-              || staticDirection?.destination
-              || staticDirection?.headsign
-              || ""
-            )
-          : (
-              staticDirection?.destination
-              || staticDirection?.headsign
-              || route.destination
-              || staticTrip?.trip_headsign
-              || ""
-            );
+      const destination = getDirectionDestination(
+        staticDirection,
+        realtimeTerminalId,
+        route.destination,
+        staticTrip?.trip_headsign
+      );
 
       const directionIdentity =
         normalizeDirectionText(
@@ -6056,6 +6030,7 @@
     isServiceActiveOnDate,
     isScheduleRowActiveToday,
     getSofiaDateKey,
+    getDirectionDestination,
     shouldUseStaticFallbackForDirection,
     staticArrivalIsCoveredByRealtime,
     getRealtimeScheduledTimestamp
