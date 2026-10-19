@@ -136,6 +136,34 @@ assert.equal(
   'the same service must appear once its GTFS service date starts'
 );
 
+internals.setTestState({
+  transportData: {
+    calendar: {
+      servicePatterns: [{
+        service_id: 'WEEKLY', monday: '1', tuesday: '1', wednesday: '1',
+        thursday: '1', friday: '1', saturday: '0', sunday: '0',
+        start_date: '20260101', end_date: '20261231'
+      }],
+      serviceIdsByDate: {},
+      exceptions: [],
+      exceptionsByDate: {
+        '20261001': { add: ['EXCEPTION-ONLY'], remove: ['WEEKLY'] }
+      }
+    }
+  },
+  trips: []
+});
+assert.equal(
+  internals.isServiceActiveOnDate('EXCEPTION-ONLY', new Date('2026-10-01T10:00:00+03:00')),
+  true,
+  'compact additions must activate a GTFS service on the exact date'
+);
+assert.equal(
+  internals.isServiceActiveOnDate('WEEKLY', new Date('2026-10-01T10:00:00+03:00')),
+  false,
+  'compact removals must override an otherwise active weekly service'
+);
+
 const nowSeconds = Date.now() / 1000;
 
 const stopId = '1017';

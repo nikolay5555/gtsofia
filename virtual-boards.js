@@ -826,12 +826,13 @@
       return "0 мин.";
     }
 
-    // Show the ETA rounded to the nearest whole minute.
-    // This intentionally allows "0 мин." for arrivals less than 30 seconds
-    // away, which is the mathematically correct nearest-minute value.
+    // Round to the nearest whole minute, but do not show zero while the
+    // vehicle is still expected to arrive. Zero is reserved for arrivals
+    // that have reached/passed the stop above.
     const minutes =
-      Math.round(
-        remainingSeconds / 60
+      Math.max(
+        1,
+        Math.round(remainingSeconds / 60)
       );
 
     return `${minutes} мин.`;
@@ -1148,6 +1149,25 @@
           pattern?.[weekdayField]
           || ""
         ) === "1";
+    }
+
+    // New generated feeds store exceptions grouped by date to avoid repeating
+    // the same JSON object keys hundreds of thousands of times. Keep the flat
+    // list branch below for old fixtures/cached datasets during migration.
+    const compactDateKey = dateKey.replaceAll("-", "");
+    const compactExceptions =
+      calendar?.exceptionsByDate?.[compactDateKey]
+      || calendar?.exceptionsByDate?.[dateKey];
+
+    if (compactExceptions) {
+      if (Array.isArray(compactExceptions.add)
+          && compactExceptions.add.some(value => String(value).trim() === id)) {
+        active = true;
+      }
+      if (Array.isArray(compactExceptions.remove)
+          && compactExceptions.remove.some(value => String(value).trim() === id)) {
+        active = false;
+      }
     }
 
     for (

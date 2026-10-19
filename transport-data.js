@@ -1,47 +1,87 @@
 let gtfsRoutes = [];
 let gtfsStops = [];
+let transportShapesPromise = null;
+
+const TRANSPORT_DATA_FILES = {
+    metadata: 'metadata.json',
+    calendar: 'calendar.json',
+    calendarExceptions: 'calendar-exceptions.json',
+    routes: 'routes.json',
+    stops: 'stops.json',
+    trips: 'trips.json',
+    directions: 'directions.json',
+    schedules: 'schedules.json'
+};
+
+async function fetchTransportJson(filename) {
+    const response = await fetch(`./data/${filename}`);
+    if (!response.ok) {
+        throw new Error(`Неуспешно зареждане на data/${filename}: ${response.status}`);
+    }
+    return response.json();
+}
 
 async function loadTransportData() {
-    const response = await fetch(
-        './data/transport.json'
+    const entries = await Promise.all(
+        Object.entries(TRANSPORT_DATA_FILES).map(async ([key, filename]) => [
+            key,
+            await fetchTransportJson(filename)
+        ])
     );
+    const files = Object.fromEntries(entries);
+    const metadata = files.metadata || {};
+    const calendar = files.calendar || {};
+    const exceptionIndex = files.calendarExceptions?.exceptionsByDate || {};
 
-    if (!response.ok) {
-        throw new Error(
-            `Неуспешно зареждане на transport.json: ${response.status}`
-        );
-    }
+    // Preserve the in-memory shape expected by existing pages while loading
+    // smaller, responsibility-specific JSON files over the network.
+    const data = {
+        ...metadata,
+        routes: files.routes || [],
+        stops: files.stops || [],
+        trips: files.trips || [],
+        directions: files.directions || {},
+        // Shapes are published in data/shapes.json for optional consumers,
+        // but none of the current pages draws geometry. Avoid downloading the
+        // multi-megabyte file during every initial page load.
+        shapes: {},
+        schedules: files.schedules || {},
+        calendar: {
+            ...calendar,
+            exceptionsByDate: exceptionIndex
+        }
+    };
 
-    const data =
-        await response.json();
+    gtfsRoutes = data.routes;
+    gtfsStops = data.stops;
+    window.transportData = data;
 
-    gtfsRoutes =
-        data.routes || [];
-
-    gtfsStops =
-        data.stops || [];
-
-    window.transportData =
-        data;
-
-    console.log(
-        'GTFS routes:',
-        gtfsRoutes.length
-    );
-
-    console.log(
-        'GTFS stops:',
-        gtfsStops.length
-    );
-
-    console.log(
-        'GTFS shapes:',
-        Object.keys(
-            data.shapes || {}
-        ).length
-    );
+    console.log('GTFS routes:', gtfsRoutes.length);
+    console.log('GTFS stops:', gtfsStops.length);
 
     return data;
+}
+
+
+async function loadTransportShapes() {
+    if (window.transportData?.shapes
+        && Object.keys(window.transportData.shapes).length) {
+        return window.transportData.shapes;
+    }
+    if (!transportShapesPromise) {
+        transportShapesPromise = fetchTransportJson('shapes.json')
+            .then(shapes => {
+                if (window.transportData) {
+                    window.transportData.shapes = shapes || {};
+                }
+                return shapes || {};
+            })
+            .catch(error => {
+                transportShapesPromise = null;
+                throw error;
+            });
+    }
+    return transportShapesPromise;
 }
 
 

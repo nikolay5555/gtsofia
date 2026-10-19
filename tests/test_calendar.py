@@ -89,6 +89,21 @@ class CalendarTests(unittest.TestCase):
 
         self.assertEqual(service_types["DAILY"], ["weekday", "weekend"])
 
+    def test_compact_exceptions_exclude_old_dates_and_group_current_future_dates(self):
+        dates = [
+            {"service_id": "OLD", "date": "20260901", "exception_type": "1"},
+            {"service_id": "TODAY", "date": "20260921", "exception_type": "1"},
+            {"service_id": "FUTURE", "date": "20260923", "exception_type": "2"},
+        ]
+        _, result = module.build_calendar_context(
+            [], dates, date(2026, 9, 21), horizon_days=0,
+        )
+        self.assertEqual(result["exceptions"], [])
+        compact = result["exceptionsByDate"]
+        self.assertNotIn("20260901", compact)
+        self.assertEqual(compact["20260921"]["add"], ["TODAY"])
+        self.assertEqual(compact["20260923"]["remove"], ["FUTURE"])
+
     def test_trip_available_in_both_buckets_is_written_to_both_schedules(self):
         directions = {
             "R1": {
