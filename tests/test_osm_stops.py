@@ -9,7 +9,7 @@ generator = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(generator)
 
 from lib.stops import build_stops, transliterate  # noqa: E402
-from lib.direction_output import choose_direction_name  # noqa: E402
+from lib.direction_output import choose_direction_name, build_output_directions  # noqa: E402
 
 
 class OSMStopTests(unittest.TestCase):
@@ -50,6 +50,46 @@ class OSMStopTests(unittest.TestCase):
         direction = {"stops": ["0010", "0020"], "headsigns": ["GTFS DESTINATION"]}
         stops = {"0020": {"stop_name": ""}}
         self.assertEqual(choose_direction_name(direction, stops), "GTFS DESTINATION")
+
+    def test_output_direction_contains_all_original_trip_ids(self):
+        routes = [{"route_id": "R1"}]
+        source_direction = {
+            "code": "DIR-1",
+            "route_id": "R1",
+            "stops": ["0010", "0020"],
+            "headsigns": ["GTFS DESTINATION"],
+            "trip_ids": ["TRIP-A", "TRIP-B"],
+            "shape_ids": ["SHARED-SHAPE"],
+        }
+        logical_trips = [{
+            "route_id": "R1",
+            "direction_code": "DIR-1",
+            "original_trip_ids": ["TRIP-A", "TRIP-B"],
+            "is_deleted": False,
+        }]
+        trips_by_id = {
+            "TRIP-A": {"trip_id": "TRIP-A", "direction_id": "", "service_id": "S1"},
+            "TRIP-B": {"trip_id": "TRIP-B", "direction_id": "", "service_id": "S1"},
+        }
+        stops_by_id = {
+            "0010": {"stop_id": "0010", "stop_name": "Начална спирка"},
+            "0020": {"stop_id": "0020", "stop_name": "OSM крайна спирка"},
+        }
+
+        output = build_output_directions(
+            routes,
+            [source_direction],
+            logical_trips,
+            trips_by_id,
+            {},
+            stops_by_id,
+        )
+
+        self.assertEqual(
+            output["R1"]["D1"]["trip_ids"],
+            ["TRIP-A", "TRIP-B"],
+        )
+        self.assertEqual(output["R1"]["D1"]["destination"], "OSM крайна спирка")
 
 
 if __name__ == "__main__":

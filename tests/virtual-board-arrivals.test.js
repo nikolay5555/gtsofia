@@ -27,7 +27,7 @@ function createStorage(initialEntries = []) {
 function loadInternals(storage) {
   const exportedSource = source.replace(
     /\n\}\)\(\);\s*$/,
-    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    getDirectionDestination,\n    shouldUseStaticFallbackForDirection,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
+    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    getDirectionDestination,\n    getStaticDirectionForTrip,\n    shouldUseStaticFallbackForDirection,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
   );
 
   const context = {
@@ -204,6 +204,46 @@ assert.equal(
   ),
   'GTFS destination for unknown realtime terminal',
   'an unknown realtime terminal should use GTFS fallback rather than the wrong static terminal'
+);
+
+// Exact GTFS trip identity must resolve its OSM-named direction even when
+// multiple directions share a shape and GTFS trip_headsign differs from OSM.
+const staticTripWithGtfsHeadsign = {
+  trip_id: 'TRIP-B',
+  route_id: 'R1',
+  trip_headsign: 'UPPERCASE GTFS HEADSIGN',
+  shape_id: 'SHARED-SHAPE'
+};
+internals.setTestState({
+  transportData: {
+    stops: [
+      { stop_id: '0010', stop_name: 'Начална спирка' },
+      { stop_id: '0020', stop_name: 'OSM крайна спирка' },
+      { stop_id: '0030', stop_name: 'Друга OSM крайна спирка' }
+    ],
+    directions: {
+      R1: {
+        D1: {
+          key: 'D1', trip_id: 'TRIP-A', trip_ids: ['TRIP-A', 'TRIP-B'],
+          shape_id: 'SHARED-SHAPE', pattern: ['0010', '0020'],
+          destination: 'OSM крайна спирка', headsign: 'OSM крайна спирка'
+        },
+        D2: {
+          key: 'D2', trip_id: 'TRIP-C', trip_ids: ['TRIP-C'],
+          shape_id: 'SHARED-SHAPE', pattern: ['0010', '0030'],
+          destination: 'Друга OSM крайна спирка', headsign: 'Друга OSM крайна спирка'
+        }
+      }
+    }
+  },
+  trips: [staticTripWithGtfsHeadsign]
+});
+const resolvedStaticDirection = internals.getStaticDirectionForTrip(staticTripWithGtfsHeadsign);
+assert.equal(resolvedStaticDirection?.key, 'D1');
+assert.equal(
+  internals.getDirectionDestination(resolvedStaticDirection),
+  'OSM крайна спирка',
+  'exact trip mapping must preserve OSM terminal names when GTFS headsign differs'
 );
 
 const nowSeconds = Date.now() / 1000;

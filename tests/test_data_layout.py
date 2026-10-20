@@ -1,4 +1,5 @@
 import json
+from collections import Counter
 from pathlib import Path
 import unittest
 
@@ -29,6 +30,27 @@ class GeneratedDataLayoutTests(unittest.TestCase):
             self.assertIn(route_id, schedules)
             for direction_key in route_directions:
                 self.assertIn(direction_key, schedules[route_id])
+
+    def test_each_gtfs_trip_resolves_to_exactly_one_direction(self):
+        trip_ids = {
+            str(row.get("trip_id") or "").strip()
+            for row in self.files["trips.json"]
+            if str(row.get("trip_id") or "").strip()
+        }
+        mapped_ids = [
+            str(trip_id).strip()
+            for route_directions in self.files["directions.json"].values()
+            for direction in route_directions.values()
+            for trip_id in direction.get("trip_ids", [])
+            if str(trip_id).strip()
+        ]
+        counts = Counter(mapped_ids)
+
+        self.assertEqual(set(counts), trip_ids)
+        self.assertTrue(
+            all(count == 1 for count in counts.values()),
+            "Every GTFS trip must map to exactly one direction so its OSM terminal name can be resolved",
+        )
 
     def test_direction_stop_names_match_the_osm_first_stop_records(self):
         stops = {}
