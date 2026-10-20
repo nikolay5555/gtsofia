@@ -225,6 +225,19 @@ def build_output_directions(
                 "destination":
                     direction_name,
 
+                # Every original GTFS trip must resolve back to its OSM-named
+                # direction at runtime. Without this list, trips whose shape is
+                # shared or whose GTFS headsign differs from the OSM terminal
+                # name fall back to displaying the raw GTFS headsign.
+                "trip_ids": sorted({
+                    normalize(original_trip_id)
+                    for logical_trip in direction_trips
+                    for original_trip_id in logical_trip.get(
+                        "original_trip_ids", []
+                    )
+                    if normalize(original_trip_id)
+                }),
+
                 "trip_id":
                     (
                         representative[
