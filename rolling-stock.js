@@ -97,7 +97,7 @@ const rollingStock = [
   {
     type: "bus",
     manufacturer: "Mercedes",
-    model: "O530 GL Citaro C2 CapaCity L",
+    model: "O530 Citaro CapaCity",
     year: 2017,
     quantity: 11,
     image: "https://s1.busphoto.eu/photo/02/07/24/207248.jpg",
