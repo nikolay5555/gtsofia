@@ -101,7 +101,6 @@ const rollingStock = [
     year: 2017,
     quantity: 11,
     image: "https://s1.busphoto.eu/photo/02/07/24/207248.jpg",
-    lines: [–]
   },
 
   {
