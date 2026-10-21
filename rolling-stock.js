@@ -97,6 +97,16 @@ const rollingStock = [
   {
     type: "bus",
     manufacturer: "Mercedes",
+    model: "O530 GL Citaro C2 CapaCity L",
+    year: 2017,
+    quantity: 11,
+    image: "https://s1.busphoto.eu/photo/02/07/24/207248.jpg",
+    lines: [–]
+  },
+
+  {
+    type: "bus",
+    manufacturer: "Mercedes",
     model: "Conecto LF",
     year: 2008,
     quantity: 34,
@@ -190,7 +200,7 @@ const rollingStock = [
     model: "Lion's City LE",
     year: 2018,
     quantity: 1,
-    image: "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f5/No-Image-Placeholder-landscape.svg/1280px-No-Image-Placeholder-landscape.svg.png?utm_source=commons.wikimedia.org&utm_campaign=index&utm_content=thumbnail",
+    image: "https://s1.busphoto.eu/photo/02/88/89/288890.jpg",
     lines: ["20", "21", "22"]
   },
 
