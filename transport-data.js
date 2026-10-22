@@ -1,49 +1,68 @@
 let gtfsRoutes = [];
 let gtfsStops = [];
+let transportDataPromise = null;
+
+const TRANSPORT_DATA_FILES = Object.freeze([
+    ['metadata', 'metadata.json'],
+    ['lineOverrides', 'line-overrides.json'],
+    ['calendar', 'calendar.json'],
+    ['routes', 'routes.json'],
+    ['stops', 'stops.json'],
+    ['trips', 'trips.json'],
+    ['directions', 'directions.json'],
+    ['shapes', 'shapes.json'],
+    ['schedules', 'schedules.json']
+]);
 
 async function loadTransportData() {
-    const response = await fetch(
-        './data/transport.json'
-    );
-
-    if (!response.ok) {
-        throw new Error(
-            `Неуспешно зареждане на transport.json: ${response.status}`
-        );
+    if (transportDataPromise) {
+        return transportDataPromise;
     }
 
-    const data =
-        await response.json();
+    transportDataPromise = Promise.all(
+        TRANSPORT_DATA_FILES.map(async ([key, filename]) => {
+            const response = await fetch(`./data/${filename}`);
+            if (!response.ok) {
+                throw new Error(
+                    `Неуспешно зареждане на data/${filename}: ${response.status}`
+                );
+            }
+            return [key, await response.json()];
+        })
+    ).then(entries => {
+        const files = Object.fromEntries(entries);
+        const metadata = files.metadata || {};
+        const data = {
+            ...metadata,
+            lineOverrides: files.lineOverrides || [],
+            calendar: files.calendar || {},
+            routes: files.routes || [],
+            stops: files.stops || [],
+            trips: files.trips || [],
+            directions: files.directions || {},
+            shapes: files.shapes || {},
+            schedules: files.schedules || {}
+        };
 
-    gtfsRoutes =
-        data.routes || [];
+        gtfsRoutes = data.routes;
+        gtfsStops = data.stops;
+        window.transportData = data;
 
-    gtfsStops =
-        data.stops || [];
+        console.log('GTFS routes:', gtfsRoutes.length);
+        console.log('GTFS stops:', gtfsStops.length);
+        console.log('GTFS trips:', (data.trips || []).length);
+        console.log('GTFS shapes:', Object.keys(data.shapes || {}).length);
+        console.log('Calendar exception rows:', (data.calendar.exceptions || []).length);
 
-    window.transportData =
-        data;
+        return data;
+    }).catch(error => {
+        // Allow a later call to retry if any JSON file failed to load.
+        transportDataPromise = null;
+        throw error;
+    });
 
-    console.log(
-        'GTFS routes:',
-        gtfsRoutes.length
-    );
-
-    console.log(
-        'GTFS stops:',
-        gtfsStops.length
-    );
-
-    console.log(
-        'GTFS shapes:',
-        Object.keys(
-            data.shapes || {}
-        ).length
-    );
-
-    return data;
+    return transportDataPromise;
 }
-
 
 const TRANSPORT_TIME_ZONE = 'Europe/Sofia';
 function getTransportCalendarDateKey(date = new Date()) {
