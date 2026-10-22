@@ -750,6 +750,16 @@ def merge_logical_trips(
                     i
                 )
 
+def choose_gtfs_headsign(direction):
+    """Return the most common original GTFS headsign for matching trips."""
+    headsigns = [
+        normalize(value)
+        for value in direction.get("headsigns", [])
+        if normalize(value)
+    ]
+    return Counter(headsigns).most_common(1)[0][0] if headsigns else ""
+
+
 def choose_direction_name(
     direction,
     stops_by_id
@@ -769,14 +779,7 @@ def choose_direction_name(
                 return stop_name
 
     # Only use the GTFS trip_headsign if the terminal stop has no usable name.
-    headsigns = [
-        normalize(value)
-        for value in direction.get("headsigns", [])
-        if normalize(value)
-    ]
-    if headsigns:
-        return Counter(headsigns).most_common(1)[0][0]
-    return ""
+    return choose_gtfs_headsign(direction)
 
 def choose_shape_id(
     direction
@@ -966,11 +969,21 @@ def build_output_directions(
                 "code":
                     code,
 
+                # Keep the source GTFS headsign as an internal matching alias
+                # for realtime trip updates; the public destination name is
+                # the merged OSM-first name of the terminal stop.
                 "headsign":
-                    direction_name,
+                    choose_gtfs_headsign(direction) or direction_name,
 
                 "destination":
                     direction_name,
+
+                "gtfs_headsigns":
+                    list(dict.fromkeys(
+                        normalize(value)
+                        for value in direction.get("headsigns", [])
+                        if normalize(value)
+                    )),
 
                 "trip_id":
                     (

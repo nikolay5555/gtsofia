@@ -13,7 +13,7 @@ import sys
 SCRIPTS_DIR = ROOT / "Scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
-from transport_data.directions import choose_direction_name
+from transport_data.directions import choose_direction_name, choose_gtfs_headsign
 from transport_data.stops import build_stops
 from transport_data.calendar import build_calendar_context
 
@@ -38,6 +38,13 @@ class TransportGenerationTests(unittest.TestCase):
             "0002": {"stop_id": "0002", "stop_name": "OSM terminal name"},
         }
         self.assertEqual(choose_direction_name(direction, stops_by_id), "OSM terminal name")
+
+    def test_gtfs_headsign_is_retained_as_a_matching_alias(self):
+        direction = {
+            "stops": ["0001", "0002"],
+            "headsigns": ["GTFS DESTINATION", "GTFS DESTINATION", "OTHER LABEL"],
+        }
+        self.assertEqual(choose_gtfs_headsign(direction), "GTFS DESTINATION")
 
     def test_direction_destination_falls_back_to_gtfs_headsign_if_terminal_name_missing(self):
         direction = {"stops": ["0002"], "headsigns": ["GTFS DESTINATION"]}

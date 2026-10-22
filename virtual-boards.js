@@ -1443,16 +1443,16 @@
           directions
         )
       ) {
-        const directionHeadsign =
-          normalizeDirectionText(
-            direction?.headsign
-            || direction?.destination
-          );
+        const directionHeadsigns = [
+          direction?.headsign,
+          direction?.destination,
+          ...(Array.isArray(direction?.gtfs_headsigns)
+            ? direction.gtfs_headsigns
+            : [])
+        ].map(normalizeDirectionText);
 
         if (
-          directionHeadsign
-          && directionHeadsign
-            === headsign
+          directionHeadsigns.includes(headsign)
         ) {
           return {
             key,
@@ -1714,6 +1714,38 @@
       : "";
   }
 
+  function getDirectionDestinationName(
+    direction,
+    terminalStopId = "",
+    ...fallbackNames
+  ) {
+    // Like the reference project, resolve the displayed destination from the
+    // terminal stop code. stop_name is OSM-first with GTFS as the fallback.
+    const wantedStopId = String(
+      terminalStopId
+      || getDirectionTerminalStopId(direction)
+      || ""
+    ).trim();
+
+    const terminalStop = getStopById(wantedStopId);
+    const candidates = [
+      terminalStop?.stop_name,
+      direction?.destination,
+      direction?.headsign,
+      ...(Array.isArray(direction?.gtfs_headsigns)
+        ? direction.gtfs_headsigns
+        : []),
+      ...fallbackNames
+    ];
+
+    for (const candidate of candidates) {
+      const name = String(candidate ?? "").trim();
+      if (name) return name;
+    }
+
+    return "";
+  }
+
   function getDirectionIdentity(
     direction,
     fallback = ""
@@ -1738,7 +1770,8 @@
     stopId,
     staticTrip,
     destination = "",
-    directionId = ""
+    directionId = "",
+    destinationStopId = ""
   ) {
     const staticDirection =
       getStaticDirectionForTrip(
@@ -1759,6 +1792,26 @@
       return null;
     }
 
+    // Match the GTFS-Realtime terminal stop ID before text labels. This avoids
+    // depending on a headsign string when OSM and GTFS use different names.
+    const wantedTerminalId =
+      String(destinationStopId ?? "").trim();
+
+    if (wantedTerminalId) {
+      const byTerminalStop =
+        directions.find(
+          direction =>
+            stopIdsMatch(
+              getDirectionTerminalStopId(direction),
+              wantedTerminalId
+            )
+        );
+
+      if (byTerminalStop) {
+        return byTerminalStop;
+      }
+    }
+
     const wantedDestination =
       normalizeDirectionText(
         destination
@@ -1767,11 +1820,17 @@
     if (wantedDestination) {
       const byDestination =
         directions.find(
-          direction =>
-            normalizeDirectionText(
-              direction?.headsign
-              || direction?.destination
-            ) === wantedDestination
+          direction => {
+            const candidates = [
+              direction?.destination,
+              direction?.headsign,
+              ...(Array.isArray(direction?.gtfs_headsigns)
+                ? direction.gtfs_headsigns
+                : [])
+            ].map(normalizeDirectionText);
+
+            return candidates.includes(wantedDestination);
+          }
         );
 
       if (byDestination) {
@@ -1811,7 +1870,8 @@
     stopId,
     staticTrip,
     destination = "",
-    directionId = ""
+    directionId = "",
+    destinationStopId = ""
   ) {
     const direction =
       resolveDirectionForRealtimeRoute(
@@ -1819,7 +1879,8 @@
         stopId,
         staticTrip,
         destination,
-        directionId
+        directionId,
+        destinationStopId
       );
 
     if (
@@ -2309,25 +2370,11 @@
         continue;
       }
 
-      const terminalStop =
-        getStopById(
+      const destination =
+        getDirectionDestinationName(
+          target.direction,
           target.terminalStopId
         );
-
-      const destination =
-        isPartialCourse
-          ? (
-              terminalStop?.stop_name
-              || target.direction?.destination
-              || target.direction?.headsign
-              || ""
-            )
-          : (
-              target.direction?.destination
-              || target.direction?.headsign
-              || terminalStop?.stop_name
-              || ""
-            );
 
       result.push({
         route_id:
@@ -3030,9 +3077,11 @@
 
         const destination =
           normalizeDirectionText(
-            direction?.destination
-            || direction?.headsign
-            || terminalStopId
+            getDirectionDestinationName(
+              direction,
+              terminalStopId,
+              terminalStopId
+            )
           );
 
         const consumedKey =
@@ -3085,33 +3134,11 @@
       ...rowsByTerminal.values()
     ]
       .map(row => {
-        const isPartialCourse =
-          !stopIdsMatch(
-            row.terminalStopId,
-            getDirectionTerminalStopId(
-              row.direction
-            )
-          );
-
-        const terminalStop =
-          getStopById(
+        const destination =
+          getDirectionDestinationName(
+            row.direction,
             row.terminalStopId
           );
-
-        const destination =
-          isPartialCourse
-            ? (
-                terminalStop?.stop_name
-                || row.direction?.destination
-                || row.direction?.headsign
-                || ""
-              )
-            : (
-                row.direction?.destination
-                || row.direction?.headsign
-                || terminalStop?.stop_name
-                || ""
-              );
 
         const schedule =
           row.schedule
@@ -3318,6 +3345,8 @@
                     || "",
                   route.direction_id
                     || route.directionId
+                    || "",
+                  route.destination_stop_id
                     || ""
                 )
               ) {
@@ -3332,6 +3361,8 @@
                   || "",
                 route.direction_id
                   || route.directionId
+                  || "",
+                route.destination_stop_id
                   || ""
               );
             })
@@ -3358,6 +3389,8 @@
                     || "",
                   route.direction_id
                     || route.directionId
+                    || "",
+                  route.destination_stop_id
                     || ""
                 );
 
@@ -3396,11 +3429,13 @@
                   route.destination_stop_id
                   || "",
                 destination:
-                  route.destination
-                  || staticTrip?.trip_headsign
-                  || staticDirection?.destination
-                  || staticDirection?.headsign
-                  || "",
+                  getDirectionDestinationName(
+                    staticDirection,
+                    route.destination_stop_id
+                      || getDirectionTerminalStopId(staticDirection),
+                    route.destination,
+                    staticTrip?.trip_headsign
+                  ),
                 times:
                   route.times
                     .map(
@@ -3502,6 +3537,8 @@
             || "",
           route.direction_id
             || route.directionId
+            || "",
+          route.destination_stop_id
             || ""
         );
 
@@ -3516,37 +3553,13 @@
           || ""
         ).trim();
 
-      const isPartialRealtime =
-        !!realtimeTerminalId
-        && !stopIdsMatch(
-          realtimeTerminalId,
-          staticTerminalId
-        );
-
-      const realtimeTerminal =
-        isPartialRealtime
-          ? getStopById(
-              realtimeTerminalId
-            )
-          : null;
-
       const destination =
-        isPartialRealtime
-          ? (
-              realtimeTerminal?.stop_name
-              || route.destination
-              || staticTrip?.trip_headsign
-              || staticDirection?.destination
-              || staticDirection?.headsign
-              || ""
-            )
-          : (
-              staticDirection?.destination
-              || staticDirection?.headsign
-              || route.destination
-              || staticTrip?.trip_headsign
-              || ""
-            );
+        getDirectionDestinationName(
+          staticDirection,
+          realtimeTerminalId || staticTerminalId,
+          route.destination,
+          staticTrip?.trip_headsign
+        );
 
       const directionIdentity =
         normalizeDirectionText(
