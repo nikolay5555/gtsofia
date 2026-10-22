@@ -30,17 +30,33 @@ function encodeTripDescriptor({ tripId, startTime, routeId }) {
   ]);
 }
 
-function encodeStopTimeUpdate({ stopId = null, stopSequence = null, relationship, timestamp = null, scheduledTime = null }) {
+function encodeStopTimeUpdate({
+  stopId = null,
+  stopSequence = null,
+  relationship,
+  timestamp = null,
+  arrivalTimestamp = timestamp,
+  departureTimestamp = null,
+  scheduledTime = null,
+  departureScheduledTime = null
+}) {
   const fields = [];
   if (stopSequence != null) fields.push(field(1, 0, varint(stopSequence)));
   if (stopId != null) fields.push(field(4, 2, text(stopId)));
   fields.push(field(5, 0, varint(relationship)));
 
-  if (timestamp != null || scheduledTime != null) {
+  const encodeEvent = (eventTimestamp, eventScheduledTime) => {
     const eventFields = [];
-    if (timestamp != null) eventFields.push(field(2, 0, varint(timestamp)));
-    if (scheduledTime != null) eventFields.push(field(3, 0, varint(scheduledTime)));
-    fields.push(field(2, 2, Buffer.concat(eventFields)));
+    if (eventTimestamp != null) eventFields.push(field(2, 0, varint(eventTimestamp)));
+    if (eventScheduledTime != null) eventFields.push(field(3, 0, varint(eventScheduledTime)));
+    return Buffer.concat(eventFields);
+  };
+
+  if (arrivalTimestamp != null || scheduledTime != null) {
+    fields.push(field(2, 2, encodeEvent(arrivalTimestamp, scheduledTime)));
+  }
+  if (departureTimestamp != null || departureScheduledTime != null) {
+    fields.push(field(3, 2, encodeEvent(departureTimestamp, departureScheduledTime)));
   }
 
   return Buffer.concat(fields);
@@ -107,7 +123,39 @@ const normalTrip = encodeTripUpdate({
     stopId: '0605',
     relationship: 0,
     timestamp: now + 60,
-    scheduledTime: now + 60
+    departureTimestamp: now + 120,
+    scheduledTime: now + 60,
+    departureScheduledTime: now + 120
+  }]
+});
+
+const dwellingTrip = encodeTripUpdate({
+  trip: {
+    tripId: 'REALTIME-DWELLING',
+    startTime: '08:35:00',
+    routeId: 'TB3'
+  },
+  stopUpdates: [{
+    stopId: '0605',
+    relationship: 0,
+    arrivalTimestamp: now - 70,
+    departureTimestamp: now + 20,
+    scheduledTime: now - 80,
+    departureScheduledTime: now + 10
+  }]
+});
+
+const staleTrip = encodeTripUpdate({
+  trip: {
+    tripId: 'REALTIME-STALE',
+    startTime: '08:30:00',
+    routeId: 'TB4'
+  },
+  stopUpdates: [{
+    stopId: '0605',
+    relationship: 0,
+    arrivalTimestamp: now - 70,
+    scheduledTime: now - 70
   }]
 });
 
@@ -115,7 +163,9 @@ const feed = Buffer.concat([
   field(2, 2, encodeEntity('skipped', skippedTrip)),
   field(2, 2, encodeEntity('skipped-sequence', sequenceSkippedTrip)),
   field(2, 2, encodeEntity('no-data', noDataTrip)),
-  field(2, 2, encodeEntity('normal', normalTrip))
+  field(2, 2, encodeEntity('normal', normalTrip)),
+  field(2, 2, encodeEntity('dwelling', dwellingTrip)),
+  field(2, 2, encodeEntity('stale', staleTrip))
 ]);
 
 global.fetch = async () => ({
@@ -153,12 +203,36 @@ const res = {
   assert.equal(payload.skipped_trips[1].stop_id, '');
   assert.equal(payload.skipped_trips[1].stop_sequence, 24);
 
-  assert.equal(
-    payload.routes.length,
-    1,
+  const normalRoute = payload.routes.find(item => item.trip_id === 'REALTIME-NORMAL');
+  assert.ok(
+    normalRoute,
     'NO_DATA must not become a suppression signal, and the normal realtime arrival must remain visible'
   );
-  assert.equal(payload.routes[0].trip_id, 'REALTIME-NORMAL');
+  assert.equal(
+    normalRoute.times[0].departure_timestamp,
+    now + 120,
+    'the API should expose the departure timestamp when it is present'
+  );
+  assert.equal(
+    normalRoute.times[0].expiry_timestamp,
+    now + 120,
+    'the arrival should expire at departure when a departure event is available'
+  );
+
+  const dwellingRoute = payload.routes.find(item => item.trip_id === 'REALTIME-DWELLING');
+  assert.ok(
+    dwellingRoute,
+    'an arrival timestamp that has passed must remain visible while its departure timestamp is still in the future'
+  );
+  assert.equal(dwellingRoute.times[0].timestamp, now - 70);
+  assert.equal(dwellingRoute.times[0].departure_timestamp, now + 20);
+  assert.equal(dwellingRoute.times[0].expiry_timestamp, now + 20);
+  assert.equal(
+    payload.routes.some(item => item.trip_id === 'REALTIME-STALE'),
+    false,
+    'a stale arrival without departure data must expire after the short dwell window instead of lingering for 60 seconds'
+  );
+
   assert.equal(
     payload.active_trips.find(item => item.trip_id === 'REALTIME-NORMAL').destination_stop_id,
     '0605',

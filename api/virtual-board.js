@@ -8,6 +8,12 @@ const FEED_CACHE_TTL_MS = 15000;
 const MAX_RESULTS_PER_ROUTE = 3;
 const LOOK_AHEAD_SECONDS = 3 * 60 * 60;
 
+// A realtime stop event is considered complete at its predicted departure.
+// If the feed has no departure event, allow a short dwell window after arrival
+// instead of keeping the old arrival visible for a full minute.
+const FALLBACK_DWELL_SECONDS = 15;
+const STOP_EVENT_EXPIRY_GRACE_SECONDS = 5;
+
 const TEXT_DECODER = new TextDecoder();
 
 // Vercel may reuse the same serverless instance between requests.
@@ -991,9 +997,40 @@ function buildBoard(
         continue;
       }
 
+      const arrivalTimestamp =
+        Number.isFinite(
+          stopUpdate?.arrival?.time
+        )
+          ? stopUpdate.arrival.time
+          : null;
+
+      const rawDepartureTimestamp =
+        Number.isFinite(
+          stopUpdate?.departure?.time
+        )
+          ? stopUpdate.departure.time
+          : null;
+
+      // A malformed/out-of-order departure must not expire an arrival before
+      // that arrival has happened. When departure is missing, use a brief
+      // dwell window only for an actual arrival event. A departure-only event
+      // is complete at its own timestamp.
+      const departureTimestamp =
+        rawDepartureTimestamp !== null
+        && rawDepartureTimestamp >= timestamp
+          ? rawDepartureTimestamp
+          : null;
+
+      const expiryTimestamp =
+        departureTimestamp !== null
+          ? departureTimestamp
+          : arrivalTimestamp !== null
+            ? timestamp + FALLBACK_DWELL_SECONDS
+            : timestamp;
+
       if (
-        timestamp
-        < now - 60
+        expiryTimestamp
+        < now - STOP_EVENT_EXPIRY_GRACE_SECONDS
       ) {
         continue;
       }
@@ -1112,6 +1149,10 @@ function buildBoard(
         .times
         .push({
           timestamp,
+          departure_timestamp:
+            departureTimestamp,
+          expiry_timestamp:
+            expiryTimestamp,
           delay:
             Number.isFinite(delay)
               ? delay

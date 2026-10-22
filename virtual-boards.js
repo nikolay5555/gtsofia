@@ -46,6 +46,10 @@
     20 * 60 * 1000;
   const OBSERVED_REALTIME_ARRIVAL_TTL_MS =
     3 * 60 * 60 * 1000;
+  const REALTIME_DWELL_FALLBACK_SECONDS =
+    15;
+  const ARRIVAL_EXPIRY_GRACE_SECONDS =
+    5;
 
   const consumedRealtimeArrivals = new Map();
   const observedRealtimeArrivals = new Map();
@@ -894,6 +898,82 @@
     );
   }
 
+  function getArrivalExpiryTimestamp(
+    arrival
+  ) {
+    const timestamp =
+      Number(arrival?.timestamp);
+
+    if (!Number.isFinite(timestamp)) {
+      return null;
+    }
+
+    const explicitExpiry =
+      arrival?.expiryTimestamp;
+
+    if (
+      explicitExpiry != null
+      && Number.isFinite(Number(explicitExpiry))
+    ) {
+      return Number(explicitExpiry);
+    }
+
+    const departureTimestamp =
+      arrival?.departureTimestamp;
+
+    if (
+      departureTimestamp != null
+      && Number.isFinite(Number(departureTimestamp))
+      && Number(departureTimestamp) >= timestamp
+    ) {
+      return Number(departureTimestamp);
+    }
+
+    // Realtime feeds sometimes provide an arrival without a departure event.
+    // Hold that zero-minute arrival for one short dwell window, not 60 seconds.
+    if (
+      arrival?.source === "realtime"
+      && arrival?.scheduled !== true
+    ) {
+      return timestamp + REALTIME_DWELL_FALLBACK_SECONDS;
+    }
+
+    return timestamp;
+  }
+
+  function isArrivalStillRelevant(
+    arrival,
+    nowSeconds = Date.now() / 1000
+  ) {
+    const expiryTimestamp =
+      getArrivalExpiryTimestamp(arrival);
+
+    return (
+      Number.isFinite(expiryTimestamp)
+      && expiryTimestamp
+        >= nowSeconds - ARRIVAL_EXPIRY_GRACE_SECONDS
+    );
+  }
+
+  function shouldRefreshForArrivalExpiry(
+    arrival,
+    nowSeconds = Date.now() / 1000
+  ) {
+    const expiryTimestamp =
+      getArrivalExpiryTimestamp(arrival);
+
+    // Wait until the same short grace used by the API has elapsed. That way
+    // an immediate refresh is more likely to return the next course instead
+    // of the same just-expired prediction, avoiding a refresh loop.
+    return (
+      Number.isFinite(expiryTimestamp)
+      && expiryTimestamp
+        + ARRIVAL_EXPIRY_GRACE_SECONDS
+        + 1
+        <= nowSeconds
+    );
+  }
+
   function formatArrivalCountdown(
     timestamp,
     nowSeconds = Date.now() / 1000
@@ -982,7 +1062,8 @@
       + `</span>`
       + `<span class="vb-arrival-separator" aria-hidden="true">·</span>`
       + `<span class="vb-arrival-minutes"`
-      + ` data-arrival-timestamp="${timestamp}">`
+      + ` data-arrival-timestamp="${timestamp}"`
+      + ` data-expiry-timestamp="${getArrivalExpiryTimestamp(arrival)}">`
       + `${escapeHtml(countdown)}`
       + `</span>`
       + `</div>`
@@ -3511,6 +3592,20 @@
                           Number(
                             time?.timestamp
                           ),
+                        departureTimestamp:
+                          time?.departure_timestamp != null
+                          && Number.isFinite(
+                            Number(time.departure_timestamp)
+                          )
+                            ? Number(time.departure_timestamp)
+                            : null,
+                        expiryTimestamp:
+                          time?.expiry_timestamp != null
+                          && Number.isFinite(
+                            Number(time.expiry_timestamp)
+                          )
+                            ? Number(time.expiry_timestamp)
+                            : null,
                         delay:
                           Number.isFinite(
                             Number(
@@ -4490,6 +4585,20 @@
                   Number(
                     time?.timestamp
                   ),
+                departureTimestamp:
+                  time?.departureTimestamp != null
+                  && Number.isFinite(
+                    Number(time.departureTimestamp)
+                  )
+                    ? Number(time.departureTimestamp)
+                    : null,
+                expiryTimestamp:
+                  time?.expiryTimestamp != null
+                  && Number.isFinite(
+                    Number(time.expiryTimestamp)
+                  )
+                    ? Number(time.expiryTimestamp)
+                    : null,
                 delay:
                   Number.isFinite(
                     Number(
@@ -4503,6 +4612,11 @@
                 scheduled:
                   Boolean(
                     time?.scheduled
+                  ),
+                source:
+                  String(
+                    time?.source
+                    || (time?.scheduled ? "static" : "realtime")
                   )
               }))
               .filter(
@@ -4513,9 +4627,7 @@
               )
               .filter(
                 time =>
-                  getArrivalMinutes(
-                    time.timestamp
-                  ) >= 0
+                  isArrivalStillRelevant(time)
               )
               .sort(
                 (a, b) =>
@@ -4573,6 +4685,7 @@
                     `<span class="vb-next-time"`
                     + ` tabindex="0"`
                     + ` data-arrival-timestamp="${time.timestamp}"`
+                    + ` data-expiry-timestamp="${getArrivalExpiryTimestamp(time)}"`
                     + ` data-tooltip="${escapeHtml(
                         tooltip
                       )}"`
@@ -5632,12 +5745,28 @@
             element.textContent =
               countdown;
 
+            const expiryTimestamp =
+              Number(
+                element.dataset
+                  .expiryTimestamp
+              );
+
+            const effectiveExpiry =
+              Number.isFinite(expiryTimestamp)
+                ? expiryTimestamp
+                : timestamp;
+
             if (
-              timestamp
-              <= nowSeconds
+              shouldRefreshForArrivalExpiry(
+                {
+                  timestamp,
+                  expiryTimestamp: effectiveExpiry
+                },
+                nowSeconds
+              )
             ) {
               primaryArrivalExpired =
-                timestamp;
+                effectiveExpiry;
             }
 
             return;
@@ -5756,26 +5885,26 @@
         return;
       }
 
-      const displayedPrimaryArrival =
+      const displayedPrimaryExpiry =
         Number(
           boardPanel()
             ?.querySelector(
               ".vb-arrival-minutes"
             )
             ?.dataset
-              .arrivalTimestamp
+              .expiryTimestamp
         );
 
       if (
         !force
         && Number.isFinite(
-          displayedPrimaryArrival
+          displayedPrimaryExpiry
         )
-        && displayedPrimaryArrival
+        && displayedPrimaryExpiry
           <= Date.now() / 1000
       ) {
         lastExpiredPrimaryArrival =
-          displayedPrimaryArrival;
+          displayedPrimaryExpiry;
 
         updateBoardCountdowns();
 
@@ -5844,19 +5973,26 @@
         }
       }
 
-      const primaryArrival =
+      const primaryExpiry =
         boardPanel()
           ?.querySelector(
             ".vb-arrival-minutes"
           )
           ?.dataset
-            .arrivalTimestamp;
+            .expiryTimestamp;
+
+      const parsedPrimaryExpiry =
+        Number(primaryExpiry);
 
       lastExpiredPrimaryArrival =
-        Number.isFinite(
-          Number(primaryArrival)
+        Number.isFinite(parsedPrimaryExpiry)
+        && !shouldRefreshForArrivalExpiry(
+          {
+            timestamp: parsedPrimaryExpiry,
+            expiryTimestamp: parsedPrimaryExpiry
+          }
         )
-          ? Number(primaryArrival)
+          ? parsedPrimaryExpiry
           : null;
     }
   }

@@ -27,7 +27,7 @@ function createStorage(initialEntries = []) {
 function loadInternals(storage) {
   const exportedSource = source.replace(
     /\n\}\)\(\);\s*$/,
-    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    shouldUseStaticFallbackForDirection,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
+    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    getArrivalExpiryTimestamp,\n    isArrivalStillRelevant,\n    shouldRefreshForArrivalExpiry,\n    formatArrivalCountdown,\n    shouldUseStaticFallbackForDirection,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
   );
 
   const context = {
@@ -106,6 +106,77 @@ assert.equal(
   internals.formatArrivalCountdown(countdownNow + 60 * 3 - 1, countdownNow),
   '3 мин.',
   '2 minutes 59 seconds remaining must display three minutes'
+);
+
+const atStopArrival = {
+  timestamp: 1_000,
+  departureTimestamp: 1_100,
+  expiryTimestamp: 1_100,
+  scheduled: false,
+  source: 'realtime'
+};
+assert.equal(
+  internals.formatArrivalCountdown(atStopArrival.timestamp, 1_050),
+  '0 мин.',
+  'a vehicle that has reached the stop should keep a zero-minute arrival display while its departure is still ahead'
+);
+assert.equal(
+  internals.getArrivalExpiryTimestamp(atStopArrival),
+  1_100,
+  'when available, the predicted departure time expires the current arrival'
+);
+assert.equal(
+  internals.isArrivalStillRelevant(atStopArrival, 1_099),
+  true,
+  'the current vehicle must remain visible up to its departure time'
+);
+assert.equal(
+  internals.isArrivalStillRelevant(atStopArrival, 1_104),
+  true,
+  'a brief five-second grace avoids flicker at the predicted departure boundary'
+);
+assert.equal(
+  internals.isArrivalStillRelevant(atStopArrival, 1_106),
+  false,
+  'the vehicle should no longer remain the current arrival after the short departure grace'
+);
+assert.equal(
+  internals.shouldRefreshForArrivalExpiry(atStopArrival, 1_105),
+  false,
+  'an expiry must not trigger a refresh before the API expiry grace elapses'
+);
+assert.equal(
+  internals.shouldRefreshForArrivalExpiry(atStopArrival, 1_106),
+  true,
+  'the board should refresh after departure plus the short grace to fetch the next course'
+);
+
+const realtimeWithoutDeparture = {
+  timestamp: 2_000,
+  departureTimestamp: null,
+  expiryTimestamp: null,
+  scheduled: false,
+  source: 'realtime'
+};
+assert.equal(
+  internals.getArrivalExpiryTimestamp(realtimeWithoutDeparture),
+  2_015,
+  'when departure is missing, realtime arrivals use a short 15-second dwell window'
+);
+assert.equal(
+  internals.isArrivalStillRelevant(realtimeWithoutDeparture, 2_020),
+  true,
+  'arrival-only realtime data stays visible only through the short dwell window and its boundary grace'
+);
+assert.equal(
+  internals.isArrivalStillRelevant(realtimeWithoutDeparture, 2_021),
+  false,
+  'arrival-only realtime data must not linger for a full minute'
+);
+assert.equal(
+  internals.getArrivalExpiryTimestamp({ timestamp: 3_000, scheduled: true, source: 'static' }),
+  3_000,
+  'static timetable fallback expires at its scheduled time, not at the realtime dwell-window end'
 );
 
 // A service that begins on Saturday must not be treated as active on Thursday
