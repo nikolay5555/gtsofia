@@ -298,11 +298,7 @@
           || stop.stop_id
           || ""
         ),
-        stop_name: String(
-          stop.stop_name
-          || stop.name
-          || "Спирка"
-        )
+        stop_name: getDisplayStopName(stop)
       });
     }
 
@@ -1507,6 +1503,22 @@
           wanted
         )
     ) || null;
+  }
+
+  function getDisplayStopName(stop) {
+    const canonical = getStopById(
+      stop?.stop_id
+      || stop?.stop_code
+      || ""
+    );
+
+    return String(
+      canonical?.stop_name
+      || canonical?.name
+      || stop?.stop_name
+      || stop?.name
+      || "Спирка"
+    ).trim();
   }
 
   function getStopDistanceMeters(
@@ -4554,9 +4566,7 @@
             || ""
           )}</div>
           <h2>${escapeHtml(
-            stop.stop_name
-            || stop.name
-            || "Спирка"
+            getDisplayStopName(stop)
           )}</h2>
         </div>
         <div class="virtual-board-header-actions">
@@ -4765,8 +4775,7 @@
                 <span class="virtual-board-favorite-stop-star" aria-hidden="true">★</span>
                 <span class="virtual-board-favorite-stop-info">
                   <strong>${escapeHtml(
-                    stop.stop_name
-                    || "Спирка"
+                    getDisplayStopName(stop)
                   )}</strong>
                   <span>[${escapeHtml(
                     stop.stop_code
@@ -4962,8 +4971,7 @@
             stop => {
               const name =
                 normalized(
-                  stop.name
-                  || stop.stop_name
+                  getDisplayStopName(stop)
                 );
 
               const code =
@@ -5017,9 +5025,7 @@
                     stop.stop_id
                   )}">
                     <strong>${escapeHtml(
-                      stop.name
-                      || stop.stop_name
-                      || "Спирка"
+                      getDisplayStopName(stop)
                     )}</strong>
                     <span>${escapeHtml(
                       stop.stop_code
@@ -5051,9 +5057,7 @@
 
                   if (stop) {
                     input.value =
-                      stop.name
-                      || stop.stop_name
-                      || "";
+                      getDisplayStopName(stop);
 
                     results.hidden =
                       true;
@@ -5305,9 +5309,7 @@
 
       const stopTooltip =
         escapeHtml(
-          stop.name
-          || stop.stop_name
-          || "Спирка"
+          getDisplayStopName(stop)
         );
 
       marker.bindTooltip(

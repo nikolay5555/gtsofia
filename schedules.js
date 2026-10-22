@@ -24,6 +24,66 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+// `headsign` is intentionally retained as the original GTFS value for
+// realtime-trip matching. Public-facing labels must prefer the merged
+// OSM-first destination and use the GTFS headsign only as a fallback.
+function getDirectionDisplayName(direction) {
+  const directionStops = Array.isArray(direction?.stops)
+    ? direction.stops
+    : [];
+  const pattern = Array.isArray(direction?.pattern)
+    ? direction.pattern
+    : [];
+  const terminal = directionStops[directionStops.length - 1];
+  const terminalId = String(
+    pattern[pattern.length - 1]
+    || terminal?.stop_id
+    || terminal?.stop_code
+    || ""
+  ).trim();
+
+  const canonicalTerminal = terminalId
+    ? (window.transportData?.stops || []).find(stop =>
+        String(stop?.stop_id || "").trim() === terminalId
+        || String(stop?.stop_code || "").trim() === terminalId
+      )
+    : null;
+
+  return String(
+    canonicalTerminal?.stop_name
+    || canonicalTerminal?.name
+    || direction?.destination
+    || direction?.headsign
+    || ""
+  ).trim();
+}
+
+// Resolve stop labels through the canonical stop list first. The generator
+// merges OSM names into transportData.stops and keeps GTFS names as fallback;
+// this prevents an embedded/older direction label from overriding that name.
+function getScheduleStopName(stop) {
+  const stopId = String(
+    stop?.stop_id
+    || stop?.stop_code
+    || ""
+  ).trim();
+
+  const canonicalStop = stopId
+    ? (window.transportData?.stops || []).find(item =>
+        String(item?.stop_id || "").trim() === stopId
+        || String(item?.stop_code || "").trim() === stopId
+      )
+    : null;
+
+  return String(
+    canonicalStop?.stop_name
+    || canonicalStop?.name
+    || stop?.name
+    || stop?.stop_name
+    || ""
+  ).trim();
+}
+
 function parseTime(value) {
   const match = String(value || "").match(
     /^(\d+):(\d{2})(?::(\d{2}))?$/
@@ -314,7 +374,7 @@ function renderDirections() {
         .filter(
           direction =>
             direction &&
-            direction.headsign
+            getDirectionDisplayName(direction)
         )
         .map(
           direction => `
@@ -322,7 +382,7 @@ function renderDirections() {
               direction.key
             )}">
               ${escapeHtml(
-                direction.headsign
+                getDirectionDisplayName(direction)
               )}
             </option>`
         )
@@ -351,7 +411,7 @@ function renderDirections() {
   ].filter(
     ([, direction]) =>
       direction &&
-      direction.headsign
+      getDirectionDisplayName(direction)
   );
 
   select.innerHTML =
@@ -360,7 +420,7 @@ function renderDirections() {
         ([key, direction]) => `
           <option value="${key}">
             ${escapeHtml(
-              direction.headsign
+              getDirectionDisplayName(direction)
             )}
           </option>`
       )
@@ -403,7 +463,7 @@ function renderStops() {
       .map(
         (stop, index) => `
           <option value="${index}">
-            ${escapeHtml(stop.name)}
+            ${escapeHtml(getScheduleStopName(stop))}
           </option>`
       )
       .join("");
@@ -654,14 +714,14 @@ function renderSummary(courses) {
 
         <strong class="schedule-summary-destination">
           ${escapeHtml(
-            direction.headsign
+            getDirectionDisplayName(direction)
           )}
         </strong>
       </div>
 
       <span class="schedule-summary-stop">
         От спирка: ${escapeHtml(
-          stop?.name || ""
+          getScheduleStopName(stop)
         )}
       </span>
     </div>
@@ -977,7 +1037,7 @@ function showCourse(course) {
               <div class="course-stop-name">
                 <span class="course-stop-name-text">
                   ${escapeHtml(
-                    stop.name
+                    getScheduleStopName(stop)
                   )}
                 </span>
                 <span class="course-stop-code">

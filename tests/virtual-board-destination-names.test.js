@@ -7,7 +7,7 @@ const sourcePath = path.join(__dirname, '..', 'virtual-boards.js');
 const source = fs.readFileSync(sourcePath, 'utf8');
 const exportedSource = source.replace(
   /\n\}\)\(\);\s*$/,
-  `\n  globalThis.__testInternals = {\n    getDirectionDestinationName,\n    resolveDirectionForRealtimeRoute,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
+  `\n  globalThis.__testInternals = {\n    getDirectionDestinationName,\n    getDisplayStopName,\n    resolveDirectionForRealtimeRoute,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
 );
 const context = {
   console,
@@ -46,6 +46,11 @@ assert.equal(
   internals.getDirectionDestinationName({ destination: 'GTFS destination', headsign: 'GTFS destination', pattern: ['0001', '0099'] }),
   'OSM крайна спирка',
   'displayed destination should come from the OSM-first terminal stop record'
+);
+assert.equal(
+  internals.getDisplayStopName({ stop_id: '0099', stop_name: 'stale GTFS name' }),
+  'OSM крайна спирка',
+  'virtual board stop labels should resolve from the canonical OSM-first stop record'
 );
 assert.equal(
   internals.resolveDirectionForRealtimeRoute('R1', '0001', null, 'GTFS string not matching the OSM name', '', '0099')?.key,
