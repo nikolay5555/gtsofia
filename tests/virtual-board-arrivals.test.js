@@ -125,6 +125,18 @@ assert.equal(
   1_100,
   'when available, the predicted departure time expires the current arrival'
 );
+const nearImmediateDeparture = {
+  timestamp: 4_000,
+  departureTimestamp: 4_003,
+  expiryTimestamp: 4_003,
+  scheduled: false,
+  source: 'realtime'
+};
+assert.equal(
+  internals.getArrivalExpiryTimestamp(nearImmediateDeparture),
+  4_015,
+  'a near-immediate departure must not shorten the visible zero-minute state below 15 seconds after arrival'
+);
 assert.equal(
   internals.isArrivalStillRelevant(atStopArrival, 1_099),
   true,

@@ -8,9 +8,8 @@ const FEED_CACHE_TTL_MS = 15000;
 const MAX_RESULTS_PER_ROUTE = 3;
 const LOOK_AHEAD_SECONDS = 3 * 60 * 60;
 
-// A realtime stop event is considered complete at its predicted departure.
-// If the feed has no departure event, allow a short dwell window after arrival
-// instead of keeping the old arrival visible for a full minute.
+// Keep an arrived realtime vehicle visible for at least 15 seconds so the
+// "0 мин." state is noticeable. A later predicted departure extends that hold.
 const FALLBACK_DWELL_SECONDS = 15;
 const STOP_EVENT_EXPIRY_GRACE_SECONDS = 5;
 
@@ -1012,20 +1011,31 @@ function buildBoard(
           : null;
 
       // A malformed/out-of-order departure must not expire an arrival before
-      // that arrival has happened. When departure is missing, use a brief
-      // dwell window only for an actual arrival event. A departure-only event
-      // is complete at its own timestamp.
+      // that arrival has happened. Keep an arrived vehicle visible for at least
+      // FALLBACK_DWELL_SECONDS so "0 мин." is perceptible, even when the feed's
+      // departure timestamp equals (or nearly equals) the arrival timestamp.
+      // If departure is later, use it; a departure-only event expires normally.
       const departureTimestamp =
         rawDepartureTimestamp !== null
         && rawDepartureTimestamp >= timestamp
           ? rawDepartureTimestamp
           : null;
 
+      const minimumArrivalExpiry =
+        arrivalTimestamp !== null
+          ? timestamp + FALLBACK_DWELL_SECONDS
+          : null;
+
       const expiryTimestamp =
-        departureTimestamp !== null
-          ? departureTimestamp
-          : arrivalTimestamp !== null
-            ? timestamp + FALLBACK_DWELL_SECONDS
+        arrivalTimestamp !== null
+          ? Math.max(
+              minimumArrivalExpiry,
+              departureTimestamp !== null
+                ? departureTimestamp
+                : timestamp
+            )
+          : departureTimestamp !== null
+            ? departureTimestamp
             : timestamp;
 
       if (

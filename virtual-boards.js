@@ -934,6 +934,18 @@
       return null;
     }
 
+    const isRealtimeArrival =
+      arrival?.source === "realtime"
+      && arrival?.scheduled !== true;
+
+    // Preserve a noticeable, short "0 мин." state after arrival even if the
+    // feed reports an almost-immediate departure. A genuinely later departure
+    // still controls the end of the dwell period.
+    const minimumArrivalExpiry =
+      isRealtimeArrival
+        ? timestamp + REALTIME_DWELL_FALLBACK_SECONDS
+        : timestamp;
+
     const explicitExpiry =
       arrival?.expiryTimestamp;
 
@@ -941,7 +953,12 @@
       explicitExpiry != null
       && Number.isFinite(Number(explicitExpiry))
     ) {
-      return Number(explicitExpiry);
+      return isRealtimeArrival
+        ? Math.max(
+            Number(explicitExpiry),
+            minimumArrivalExpiry
+          )
+        : Number(explicitExpiry);
     }
 
     const departureTimestamp =
@@ -952,16 +969,17 @@
       && Number.isFinite(Number(departureTimestamp))
       && Number(departureTimestamp) >= timestamp
     ) {
-      return Number(departureTimestamp);
+      return isRealtimeArrival
+        ? Math.max(
+            Number(departureTimestamp),
+            minimumArrivalExpiry
+          )
+        : Number(departureTimestamp);
     }
 
     // Realtime feeds sometimes provide an arrival without a departure event.
-    // Hold that zero-minute arrival for one short dwell window, not 60 seconds.
-    if (
-      arrival?.source === "realtime"
-      && arrival?.scheduled !== true
-    ) {
-      return timestamp + REALTIME_DWELL_FALLBACK_SECONDS;
+    if (isRealtimeArrival) {
+      return minimumArrivalExpiry;
     }
 
     return timestamp;

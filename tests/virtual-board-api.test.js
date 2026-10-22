@@ -145,6 +145,22 @@ const dwellingTrip = encodeTripUpdate({
   }]
 });
 
+const shortDwellTrip = encodeTripUpdate({
+  trip: {
+    tripId: 'REALTIME-SHORT-DWELL',
+    startTime: '08:45:00',
+    routeId: 'TB5'
+  },
+  stopUpdates: [{
+    stopId: '0605',
+    relationship: 0,
+    arrivalTimestamp: now - 1,
+    departureTimestamp: now + 3,
+    scheduledTime: now - 10,
+    departureScheduledTime: now - 6
+  }]
+});
+
 const staleTrip = encodeTripUpdate({
   trip: {
     tripId: 'REALTIME-STALE',
@@ -165,6 +181,7 @@ const feed = Buffer.concat([
   field(2, 2, encodeEntity('no-data', noDataTrip)),
   field(2, 2, encodeEntity('normal', normalTrip)),
   field(2, 2, encodeEntity('dwelling', dwellingTrip)),
+  field(2, 2, encodeEntity('short-dwell', shortDwellTrip)),
   field(2, 2, encodeEntity('stale', staleTrip))
 ]);
 
@@ -227,6 +244,17 @@ const res = {
   assert.equal(dwellingRoute.times[0].timestamp, now - 70);
   assert.equal(dwellingRoute.times[0].departure_timestamp, now + 20);
   assert.equal(dwellingRoute.times[0].expiry_timestamp, now + 20);
+
+  const shortDwellRoute = payload.routes.find(item => item.trip_id === 'REALTIME-SHORT-DWELL');
+  assert.ok(shortDwellRoute, 'a newly arrived vehicle must remain visible during the short zero-minute hold');
+  assert.equal(shortDwellRoute.times[0].timestamp, now - 1);
+  assert.equal(shortDwellRoute.times[0].departure_timestamp, now + 3);
+  assert.equal(
+    shortDwellRoute.times[0].expiry_timestamp,
+    now + 14,
+    'even when departure is reported only a few seconds after arrival, keep the zero-minute state for at least 15 seconds after arrival'
+  );
+
   assert.equal(
     payload.routes.some(item => item.trip_id === 'REALTIME-STALE'),
     false,
