@@ -136,6 +136,30 @@ assert.equal(
   'the same service must appear once its GTFS service date starts'
 );
 
+// Once a split calendar declares its exact coverage, old/future exceptions are
+// not scanned as a fallback when the date is outside that coverage.
+internals.setTestState({
+  transportData: {
+    calendar: {
+      coverageStartDate: '2026-10-22',
+      coverageEndDate: '2026-11-06',
+      serviceIdsByDate: {
+        '2026-10-22': ['IN-WINDOW']
+      },
+      servicePatterns: [],
+      exceptions: [
+        { service_id: 'OLD-SERVICE', date: '20261001', exception_type: '1' }
+      ]
+    }
+  },
+  trips: []
+});
+assert.equal(
+  internals.isServiceActiveOnDate('OLD-SERVICE', new Date('2026-10-01T10:00:00+03:00')),
+  false,
+  'old calendar exceptions must not reactivate services outside split-data coverage'
+);
+
 const nowSeconds = Date.now() / 1000;
 
 const stopId = '1017';
@@ -177,6 +201,65 @@ assert.equal(
   internals.isConsumedRealtimeScheduledArrival(stopId, routeId, destination, nextScheduledTime),
   false,
   'the next scheduled course must remain eligible'
+);
+
+// Regression: the vehicle's prediction is still in the future at one poll,
+// then its realtime record vanishes after it passes before the next poll.
+// The observed ETA must still consume the old scheduled course.
+const pendingStorage = createStorage();
+const pendingInternals = loadInternals(pendingStorage);
+const pendingNow = Date.now() / 1000;
+const pendingScheduled = Math.floor((pendingNow + 300) / 60) * 60;
+const pendingTripId = 'GTFS-TRIP-EARLY';
+pendingInternals.rememberConsumedRealtimeArrivals(
+  { stop_id: stopId },
+  [{
+    route_id: routeId,
+    trip_id: pendingTripId,
+    destination: 'Краен пункт по реално време',
+    times: [{
+      timestamp: pendingNow + 20,
+      scheduled_time: pendingScheduled,
+      trip_id: pendingTripId
+    }]
+  }],
+  pendingNow
+);
+assert.equal(
+  pendingInternals.isConsumedRealtimeScheduledArrival(
+    stopId,
+    routeId,
+    'Разписание за по-дълъг маршрут',
+    pendingScheduled,
+    pendingTripId,
+    pendingNow
+  ),
+  false,
+  'a future prediction must not consume the static course early'
+);
+assert.equal(
+  pendingInternals.isConsumedRealtimeScheduledArrival(
+    stopId,
+    routeId,
+    'Разписание за по-дълъг маршрут',
+    pendingScheduled,
+    pendingTripId,
+    pendingNow + 25
+  ),
+  true,
+  'the passed course must stay consumed even when the next realtime response omitted it'
+);
+assert.equal(
+  pendingInternals.isConsumedRealtimeScheduledArrival(
+    stopId,
+    routeId,
+    destination,
+    pendingScheduled + 15 * 60,
+    'GTFS-TRIP-NEXT',
+    pendingNow + 25
+  ),
+  false,
+  'the next realtime/scheduled course must remain eligible'
 );
 
 // The consumed state survives a second script load in the same browser tab.

@@ -40,11 +40,17 @@
   // fallback does not immediately resurrect the same course.
   const CONSUMED_REALTIME_ARRIVALS_KEY =
     "gtsofia.virtualBoard.consumedRealtimeArrivals.v1";
+  const OBSERVED_REALTIME_ARRIVALS_KEY =
+    "gtsofia.virtualBoard.observedRealtimeArrivals.v1";
   const CONSUMED_REALTIME_ARRIVAL_TTL_MS =
     20 * 60 * 1000;
+  const OBSERVED_REALTIME_ARRIVAL_TTL_MS =
+    3 * 60 * 60 * 1000;
 
   const consumedRealtimeArrivals = new Map();
+  const observedRealtimeArrivals = new Map();
   let consumedRealtimeArrivalsLoaded = false;
+  let observedRealtimeArrivalsLoaded = false;
 
   const boardPanel = () =>
     document.getElementById("virtualBoardBody");
@@ -60,31 +66,15 @@
       const raw = sessionStorage.getItem(
         CONSUMED_REALTIME_ARRIVALS_KEY
       );
-
       const stored = JSON.parse(raw || "[]");
-
       if (!Array.isArray(stored)) return;
 
       const now = Date.now();
-
       for (const item of stored) {
-        const key = String(
-          item?.key || ""
-        ).trim();
-
-        const expiresAt = Number(
-          item?.expiresAt
-        );
-
-        if (
-          key
-          && Number.isFinite(expiresAt)
-          && expiresAt > now
-        ) {
-          consumedRealtimeArrivals.set(
-            key,
-            expiresAt
-          );
+        const key = String(item?.key || "").trim();
+        const expiresAt = Number(item?.expiresAt);
+        if (key && Number.isFinite(expiresAt) && expiresAt > now) {
+          consumedRealtimeArrivals.set(key, expiresAt);
         }
       }
     } catch {
@@ -93,27 +83,36 @@
     }
   }
 
-  function pruneConsumedRealtimeArrivals() {
-    loadConsumedRealtimeArrivals();
+  function loadObservedRealtimeArrivals() {
+    if (observedRealtimeArrivalsLoaded) return;
+    observedRealtimeArrivalsLoaded = true;
 
-    const now = Date.now();
-    let changed = false;
+    try {
+      const raw = sessionStorage.getItem(
+        OBSERVED_REALTIME_ARRIVALS_KEY
+      );
+      const stored = JSON.parse(raw || "[]");
+      if (!Array.isArray(stored)) return;
 
-    for (
-      const [key, expiresAt]
-      of consumedRealtimeArrivals
-    ) {
-      if (
-        !Number.isFinite(expiresAt)
-        || expiresAt <= now
-      ) {
-        consumedRealtimeArrivals.delete(key);
-        changed = true;
+      const now = Date.now();
+      for (const item of stored) {
+        const key = String(item?.key || "").trim();
+        const arrivalTimestamp = Number(item?.arrivalTimestamp);
+        const expiresAt = Number(item?.expiresAt);
+        if (
+          key
+          && Number.isFinite(arrivalTimestamp)
+          && Number.isFinite(expiresAt)
+          && expiresAt > now
+        ) {
+          observedRealtimeArrivals.set(key, {
+            arrivalTimestamp,
+            expiresAt
+          });
+        }
       }
-    }
-
-    if (changed) {
-      persistConsumedRealtimeArrivals();
+    } catch {
+      // Keep the in-memory copy when sessionStorage is blocked.
     }
   }
 
@@ -123,9 +122,24 @@
         CONSUMED_REALTIME_ARRIVALS_KEY,
         JSON.stringify(
           [...consumedRealtimeArrivals.entries()]
-            .map(([key, expiresAt]) => ({
+            .map(([key, expiresAt]) => ({ key, expiresAt }))
+        )
+      );
+    } catch {
+      // Keep working with the in-memory cache when sessionStorage is blocked.
+    }
+  }
+
+  function persistObservedRealtimeArrivals() {
+    try {
+      sessionStorage.setItem(
+        OBSERVED_REALTIME_ARRIVALS_KEY,
+        JSON.stringify(
+          [...observedRealtimeArrivals.entries()]
+            .map(([key, value]) => ({
               key,
-              expiresAt
+              arrivalTimestamp: value.arrivalTimestamp,
+              expiresAt: value.expiresAt
             }))
         )
       );
@@ -134,18 +148,58 @@
     }
   }
 
+  function pruneConsumedRealtimeArrivals(nowMilliseconds = Date.now()) {
+    loadConsumedRealtimeArrivals();
+    loadObservedRealtimeArrivals();
+
+    const nowSeconds = nowMilliseconds / 1000;
+    let consumedChanged = false;
+    let observedChanged = false;
+
+    for (const [key, expiresAt] of consumedRealtimeArrivals) {
+      if (!Number.isFinite(expiresAt) || expiresAt <= nowMilliseconds) {
+        consumedRealtimeArrivals.delete(key);
+        consumedChanged = true;
+      }
+    }
+
+    // A realtime course can disappear between two 15-second refreshes. Keep
+    // its last observed ETA; once that ETA passes, mark its matching schedule
+    // row as consumed even if the trip vanished from the latest response.
+    for (const [key, value] of observedRealtimeArrivals) {
+      if (
+        !Number.isFinite(value?.expiresAt)
+        || value.expiresAt <= nowMilliseconds
+        || !Number.isFinite(value?.arrivalTimestamp)
+      ) {
+        observedRealtimeArrivals.delete(key);
+        observedChanged = true;
+        continue;
+      }
+
+      if (value.arrivalTimestamp <= nowSeconds) {
+        consumedRealtimeArrivals.set(
+          key,
+          nowMilliseconds + CONSUMED_REALTIME_ARRIVAL_TTL_MS
+        );
+        observedRealtimeArrivals.delete(key);
+        consumedChanged = true;
+        observedChanged = true;
+      }
+    }
+
+    if (consumedChanged) persistConsumedRealtimeArrivals();
+    if (observedChanged) persistObservedRealtimeArrivals();
+  }
+
   function getConsumedRealtimeArrivalKey(
     stopId,
     routeId,
     destination,
     scheduledTimestamp
   ) {
-    const timestamp =
-      Number(scheduledTimestamp);
-
-    if (!Number.isFinite(timestamp)) {
-      return "";
-    }
+    const timestamp = Number(scheduledTimestamp);
+    if (!Number.isFinite(timestamp)) return "";
 
     return [
       normalizeStopKey(stopId),
@@ -155,102 +209,132 @@
     ].join("|");
   }
 
+  function getConsumedRealtimeArrivalTripKey(
+    stopId,
+    routeId,
+    tripId
+  ) {
+    const normalizedTripId = String(tripId || "").trim();
+    if (!normalizedTripId) return "";
+
+    return [
+      normalizeStopKey(stopId),
+      String(routeId || "").trim(),
+      `trip:${normalizedTripId}`
+    ].join("|");
+  }
+
+  function getRealtimeArrivalKeys(
+    stopId,
+    routeId,
+    destination,
+    scheduledTimestamp,
+    tripId = ""
+  ) {
+    const keys = [
+      getConsumedRealtimeArrivalTripKey(
+        stopId,
+        routeId,
+        tripId
+      ),
+      getConsumedRealtimeArrivalKey(
+        stopId,
+        routeId,
+        destination,
+        scheduledTimestamp
+      )
+    ].filter(Boolean);
+
+    return [...new Set(keys)];
+  }
+
   function rememberConsumedRealtimeArrivals(
     stop,
-    realtimeRoutes
+    realtimeRoutes,
+    nowSeconds = Date.now() / 1000
   ) {
-    pruneConsumedRealtimeArrivals();
-
-    const nowSeconds =
-      Date.now() / 1000;
+    const nowMilliseconds = nowSeconds * 1000;
+    pruneConsumedRealtimeArrivals(nowMilliseconds);
 
     const stopId = String(
-      stop?.stop_id
-      || stop?.stop_code
-      || ""
+      stop?.stop_id || stop?.stop_code || ""
     ).trim();
-
     if (!stopId) return;
 
-    let changed = false;
+    let consumedChanged = false;
+    let observedChanged = false;
 
     for (const route of realtimeRoutes || []) {
-      const routeId = String(
-        route?.route_id || ""
-      ).trim();
-
+      const routeId = String(route?.route_id || "").trim();
       if (!routeId) continue;
 
-      const destination = String(
-        route?.destination || ""
-      ).trim();
+      const destination = String(route?.destination || "").trim();
 
       for (const time of route?.times || []) {
-        const actualTimestamp =
-          Number(time?.timestamp);
+        const actualTimestamp = Number(time?.timestamp);
+        const scheduledTimestamp = getRealtimeScheduledTimestamp(time);
+        const tripId = String(
+          time?.trip_id || route?.trip_id || ""
+        ).trim();
 
-        const scheduledTimestamp =
-          Number(time?.scheduled_time);
+        if (!Number.isFinite(actualTimestamp)) continue;
 
-        if (
-          !Number.isFinite(actualTimestamp)
-          || !Number.isFinite(scheduledTimestamp)
-        ) {
-          continue;
-        }
-
-        if (actualTimestamp > nowSeconds) {
-          continue;
-        }
-
-        const key =
-          getConsumedRealtimeArrivalKey(
-            stopId,
-            routeId,
-            destination,
-            scheduledTimestamp
-          );
-
-        if (
-          !key
-          || consumedRealtimeArrivals.has(key)
-        ) {
-          continue;
-        }
-
-        consumedRealtimeArrivals.set(
-          key,
-          Date.now()
-          + CONSUMED_REALTIME_ARRIVAL_TTL_MS
+        const keys = getRealtimeArrivalKeys(
+          stopId,
+          routeId,
+          destination,
+          scheduledTimestamp,
+          tripId
         );
+        if (!keys.length) continue;
 
-        changed = true;
+        for (const key of keys) {
+          if (actualTimestamp <= nowSeconds) {
+            consumedRealtimeArrivals.set(
+              key,
+              nowMilliseconds + CONSUMED_REALTIME_ARRIVAL_TTL_MS
+            );
+            observedRealtimeArrivals.delete(key);
+            consumedChanged = true;
+            observedChanged = true;
+          } else {
+            // Refresh the last-known ETA when realtime is still available.
+            // If the next response omits this course, this record survives.
+            observedRealtimeArrivals.set(key, {
+              arrivalTimestamp: actualTimestamp,
+              expiresAt: nowMilliseconds + OBSERVED_REALTIME_ARRIVAL_TTL_MS
+            });
+            observedChanged = true;
+          }
+        }
       }
     }
 
-    if (changed) {
-      persistConsumedRealtimeArrivals();
-    }
+    // Promote any entries that reached their last-known ETA during this call.
+    pruneConsumedRealtimeArrivals(nowMilliseconds);
+    if (consumedChanged) persistConsumedRealtimeArrivals();
+    if (observedChanged) persistObservedRealtimeArrivals();
   }
 
   function isConsumedRealtimeScheduledArrival(
     stopId,
     routeId,
     destination,
-    scheduledTimestamp
+    scheduledTimestamp,
+    tripId = "",
+    nowSeconds = Date.now() / 1000
   ) {
-    pruneConsumedRealtimeArrivals();
+    pruneConsumedRealtimeArrivals(nowSeconds * 1000);
 
-    const key =
-      getConsumedRealtimeArrivalKey(
-        stopId,
-        routeId,
-        destination,
-        scheduledTimestamp
-      );
+    const keys = getRealtimeArrivalKeys(
+      stopId,
+      routeId,
+      destination,
+      scheduledTimestamp,
+      tripId
+    );
 
-    return !!key
-      && consumedRealtimeArrivals.has(key);
+    return keys.some(key => consumedRealtimeArrivals.has(key));
   }
 
   function getFavoriteStops() {
@@ -830,8 +914,9 @@
     // This intentionally allows "0 мин." for arrivals less than 30 seconds
     // away, which is the mathematically correct nearest-minute value.
     const minutes =
-      Math.round(
-        remainingSeconds / 60
+      Math.max(
+        1,
+        Math.round(remainingSeconds / 60)
       );
 
     return `${minutes} мин.`;
@@ -1106,6 +1191,19 @@
             === id
         )
       );
+    }
+
+    // Split datasets contain an exact per-date service map for their declared
+    // coverage. Outside that range their schedules are stale/unknown; do not
+    // resurrect service IDs by scanning historical exception data.
+    const coverageStart = String(
+      calendar?.coverageStartDate || ""
+    ).trim();
+    const coverageEnd = String(
+      calendar?.coverageEndDate || ""
+    ).trim();
+    if (coverageStart && coverageEnd) {
+      return false;
     }
 
     let active = false;
@@ -3035,18 +3133,18 @@
             || terminalStopId
           );
 
-        const consumedKey =
-          getConsumedRealtimeArrivalKey(
+        const consumedKeys =
+          getRealtimeArrivalKeys(
             selectedStop,
             routeId,
             destination,
-            timestamp
+            timestamp,
+            schedule?.original_trip_id
           );
 
         if (
-          consumedKey
-          && consumedRealtimeArrivals.has(
-            consumedKey
+          consumedKeys.some(
+            key => consumedRealtimeArrivals.has(key)
           )
         ) {
           continue;
@@ -3405,6 +3503,10 @@
                   route.times
                     .map(
                       time => ({
+                        trip_id:
+                          String(
+                            route?.trip_id || ""
+                          ).trim(),
                         timestamp:
                           Number(
                             time?.timestamp

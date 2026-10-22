@@ -1,47 +1,97 @@
 let gtfsRoutes = [];
 let gtfsStops = [];
+let transportDataLoadPromise = null;
 
-async function loadTransportData() {
-    const response = await fetch(
-        './data/transport.json'
-    );
+async function fetchTransportPart(name, url) {
+    const response = await fetch(url);
 
     if (!response.ok) {
         throw new Error(
-            `Неуспешно зареждане на transport.json: ${response.status}`
+            `Неуспешно зареждане на ${url}: ${response.status}`
         );
     }
 
-    const data =
-        await response.json();
+    try {
+        return await response.json();
+    } catch (error) {
+        throw new Error(
+            `Невалиден JSON файл за ${name} (${url}): ${error.message}`
+        );
+    }
+}
 
-    gtfsRoutes =
-        data.routes || [];
+async function loadTransportData() {
+    // A page can request route metadata and schedules through separate startup
+    // paths. Share one in-flight load so the split JSON files are fetched once.
+    if (transportDataLoadPromise) {
+        return transportDataLoadPromise;
+    }
 
-    gtfsStops =
-        data.stops || [];
+    transportDataLoadPromise = (async () => {
+        const files = [
+            ['metadata', './data/metadata.json'],
+            ['calendar', './data/calendar.json'],
+            ['routes', './data/routes.json'],
+            ['stops', './data/stops.json'],
+            ['trips', './data/trips.json'],
+            ['directions', './data/directions.json'],
+            ['shapes', './data/shapes.json'],
+            ['schedules', './data/schedules.json'],
+            ['lineOverrides', './config/line-overrides.json'],
+        ];
 
-    window.transportData =
-        data;
+        const entries = await Promise.all(
+            files.map(async ([name, url]) => [
+                name,
+                await fetchTransportPart(name, url),
+            ])
+        );
+        const parts = Object.fromEntries(entries);
+        const metadata = parts.metadata || {};
 
-    console.log(
-        'GTFS routes:',
-        gtfsRoutes.length
-    );
+        if (
+            metadata.schemaVersion != null
+            && Number(metadata.schemaVersion) !== 2
+        ) {
+            throw new Error(
+                `Неподдържана версия на транспортните данни: ${metadata.schemaVersion}`
+            );
+        }
 
-    console.log(
-        'GTFS stops:',
-        gtfsStops.length
-    );
+        const data = {
+            ...metadata,
+            lineOverrides: Array.isArray(parts.lineOverrides)
+                ? parts.lineOverrides
+                : [],
+            calendar: parts.calendar || {},
+            routes: Array.isArray(parts.routes) ? parts.routes : [],
+            stops: Array.isArray(parts.stops) ? parts.stops : [],
+            trips: Array.isArray(parts.trips) ? parts.trips : [],
+            directions: parts.directions || {},
+            shapes: parts.shapes || {},
+            schedules: parts.schedules || {},
+        };
 
-    console.log(
-        'GTFS shapes:',
-        Object.keys(
-            data.shapes || {}
-        ).length
-    );
+        gtfsRoutes = data.routes;
+        gtfsStops = data.stops;
+        window.transportData = data;
 
-    return data;
+        console.log('GTFS routes:', gtfsRoutes.length);
+        console.log('GTFS stops:', gtfsStops.length);
+        console.log('GTFS trips:', data.trips.length);
+        console.log('GTFS shapes:', Object.keys(data.shapes).length);
+        console.log('GTFS data updated:', data.updatedAt || 'unknown');
+
+        return data;
+    })();
+
+    try {
+        return await transportDataLoadPromise;
+    } catch (error) {
+        // Permit a later retry after a transient fetch or invalid JSON error.
+        transportDataLoadPromise = null;
+        throw error;
+    }
 }
 
 
