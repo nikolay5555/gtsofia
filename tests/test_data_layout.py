@@ -68,6 +68,11 @@ class DataLayoutTests(unittest.TestCase):
                         direction_stop.get("name"),
                         stops_by_id[stop_id].get("stop_name"),
                     )
+                if direction.get("stops"):
+                    terminal_name = direction["stops"][-1].get("name", "")
+                    self.assertEqual(direction.get("headsign"), terminal_name)
+                    self.assertEqual(direction.get("destination"), terminal_name)
+                self.assertIsInstance(direction.get("gtfs_headsigns"), list)
 
 
 if __name__ == "__main__":

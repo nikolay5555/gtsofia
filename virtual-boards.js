@@ -1648,16 +1648,18 @@
           directions
         )
       ) {
-        const directionHeadsign =
-          normalizeDirectionText(
-            direction?.headsign
-            || direction?.destination
-          );
+        const directionHeadsigns = [
+          direction?.headsign,
+          direction?.destination,
+          ...(Array.isArray(direction?.gtfs_headsigns)
+            ? direction.gtfs_headsigns
+            : [])
+        ]
+          .map(normalizeDirectionText)
+          .filter(Boolean);
 
         if (
-          directionHeadsign
-          && directionHeadsign
-            === headsign
+          directionHeadsigns.includes(headsign)
         ) {
           return {
             key,
@@ -1971,13 +1973,21 @@
 
     if (wantedDestination) {
       const byDestination =
-        directions.find(
-          direction =>
-            normalizeDirectionText(
-              direction?.headsign
-              || direction?.destination
-            ) === wantedDestination
-        );
+        directions.find(direction => {
+          const candidateDestinations = [
+            direction?.headsign,
+            direction?.destination,
+            ...(Array.isArray(direction?.gtfs_headsigns)
+              ? direction.gtfs_headsigns
+              : [])
+          ]
+            .map(normalizeDirectionText)
+            .filter(Boolean);
+
+          return candidateDestinations.includes(
+            wantedDestination
+          );
+        });
 
       if (byDestination) {
         return byDestination;
@@ -3600,12 +3610,46 @@
                 destination_stop_id:
                   route.destination_stop_id
                   || "",
-                destination:
-                  route.destination
-                  || staticTrip?.trip_headsign
-                  || staticDirection?.destination
-                  || staticDirection?.headsign
-                  || "",
+                destination: (() => {
+                  const realtimeTerminalStop =
+                    getStopById(
+                      route.destination_stop_id
+                    );
+                  const staticTerminalStopId =
+                    getDirectionTerminalStopId(
+                      staticDirection
+                    );
+                  const hasPartialRealtimeDestination =
+                    !!route.destination_stop_id
+                    && !!staticTerminalStopId
+                    && !stopIdsMatch(
+                      route.destination_stop_id,
+                      staticTerminalStopId
+                    );
+
+                  // Like Sofiatraffic-schedules, display the OSM-enriched
+                  // terminal stop name for a full route. For a genuine
+                  // partial course, use its real-time terminal stop instead.
+                  if (hasPartialRealtimeDestination) {
+                    return (
+                      realtimeTerminalStop?.stop_name
+                      || route.destination
+                      || staticTrip?.trip_headsign
+                      || staticDirection?.destination
+                      || staticDirection?.headsign
+                      || ""
+                    );
+                  }
+
+                  return (
+                    staticDirection?.destination
+                    || staticDirection?.headsign
+                    || realtimeTerminalStop?.stop_name
+                    || route.destination
+                    || staticTrip?.trip_headsign
+                    || ""
+                  );
+                })(),
                 times:
                   route.times
                     .map(

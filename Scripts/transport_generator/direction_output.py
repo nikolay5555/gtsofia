@@ -8,12 +8,32 @@ def choose_direction_name(
     direction,
     stops_by_id
 ):
-    """
-    Use the official trip_headsign that belongs to this
-    exact direction pattern.
+    """Use the destination stop's preferred name, matching OSM semantics.
 
-    Most frequent value wins.
+    Sofiatraffic-schedules derives a direction's destination from the final
+    stop in its ordered stop pattern. Prefer that stop name (which is enriched
+    from OSM upstream) over GTFS ``trip_headsign`` values, which are often
+    uppercase, stale, abbreviated, or worded differently from the actual
+    terminal. Keep the GTFS headsign as a fallback if the terminal stop cannot
+    be resolved.
     """
+
+    stops = direction.get(
+        "stops",
+        []
+    )
+
+    if stops:
+        terminal_stop = stops_by_id.get(
+            normalize(stops[-1])
+        )
+
+        if terminal_stop:
+            terminal_name = normalize(
+                terminal_stop.get("stop_name")
+            )
+            if terminal_name:
+                return terminal_name
 
     headsigns = [
         normalize(value)
@@ -25,31 +45,7 @@ def choose_direction_name(
     ]
 
     if headsigns:
-
-        return Counter(
-            headsigns
-        ).most_common(
-            1
-        )[0][0]
-
-    stops = direction.get(
-        "stops",
-        []
-    )
-
-    if stops:
-
-        stop = stops_by_id.get(
-            stops[-1]
-        )
-
-        if stop:
-
-            return normalize(
-                stop.get(
-                    "stop_name"
-                )
-            )
+        return Counter(headsigns).most_common(1)[0][0]
 
     return ""
 
@@ -248,6 +244,16 @@ def build_output_directions(
 
                 "destination":
                     direction_name,
+
+                # Preserve the raw GTFS values as internal aliases. Display
+                # names come from the OSM-enriched terminal stop, but realtime
+                # matching may still receive the original GTFS trip_headsign.
+                "gtfs_headsigns":
+                    list(dict.fromkeys(
+                        normalize(value)
+                        for value in direction.get("headsigns", [])
+                        if normalize(value)
+                    )),
 
                 "trip_id":
                     (
