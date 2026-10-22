@@ -20,6 +20,11 @@ from .direction_output import build_output_directions
 from .schedules import build_schedules
 from .shapes import load_shapes
 from .stops import build_stops
+from .osm_stops import (
+    apply_osm_stop_names,
+    get_osm_stop_data,
+    save_osm_stop_cache,
+)
 from .trips import build_stop_times, build_trips
 
 
@@ -86,6 +91,19 @@ def main():
         )
 
         output_stops, stops_by_id = build_stops(stops_data)
+        osm_stop_records, osm_source = get_osm_stop_data()
+        output_stops, stops_by_id, osm_stats = apply_osm_stop_names(
+            output_stops,
+            osm_stop_records,
+        )
+        if osm_source == "live":
+            save_osm_stop_cache(osm_stop_records, updated_at=today.isoformat())
+        print(
+            "Stop names: "
+            f"{osm_stats['renamed']} GTFS names replaced, "
+            f"{osm_stats['matches']} stop rows matched with OSM/cache "
+            f"(source: {osm_source})"
+        )
         trips_by_id = build_trips(trips_data, service_day_types)
         stop_times_by_trip = build_stop_times(stop_times_data, trips_by_id)
 

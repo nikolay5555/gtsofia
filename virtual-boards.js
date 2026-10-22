@@ -349,9 +349,35 @@
         ) || "[]"
       );
 
-      return Array.isArray(value)
-        ? value
-        : [];
+      if (!Array.isArray(value)) {
+        return [];
+      }
+
+      // Favorites saved before the stop-name source changed may contain stale
+      // GTFS labels. Resolve their current name/code from the canonical split
+      // transport data whenever it is available.
+      const currentStops = transportData?.stops || [];
+      return value.map(item => {
+        const savedId = String(item?.stop_id ?? "").trim();
+        const savedCode = String(item?.stop_code ?? "").trim();
+        const current = currentStops.find(stop => {
+          const stopId = String(stop?.stop_id ?? "").trim();
+          const stopCode = String(stop?.stop_code ?? "").trim();
+          return (
+            (savedId && stopId === savedId)
+            || (savedCode && stopCode === savedCode)
+          );
+        });
+
+        return current
+          ? {
+              ...item,
+              stop_id: String(current.stop_id || item.stop_id || ""),
+              stop_code: String(current.stop_code || current.stop_id || item.stop_code || ""),
+              stop_name: String(current.stop_name || item.stop_name || "Спирка")
+            }
+          : item;
+      });
     } catch {
       return [];
     }

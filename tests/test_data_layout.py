@@ -3,6 +3,7 @@ from pathlib import Path
 import unittest
 
 from Scripts.transport_generator.pipeline import compact_calendar
+from Scripts.transport_generator.stops import build_stop_index
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -45,6 +46,28 @@ class DataLayoutTests(unittest.TestCase):
                 json.loads(path.read_text(encoding="utf-8"))
 
         self.assertFalse((ROOT / "data" / "transport.json").exists())
+
+    def test_stop_names_use_the_resolved_display_name_everywhere(self):
+        stops = json.loads((ROOT / "data" / "stops.json").read_text(encoding="utf-8"))
+        directions = json.loads((ROOT / "data" / "directions.json").read_text(encoding="utf-8"))
+        cache = json.loads((ROOT / "config" / "osm-stops-cache.json").read_text(encoding="utf-8"))
+
+        self.assertTrue(cache.get("stops"))
+        self.assertEqual(cache.get("schemaVersion"), 1)
+        for stop in stops:
+            self.assertIn("names", stop)
+            self.assertEqual(stop.get("stop_name", ""), stop["names"].get("bg", ""))
+        stops_by_id = build_stop_index(stops)
+
+        for route_directions in directions.values():
+            for direction in route_directions.values():
+                for direction_stop in direction.get("stops", []):
+                    stop_id = str(direction_stop.get("stop_id") or "").strip()
+                    self.assertIn(stop_id, stops_by_id)
+                    self.assertEqual(
+                        direction_stop.get("name"),
+                        stops_by_id[stop_id].get("stop_name"),
+                    )
 
 
 if __name__ == "__main__":
