@@ -60,12 +60,22 @@ assert.equal(
 assert.equal(
   internals.formatArrivalCountdown(countdownNow + 59.9, countdownNow),
   '1 мин.',
-  'any positive time below one minute must stay at one minute'
+  '59.9 seconds remaining rounds to one minute'
 );
 assert.equal(
   internals.formatArrivalCountdown(countdownNow + 29.9, countdownNow),
+  '0 мин.',
+  'the final 30 seconds before arrival must show zero minutes'
+);
+assert.equal(
+  internals.formatArrivalCountdown(countdownNow + 30, countdownNow),
   '1 мин.',
-  'the final seconds must not be displayed separately'
+  'exactly 30 seconds remaining rounds to one minute'
+);
+assert.equal(
+  internals.formatArrivalCountdown(countdownNow + 0.1, countdownNow),
+  '0 мин.',
+  'a vehicle predicted to arrive in less than 30 seconds should already show zero minutes'
 );
 assert.equal(
   internals.formatArrivalCountdown(countdownNow, countdownNow),

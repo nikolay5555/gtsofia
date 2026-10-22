@@ -1034,12 +1034,13 @@
       return "0 мин.";
     }
 
-    // Show the ETA rounded to the nearest whole minute.
-    // This intentionally allows "0 мин." for arrivals less than 30 seconds
-    // away, which is the mathematically correct nearest-minute value.
+    // Round to the nearest whole minute. In the final 30 seconds before
+    // the predicted arrival, show "0 мин." instead of forcing "1 мин.".
+    // Once the timestamp is reached, the realtime dwell/expiry logic below
+    // keeps the zero-minute state visible until the course should advance.
     const minutes =
       Math.max(
-        1,
+        0,
         Math.round(remainingSeconds / 60)
       );
 
