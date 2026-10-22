@@ -7,14 +7,16 @@ const root = path.join(__dirname, '..');
 const sourcePath = path.join(root, 'transport-data.js');
 const source = fs.readFileSync(sourcePath, 'utf8');
 const fetched = [];
+const requestOptions = [];
 
 const context = {
   console,
   Intl,
   Date,
   URL,
-  fetch: async url => {
+  fetch: async (url, options = {}) => {
     fetched.push(url);
+    requestOptions.push(options);
     const filePath = path.resolve(root, url);
     if (!fs.existsSync(filePath)) {
       return { ok: false, status: 404, json: async () => ({}) };
@@ -44,6 +46,10 @@ vm.runInNewContext(source, context, { filename: sourcePath });
   assert.ok(Array.isArray(data.lineOverrides));
   assert.ok(data.calendar.coverageStartDate);
   assert.ok(data.calendar.coverageEndDate);
+  assert.ok(
+    requestOptions.every(options => options.cache === 'no-cache'),
+    'split data files must be revalidated so OSM stop/direction names stay in sync'
+  );
   assert.deepEqual(
     [...fetched].sort(),
     [

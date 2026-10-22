@@ -3,7 +3,10 @@ let gtfsStops = [];
 let transportDataLoadPromise = null;
 
 async function fetchTransportPart(name, url) {
-    const response = await fetch(url);
+    // GitHub Pages/CDN/browser caches may keep unchanged JSON URLs across
+    // data regenerations. Revalidate each resource so stops.json and
+    // directions.json always come from the same current deployment.
+    const response = await fetch(url, { cache: 'no-cache' });
 
     if (!response.ok) {
         throw new Error(

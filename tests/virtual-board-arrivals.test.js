@@ -27,7 +27,7 @@ function createStorage(initialEntries = []) {
 function loadInternals(storage) {
   const exportedSource = source.replace(
     /\n\}\)\(\);\s*$/,
-    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    getArrivalExpiryTimestamp,\n    isArrivalStillRelevant,\n    shouldRefreshForArrivalExpiry,\n    formatArrivalCountdown,\n    shouldUseStaticFallbackForDirection,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
+    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    getArrivalExpiryTimestamp,\n    isArrivalStillRelevant,\n    shouldRefreshForArrivalExpiry,\n    formatArrivalCountdown,\n    shouldUseStaticFallbackForDirection,\n    getOSMDestinationName,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
   );
 
   const context = {
@@ -350,13 +350,17 @@ internals.setTestState({
       TEST_ROUTE: {
         D1: {
           key: 'D1',
-          destination: 'Тестова спирка',
-          headsign: 'Тестова спирка',
+          destination: 'Старо име от GTFS',
+          headsign: 'Старо име от GTFS',
           shape_id: 'SHAPE-1',
           pattern: ['1000', '0605', '2000']
         }
       }
-    }
+    },
+    stops: [
+      { stop_id: '2000', stop_name: 'Актуално OSM име' },
+      { stop_id: '3000', stop_name: 'Краен пункт на частичен курс' }
+    ]
   },
   trips: [{
     trip_id: 'REALTIME-11',
@@ -365,6 +369,25 @@ internals.setTestState({
     shape_id: 'SHAPE-1'
   }]
 });
+
+assert.equal(
+  internals.getOSMDestinationName({
+    destination: 'Старо име от GTFS',
+    headsign: 'Старо име от GTFS',
+    pattern: ['1000', '0605', '2000']
+  }),
+  'Актуално OSM име',
+  'virtual-board destination must come from the current OSM-enriched terminal stop, not a stale GTFS headsign'
+);
+assert.equal(
+  internals.getOSMDestinationName({
+    destination: 'Дългото направление',
+    headsign: 'Дългото направление',
+    pattern: ['1000', '0605', '2000']
+  }, '3000'),
+  'Краен пункт на частичен курс',
+  'an explicit terminal stop must take precedence for a short/partial course'
+);
 
 const skipped = [{
   trip_id: 'REALTIME-11',

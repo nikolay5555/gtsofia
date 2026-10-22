@@ -1921,6 +1921,34 @@
       : "";
   }
 
+  // Always derive a displayed destination from the current stop data first.
+  // This avoids stale GTFS headsigns taking precedence over OSM-enriched stop
+  // names when the board is refreshed or a particular trip cannot be matched
+  // to its static direction entry.
+  function getOSMDestinationName(
+    direction,
+    terminalStopId = ""
+  ) {
+    const resolvedTerminalStopId =
+      String(
+        terminalStopId
+        || getDirectionTerminalStopId(direction)
+        || ""
+      ).trim();
+
+    const terminalStop =
+      getStopById(
+        resolvedTerminalStopId
+      );
+
+    return (
+      terminalStop?.stop_name
+      || direction?.destination
+      || direction?.headsign
+      || ""
+    );
+  }
+
   function getDirectionIdentity(
     direction,
     fallback = ""
@@ -2533,15 +2561,14 @@
         isPartialCourse
           ? (
               terminalStop?.stop_name
-              || target.direction?.destination
-              || target.direction?.headsign
-              || ""
+              || getOSMDestinationName(
+                target.direction,
+                target.terminalStopId
+              )
             )
-          : (
-              target.direction?.destination
-              || target.direction?.headsign
-              || terminalStop?.stop_name
-              || ""
+          : getOSMDestinationName(
+              target.direction,
+              target.terminalStopId
             );
 
       result.push({
@@ -3245,8 +3272,10 @@
 
         const destination =
           normalizeDirectionText(
-            direction?.destination
-            || direction?.headsign
+            getOSMDestinationName(
+              direction,
+              terminalStopId
+            )
             || terminalStopId
           );
 
@@ -3317,15 +3346,14 @@
           isPartialCourse
             ? (
                 terminalStop?.stop_name
-                || row.direction?.destination
-                || row.direction?.headsign
-                || ""
+                || getOSMDestinationName(
+                  row.direction,
+                  row.terminalStopId
+                )
               )
-            : (
-                row.direction?.destination
-                || row.direction?.headsign
-                || terminalStop?.stop_name
-                || ""
+            : getOSMDestinationName(
+                row.direction,
+                row.terminalStopId
               );
 
         const schedule =
@@ -3633,17 +3661,22 @@
                   if (hasPartialRealtimeDestination) {
                     return (
                       realtimeTerminalStop?.stop_name
+                      || getOSMDestinationName(
+                        staticDirection,
+                        route.destination_stop_id
+                      )
                       || route.destination
                       || staticTrip?.trip_headsign
-                      || staticDirection?.destination
-                      || staticDirection?.headsign
                       || ""
                     );
                   }
 
                   return (
-                    staticDirection?.destination
-                    || staticDirection?.headsign
+                    getOSMDestinationName(
+                      staticDirection,
+                      staticTerminalStopId
+                      || route.destination_stop_id
+                    )
                     || realtimeTerminalStop?.stop_name
                     || route.destination
                     || staticTrip?.trip_headsign
@@ -3801,15 +3834,21 @@
         isPartialRealtime
           ? (
               realtimeTerminal?.stop_name
+              || getOSMDestinationName(
+                staticDirection,
+                realtimeTerminalId
+              )
               || route.destination
               || staticTrip?.trip_headsign
-              || staticDirection?.destination
-              || staticDirection?.headsign
               || ""
             )
           : (
-              staticDirection?.destination
-              || staticDirection?.headsign
+              getOSMDestinationName(
+                staticDirection,
+                staticTerminalId
+                || realtimeTerminalId
+              )
+              || realtimeTerminal?.stop_name
               || route.destination
               || staticTrip?.trip_headsign
               || ""
@@ -6346,6 +6385,7 @@
     getSofiaDateKey,
     shouldUseStaticFallbackForDirection,
     staticArrivalIsCoveredByRealtime,
-    getRealtimeScheduledTimestamp
+    getRealtimeScheduledTimestamp,
+    getOSMDestinationName
   };
 })();
