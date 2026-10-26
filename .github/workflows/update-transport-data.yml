@@ -3,7 +3,6 @@ name: Update transport data
 on:
   schedule:
     - cron: '11 1 * * *'
-
   workflow_dispatch:
 
 permissions:
@@ -22,8 +21,34 @@ jobs:
         with:
           python-version: "3.x"
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.x"
+
       - name: Generate transport data from official CGM GTFS
         run: python Scripts/generate_transport_data.py
+
+      - name: Validate generated datasets and hashes
+        run: python Scripts/validate_transport_data.py
+
+      - name: Run Python regression tests
+        run: python -m unittest discover -s tests -p 'test_*.py'
+
+      - name: Run JavaScript regression tests
+        run: node --test tests/*.test.js
+
+      - name: Check JavaScript syntax
+        run: |
+          node --check virtual-boards.js
+          node --check transport-data.js
+          node --check virtual-board-utils.js
+          node --check schedules.js
+          node --check rolling-stock.js
+          node --check navbar.js
+          node --check service-worker.js
+          node --check api/virtual-board.js
+          node --check api/gtfs-realtime.js
 
       - name: Commit changes
         run: |
