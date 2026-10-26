@@ -1,6 +1,6 @@
 import json
-from collections import defaultdict
-from datetime import timedelta
+from collections import Counter, defaultdict
+from datetime import date, timedelta
 
 from .common import (
     CALENDAR_CONFIG_FILE, GTFS_WEEKDAY_FIELDS, gtfs_date_string, iso_date_string,
@@ -81,6 +81,53 @@ def load_calendar_config(path=CALENDAR_CONFIG_FILE):
     }
 
 
+def _compress_service_ids_by_weekday(service_ids_by_date):
+    """Represent mostly recurring daily service sets as weekday bases + deltas.
+
+    GTFS feeds that encode each service date in calendar_dates.txt can contain
+    hundreds of thousands of repeated service IDs. A weekday baseline plus
+    exact per-date additions/removals keeps the representation lossless while
+    avoiding the repeated ID list for every date.
+    """
+    weekday_names = (
+        "monday", "tuesday", "wednesday", "thursday",
+        "friday", "saturday", "sunday",
+    )
+    sets_by_weekday = defaultdict(Counter)
+
+    for date_key, service_ids in service_ids_by_date.items():
+        weekday = date.fromisoformat(date_key).weekday()
+        sets_by_weekday[weekday][frozenset(service_ids)] += 1
+
+    base_by_weekday = {}
+    for weekday in range(7):
+        patterns = sets_by_weekday.get(weekday)
+        base_by_weekday[weekday] = (
+            patterns.most_common(1)[0][0]
+            if patterns
+            else frozenset()
+        )
+
+    service_ids_by_weekday = {
+        weekday_names[weekday]: sorted(base_by_weekday[weekday])
+        for weekday in range(7)
+    }
+    overrides_by_date = {}
+
+    for date_key, service_ids in service_ids_by_date.items():
+        actual = set(service_ids)
+        baseline = base_by_weekday[date.fromisoformat(date_key).weekday()]
+        additions = sorted(actual - baseline)
+        removals = sorted(baseline - actual)
+        if additions or removals:
+            overrides_by_date[date_key] = {
+                "add": additions,
+                "remove": removals,
+            }
+
+    return service_ids_by_weekday, overrides_by_date
+
+
 def build_calendar_context(
     calendar,
     calendar_dates,
@@ -91,11 +138,10 @@ def build_calendar_context(
     """Build an application calendar without shipping raw GTFS exception rows.
 
     GTFS feeds that omit calendar.txt may encode every operating date as a
-    calendar_dates.txt exception. Instead of serializing hundreds of thousands
-    of repeated objects, materialize the active service IDs by date from today
-    through the end of the feed's coverage. The web app can then look up a date
-    directly, including dates outside the shorter schedule-classification
-    window.
+    calendar_dates.txt exception. Resolve active services for the feed coverage,
+    then compact the membership index into weekday baseline sets plus exact
+    per-date additions/removals. The web app can reconstruct membership without
+    sending hundreds of thousands of repeated exception objects or daily arrays.
     """
 
     window_end = today + timedelta(days=horizon_days)
@@ -170,13 +216,18 @@ def build_calendar_context(
         for service_id, day_types in service_day_types.items()
     }
 
+    service_ids_by_weekday, service_id_overrides_by_date = (
+        _compress_service_ids_by_weekday(service_ids_by_date)
+    )
+
     calendar_result = {
         "referenceDate": today.isoformat(),
         "endDate": coverage_end.isoformat(),
         "servicePatterns": [dict(row) for row in calendar],
-        # Raw calendar_dates entries are intentionally not exported. Their
-        # resolved effect is represented compactly by serviceIdsByDate.
-        "serviceIdsByDate": service_ids_by_date,
+        # No raw exception rows or repeated daily lists are sent to the browser.
+        # Baseline weekday sets + exact date deltas reconstruct the same result.
+        "serviceIdsByWeekday": service_ids_by_weekday,
+        "serviceIdOverridesByDate": service_id_overrides_by_date,
         "dateTypes": date_types,
         "serviceDayTypes": result,
         "config": calendar_config,

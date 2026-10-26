@@ -28,3 +28,35 @@ document.addEventListener("click", (e) => {
     nav.classList.remove("open");
   }
 });
+
+// Register the offline shell on static hosting and explain when live data is unavailable.
+document.addEventListener("DOMContentLoaded", () => {
+  const navbar = document.querySelector(".navbar");
+  let status = document.getElementById("networkStatus");
+
+  if (!status && navbar) {
+    status = document.createElement("div");
+    status.id = "networkStatus";
+    status.className = "network-status";
+    status.setAttribute("role", "status");
+    status.hidden = true;
+    navbar.insertAdjacentElement("afterend", status);
+  }
+
+  const updateNetworkStatus = () => {
+    if (!status) return;
+    status.hidden = navigator.onLine;
+    status.textContent = navigator.onLine
+      ? ""
+      : "Няма интернет връзка. Показваме кешираните данни, когато са налични; realtime пристиганията не са актуални.";
+  };
+
+  window.addEventListener("online", updateNetworkStatus);
+  window.addEventListener("offline", updateNetworkStatus);
+  updateNetworkStatus();
+
+  if ("serviceWorker" in navigator && /^https?:$/.test(window.location.protocol)) {
+    navigator.serviceWorker.register(new URL("./service-worker.js", document.baseURI))
+      .catch(error => console.warn("GTSofia: service worker registration failed.", error));
+  }
+});

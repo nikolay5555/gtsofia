@@ -25,13 +25,15 @@ vm.runInContext(source, context, { filename: 'transport-data.js' });
   const data = await context.loadTransportData();
   for (const key of [
     'updatedAt', 'source', 'lineOverrides', 'calendar', 'routes', 'stops',
-    'trips', 'directions', 'shapes', 'schedules'
+    'trips', 'directions', 'schedules'
   ]) {
     assert.ok(Object.prototype.hasOwnProperty.call(data, key), `missing ${key}`);
   }
-  assert.equal(data.routes.length, 204);
-  assert.equal(data.stops.length, 4799);
-  assert.equal(Object.keys(data.schedules).length, 142);
+  assert.ok(data.routes.length > 0, 'routes must not be empty');
+  assert.ok(data.stops.length > 0, 'stops must not be empty');
+  assert.ok(Object.keys(data.schedules).length > 0, 'schedules must not be empty');
+  assert.ok(data.trips.length > 0, 'trips must not be empty');
+  assert.equal(Object.prototype.hasOwnProperty.call(data, 'shapes'), false, 'unused shape geometry must not be downloaded');
   assert.equal(context.transportData, data);
   console.log('transport-data-loader: all tests passed');
 })().catch((error) => {

@@ -10,8 +10,7 @@ from .direction_merges import merge_logical_trips, merge_partial_directions
 from .gtfs import download_gtfs, read_csv
 from .output import write_output_files
 from .schedules import build_schedules
-from .shapes import load_shapes
-from .stops import build_stops
+from .stops import build_stops, filter_stops_for_directions
 from .trips import build_stop_times, build_trips
 
 
@@ -83,17 +82,25 @@ def main():
             logical_trips,
             logical_stop_times,
         )
+        output_stops = filter_stops_for_directions(
+            output_stops,
+            directions_result,
+        )
+        print(f"Published stops after direction filtering: {len(output_stops)}")
 
-        # 06. Keep only shape geometry referenced by the public directions.
-        selected_shape_ids = {
-            normalize(direction.get("shape_id"))
-            for route_directions in directions_result.values()
-            for direction in route_directions.values()
-            if normalize(direction.get("shape_id"))
-        }
-        shapes_result = load_shapes(selected_shape_ids)
+        # 06. Publish only trip fields used by the browser. Geometry IDs stay
+        # attached to each trip/direction for matching; the point-by-point shape
+        # geometry itself is not consumed by any page and is not shipped.
+        public_trip_fields = (
+            "trip_id", "route_id", "service_id", "trip_headsign",
+            "direction_id", "shape_id",
+        )
+        public_trips = [
+            {field: row.get(field, "") for field in public_trip_fields}
+            for row in trips_data
+        ]
 
-        # 07. Serialize modular data files, preserving the old in-memory schema.
+        # 07. Serialize modular data files, preserving the browser's in-memory schema.
         result = {
             "updatedAt": today.isoformat(),
             "source": "CGM Sofia official GTFS",
@@ -101,9 +108,8 @@ def main():
             "calendar": calendar_result,
             "routes": [dict(row) for row in routes_data],
             "stops": output_stops,
-            "trips": [dict(row) for row in trips_data],
+            "trips": public_trips,
             "directions": directions_result,
-            "shapes": shapes_result,
             "schedules": schedules_result,
         }
         written_files = write_output_files(result)
@@ -113,7 +119,6 @@ def main():
         print(f"Stops: {len(output_stops)}")
         print(f"Directions: {sum(len(value) for value in directions_result.values())}")
         print(f"Schedule routes: {len(schedules_result)}")
-        print(f"Shapes: {len(shapes_result)}")
         for path in written_files:
             print(f"Written: {path.relative_to(DATA_DIR.parent)}")
 

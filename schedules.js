@@ -5,6 +5,46 @@ let selectedStopIndex = 0;
 let selectedDayType = "weekday";
 let selectedCourse = null;
 
+const FAVORITE_SCHEDULE_LINES_KEY = "gtsofia.favoriteScheduleLines.v1";
+
+function getFavoriteScheduleLineIds() {
+  try {
+    const values = JSON.parse(localStorage.getItem(FAVORITE_SCHEDULE_LINES_KEY) || "[]");
+    return new Set(Array.isArray(values) ? values.map(value => String(value)) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function isFavoriteScheduleLine(line) {
+  return !!line && getFavoriteScheduleLineIds().has(String(line.id));
+}
+
+function updateFavoriteScheduleLineButton() {
+  const button = document.getElementById("toggleFavoriteScheduleLine");
+  if (!button) return;
+  button.hidden = !selectedScheduleLine;
+  const isFavorite = isFavoriteScheduleLine(selectedScheduleLine);
+  button.setAttribute("aria-pressed", String(isFavorite));
+  button.classList.toggle("is-favorite", isFavorite);
+  button.textContent = isFavorite ? "★ Премахни от любими" : "☆ Добави в любими";
+}
+
+function toggleFavoriteScheduleLine() {
+  if (!selectedScheduleLine) return;
+  const favorites = getFavoriteScheduleLineIds();
+  const id = String(selectedScheduleLine.id);
+  if (favorites.has(id)) favorites.delete(id);
+  else favorites.add(id);
+  try {
+    localStorage.setItem(FAVORITE_SCHEDULE_LINES_KEY, JSON.stringify([...favorites]));
+  } catch (error) {
+    console.warn("GTSofia: favorite line could not be saved.", error);
+  }
+  renderLineDropdown();
+  updateFavoriteScheduleLineButton();
+}
+
 const lineGroups = [
   { type: "metro", subtype: "", label: "Метролинии" },
   { type: "tram", subtype: "", label: "Трамваи" },
@@ -86,75 +126,47 @@ function lineIdentityHtml(line) {
     </span>`;
 }
 
-function renderLineDropdown() {
-  const menu =
-    document.getElementById(
-      "lineDropdownMenu"
-    );
+function appendLineDropdownGroup(title, lines, menu) {
+  if (!lines.length) return;
+  const group = document.createElement("div");
+  group.className = "schedule-dropdown-group";
+  group.innerHTML = `<div class="schedule-dropdown-group-title">${escapeHtml(title)}</div>`;
 
+  for (const line of lines) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "schedule-line-option";
+    item.innerHTML = `${lineIdentityHtml(line)}<span class="schedule-option-arrow">›</span>`;
+    item.addEventListener("click", () => selectScheduleLine(line));
+    group.appendChild(item);
+  }
+  menu.appendChild(group);
+}
+
+function renderLineDropdown() {
+  const menu = document.getElementById("lineDropdownMenu");
+  if (!menu) return;
   menu.innerHTML = "";
 
-  for (const groupDefinition of lineGroups) {
-    const lines =
-      scheduleLines
-        .filter(line =>
-          line.type === groupDefinition.type &&
-          String(line.subtype || "") === groupDefinition.subtype
-        )
-        .sort(
-          (a, b) =>
-            String(a.number).localeCompare(
-              String(b.number),
-              "bg",
-              {
-                numeric: true,
-                sensitivity: "base"
-              }
-            )
-        );
+  const sortLines = lines => [...lines].sort((a, b) =>
+    String(a.number).localeCompare(String(b.number), "bg", {
+      numeric: true,
+      sensitivity: "base"
+    })
+  );
 
-    if (!lines.length) {
-      continue;
-    }
+  const favoriteIds = getFavoriteScheduleLineIds();
+  const favoriteLines = sortLines(
+    scheduleLines.filter(line => favoriteIds.has(String(line.id)))
+  );
+  appendLineDropdownGroup("Любими линии", favoriteLines, menu);
 
-    const group =
-      document.createElement(
-        "div"
-      );
-
-    group.className =
-      "schedule-dropdown-group";
-
-    group.innerHTML = `
-      <div class="schedule-dropdown-group-title">
-        ${groupDefinition.label}
-      </div>`;
-
-    for (const line of lines) {
-      const item =
-        document.createElement(
-          "button"
-        );
-
-      item.type = "button";
-
-      item.className =
-        "schedule-line-option";
-
-      item.innerHTML = `
-        ${lineIdentityHtml(line)}
-        <span class="schedule-option-arrow">›</span>`;
-
-      item.addEventListener(
-        "click",
-        () =>
-          selectScheduleLine(line)
-      );
-
-      group.appendChild(item);
-    }
-
-    menu.appendChild(group);
+  for (const definition of lineGroups) {
+    const lines = sortLines(scheduleLines.filter(line =>
+      line.type === definition.type &&
+      String(line.subtype || "") === definition.subtype
+    ));
+    appendLineDropdownGroup(definition.label, lines, menu);
   }
 }
 
@@ -208,6 +220,7 @@ function selectScheduleLine(line) {
   selectedCourse = null;
 
   closeLineDropdown();
+  updateFavoriteScheduleLineButton();
 
   const button =
     document.getElementById(
@@ -1078,6 +1091,9 @@ async function initializeSchedules() {
         );
       });
 
+    const favoriteButton = document.getElementById("toggleFavoriteScheduleLine");
+    favoriteButton?.addEventListener("click", toggleFavoriteScheduleLine);
+    updateFavoriteScheduleLineButton();
     renderLineDropdown();
 
   } catch (error) {

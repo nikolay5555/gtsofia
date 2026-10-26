@@ -89,3 +89,36 @@ def build_stops(
         build_stop_index(result)
     )
 
+
+
+def filter_stops_for_directions(stops, directions):
+    """Keep public stops used by generated directions and their parent stations.
+
+    Preserve every GTFS record sharing a referenced stop_id: duplicate IDs can
+    carry useful platform metadata. Filter only stop IDs that the browser can
+    never reach from any published direction, while retaining parent stations
+    referenced by retained stops.
+    """
+    active_ids = set()
+    for direction_set in (directions or {}).values():
+        for direction in (direction_set or {}).values():
+            for stop in direction.get("stops", []) or []:
+                stop_id = normalize_stop_id(stop.get("stop_id"))
+                if stop_id:
+                    active_ids.add(stop_id)
+            for stop_id in direction.get("pattern", []) or []:
+                normalized_id = normalize_stop_id(stop_id)
+                if normalized_id:
+                    active_ids.add(normalized_id)
+
+    parent_ids = {
+        normalize_stop_id(stop.get("parent_station"))
+        for stop in stops
+        if normalize_stop_id(stop.get("stop_id")) in active_ids
+        and normalize_stop_id(stop.get("parent_station"))
+    }
+    keep_ids = active_ids | parent_ids
+    return [
+        stop for stop in stops
+        if normalize_stop_id(stop.get("stop_id")) in keep_ids
+    ]

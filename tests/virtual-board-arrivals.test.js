@@ -5,6 +5,7 @@ const path = require('node:path');
 
 const sourcePath = path.join(__dirname, '..', 'virtual-boards.js');
 const source = fs.readFileSync(sourcePath, 'utf8');
+const utilsSource = fs.readFileSync(path.join(__dirname, '..', 'virtual-board-utils.js'), 'utf8');
 
 function createStorage(initialEntries = []) {
   const store = new Map(initialEntries);
@@ -27,7 +28,7 @@ function createStorage(initialEntries = []) {
 function loadInternals(storage) {
   const exportedSource = source.replace(
     /\n\}\)\(\);\s*$/,
-    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    shouldUseStaticFallbackForDirection,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
+    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    staticArrivalIsCoveredByRealtime,\n    staticArrivalIsCanceledByRealtime,\n    groupScheduledArrivals,\n    mergeScheduledAndRealtimeRoutes,\n    getRealtimeScheduledTimestamp,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
   );
 
   const context = {
@@ -44,6 +45,7 @@ function loadInternals(storage) {
   };
   context.globalThis = context;
 
+  vm.runInNewContext(utilsSource, context, { filename: 'virtual-board-utils.js' });
   vm.runInNewContext(exportedSource, context, { filename: sourcePath });
   return context.__testInternals;
 }
@@ -134,6 +136,36 @@ assert.equal(
   internals.isServiceActiveOnDate('FUTURE-SERVICE', new Date('2026-10-03T10:00:00+03:00')),
   true,
   'the same service must appear once its GTFS service date starts'
+);
+
+// The compressed calendar format must reconstruct date-specific exceptions
+// without shipping a repeated full service list for each date.
+internals.setTestState({
+  transportData: {
+    calendar: {
+      referenceDate: '2026-10-01',
+      endDate: '2026-10-04',
+      serviceIdsByWeekday: {
+        monday: [], tuesday: [], wednesday: [], thursday: [],
+        friday: [], saturday: [], sunday: []
+      },
+      serviceIdOverridesByDate: {
+        '2026-10-03': { add: ['FUTURE-SERVICE'], remove: [] }
+      },
+      servicePatterns: []
+    }
+  },
+  trips: []
+});
+assert.equal(
+  internals.isServiceActiveOnDate('FUTURE-SERVICE', new Date('2026-10-01T18:00:00+03:00')),
+  false,
+  'compressed weekday baseline must keep the service inactive when no date addition exists'
+);
+assert.equal(
+  internals.isServiceActiveOnDate('FUTURE-SERVICE', new Date('2026-10-03T10:00:00+03:00')),
+  true,
+  'compressed date-specific additions must activate the service on the requested date'
 );
 
 const nowSeconds = Date.now() / 1000;
@@ -304,31 +336,147 @@ assert.equal(
   'sequence-only SKIPPED must not suppress a different stop in the same trip'
 );
 
-// Static fallback is directional, not line-wide: the same line may keep a
-// realtime course in one direction while the opposite direction uses static.
+// A line can show realtime and timetable departures together. Realtime for
+// one concrete trip must not suppress the next scheduled trips in the same
+// direction; the final render is capped at three distinct upcoming times.
+const baseTime = Math.floor(Date.now() / 1000) + 120;
+const realtimeRoute = {
+  route_id: 'R1',
+  route_ref: '100',
+  destination: 'Център',
+  times: [
+    { timestamp: baseTime, scheduled_time: baseTime, scheduled: false, source: 'realtime', trip_id: 'TRIP-1' },
+    { timestamp: baseTime + 14 * 60, scheduled_time: baseTime + 14 * 60, scheduled: false, source: 'realtime', trip_id: 'TRIP-2' }
+  ]
+};
+const scheduledCandidates = [
+  { route_id: 'R1', route_ref: '100', destination: 'Център', original_trip_id: 'TRIP-1', times: [{ timestamp: baseTime, scheduled: true }] },
+  { route_id: 'R1', route_ref: '100', destination: 'Център', original_trip_id: 'TRIP-2', times: [{ timestamp: baseTime + 14 * 60, scheduled: true }] },
+  { route_id: 'R1', route_ref: '100', destination: 'Център', original_trip_id: 'TRIP-3', times: [{ timestamp: baseTime + 28 * 60, scheduled: true }] },
+  { route_id: 'R1', route_ref: '100', destination: 'Център', original_trip_id: 'TRIP-4', times: [{ timestamp: baseTime + 42 * 60, scheduled: true }] }
+];
+
 assert.equal(
-  internals.shouldUseStaticFallbackForDirection(
-    { route_id: 'R1', direction_key: 'D1', destination: 'Център' },
-    { realtimeRoutes: [{ route_id: 'R1', direction_key: 'D1' }], activeDirections: [] }
-  ), false, 'same line + direction realtime must suppress static fallback'
+  internals.staticArrivalIsCoveredByRealtime(scheduledCandidates[0], [
+    { route_id: 'R1', trip_id: 'TRIP-1', times: [] }
+  ]),
+  true,
+  'exact GTFS trip identity must link a static arrival to realtime even if the feed omits scheduled_time'
 );
 assert.equal(
-  internals.shouldUseStaticFallbackForDirection(
-    { route_id: 'R1', direction_key: 'D2', destination: 'Квартал' },
-    { realtimeRoutes: [{ route_id: 'R1', direction_key: 'D1' }], activeDirections: [] }
-  ), true, 'realtime in the opposite direction must not suppress static fallback'
+  internals.staticArrivalIsCoveredByRealtime(scheduledCandidates[2], [
+    { route_id: 'R1', trip_id: 'TRIP-1', times: [] }
+  ]),
+  false,
+  'realtime for a different course must not suppress a later scheduled course'
 );
 assert.equal(
-  internals.shouldUseStaticFallbackForDirection(
-    { route_id: 'R1', direction_key: 'D2', destination: 'Квартал' },
-    { realtimeRoutes: [], activeDirections: [{ route_id: 'R1', key: 'D2' }] }
-  ), false, 'an active realtime trip without an arrival row must still suppress that direction'
+  internals.staticArrivalIsCoveredByRealtime(
+    {
+      route_id: 'R1',
+      destination: 'Център',
+      times: [{ timestamp: baseTime }]
+    },
+    [{
+      route_id: 'R1',
+      destination: 'Център',
+      times: [{ timestamp: baseTime + 120, scheduled_time: baseTime }]
+    }]
+  ),
+  true,
+  'a realtime prediction with the same scheduled stop time must replace its static counterpart even when actual time is delayed and trip IDs are unavailable'
 );
 assert.equal(
-  internals.shouldUseStaticFallbackForDirection(
-    { route_id: 'R1', direction_key: 'D2', destination: 'Квартал' },
-    { realtimeRoutes: [], activeDirections: [{ route_id: 'R1', key: 'D1' }] }
-  ), true, 'an active trip in another direction must not suppress fallback'
+  internals.staticArrivalIsCoveredByRealtime(
+    {
+      route_id: 'R1',
+      destination: 'Център',
+      times: [{ timestamp: baseTime }]
+    },
+    [{
+      route_id: 'R1',
+      destination: 'Център',
+      times: [{ timestamp: baseTime + 180, delay: 180 }]
+    }]
+  ),
+  true,
+  'timestamp minus delay must be used as scheduled time when scheduled_time is absent'
+);
+assert.equal(
+  internals.staticArrivalIsCoveredByRealtime(
+    {
+      route_id: 'R1',
+      destination: 'Център',
+      times: [{ timestamp: baseTime }]
+    },
+    [{
+      route_id: 'R1',
+      destination: 'Център',
+      times: [{ timestamp: baseTime + 600, scheduled_time: baseTime + 600 }]
+    }]
+  ),
+  false,
+  'nearby realtime trips with a different scheduled stop time must not replace a static course'
+);
+assert.equal(
+  internals.staticArrivalIsCoveredByRealtime(
+    { route_id: 'R1', original_trip_id: 'REAL-GTFS-ID', static_trip_id: '123', times: [{ timestamp: baseTime }] },
+    [{ route_id: 'R1', trip_id: '123', times: [] }]
+  ),
+  false,
+  'synthetic internal schedule IDs must never be treated as GTFS-Realtime trip IDs'
+);
+
+const remainingScheduled = scheduledCandidates.filter((course, index) => index >= 2);
+const combined = internals.mergeScheduledAndRealtimeRoutes(
+  [realtimeRoute],
+  remainingScheduled.map((course, index) => ({
+    ...course,
+    // route_ref is display metadata and should not split one route/direction.
+    route_ref: index === 0 ? 'BUS-100' : course.route_ref
+  }))
+);
+assert.equal(combined.length, 1, 'same route/destination should render as one row');
+assert.equal(combined[0].times.length, 3, 'the row should show up to three courses');
+assert.deepEqual(
+  Array.from(combined[0].times, time => Number(time.timestamp)),
+  [baseTime, baseTime + 14 * 60, baseTime + 28 * 60],
+  'the third static course should appear alongside two realtime courses, without duplicates'
+);
+assert.equal(combined[0].times[2].scheduled, true, 'the added third course must remain marked as timetable data');
+assert.equal(
+  internals.getRealtimeScheduledTimestamp({ scheduled_time: null, timestamp: null, delay: null }),
+  null,
+  'missing timestamps must not be coerced to Unix epoch zero'
+);
+
+const staticGrouped = internals.groupScheduledArrivals(scheduledCandidates);
+assert.equal(staticGrouped.length, 1, 'static courses for one line/destination must be grouped');
+assert.equal(staticGrouped[0].times.length, 3, 'static-only fallback should keep the next three courses');
+
+assert.equal(
+  internals.staticArrivalIsCanceledByRealtime(
+    { route_id: 'R1', original_trip_id: 'TRIP-3', times: [{ timestamp: baseTime }] },
+    [{ route_id: 'R1', trip_id: 'TRIP-3', schedule_relationship_name: 'CANCELED' }]
+  ),
+  true,
+  'explicitly canceled trips must not reappear via timetable fallback'
+);
+assert.equal(
+  internals.staticArrivalIsCanceledByRealtime(
+    { route_id: 'R1', original_trip_id: 'TRIP-4', times: [{ timestamp: baseTime }] },
+    [{ route_id: 'R1', trip_id: 'TRIP-3', schedule_relationship_name: 'CANCELED' }]
+  ),
+  false,
+  'canceling one trip must not suppress the other trips of the same route'
+);
+assert.equal(
+  internals.staticArrivalIsCanceledByRealtime(
+    { route_id: 'R1', original_trip_id: 'TRIP-3', trip_start_time: '08:30:00', times: [{ timestamp: baseTime }] },
+    [{ route_id: 'R1', trip_id: 'TRIP-3', start_time: '09:00:00', schedule_relationship_name: 'CANCELED' }]
+  ),
+  false,
+  'a cancellation for another instance of the same trip ID must not suppress this departure'
 );
 
 console.log('virtual-board-arrivals: all tests passed');

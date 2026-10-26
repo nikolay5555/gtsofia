@@ -44,7 +44,7 @@ class CalendarTests(unittest.TestCase):
             "weekday",
         )
         self.assertEqual(
-            calendar_result["serviceIdsByDate"]["2026-09-22"],
+            calendar_result["serviceIdsByWeekday"]["tuesday"],
             ["WE"],
         )
         self.assertNotIn("WD", service_types)
@@ -123,7 +123,7 @@ class CalendarTests(unittest.TestCase):
         self.assertEqual(len(result["R1"]["D1"]["weekday"]), 1)
         self.assertEqual(len(result["R1"]["D1"]["weekend"]), 1)
 
-    def test_raw_exceptions_are_replaced_by_a_compact_date_index(self):
+    def test_raw_exceptions_are_replaced_by_compact_weekday_sets_and_deltas(self):
         dates_only = [
             {"service_id": "A", "date": "20260921", "exception_type": "1"},
             {"service_id": "A", "date": "20260926", "exception_type": "1"},
@@ -137,10 +137,31 @@ class CalendarTests(unittest.TestCase):
         )
 
         self.assertEqual(calendar_result["endDate"], "2026-09-26")
-        self.assertEqual(calendar_result["serviceIdsByDate"]["2026-09-26"], ["A"])
+        self.assertEqual(calendar_result["serviceIdsByWeekday"]["saturday"], ["A"])
+        self.assertNotIn("serviceIdsByDate", calendar_result)
         self.assertNotIn("exceptions", calendar_result)
         # Only the short operational window determines which trips get emitted.
         self.assertEqual(service_types["A"], ["weekday"])
+
+    def test_compact_calendar_deltas_preserve_date_specific_changes(self):
+        dates_only = [
+            {"service_id": "A", "date": "20260921", "exception_type": "1"},
+            {"service_id": "B", "date": "20260928", "exception_type": "1"},
+        ]
+
+        _, calendar_result = module.build_calendar_context(
+            [],
+            dates_only,
+            date(2026, 9, 21),
+            horizon_days=0,
+        )
+
+        monday_delta = calendar_result["serviceIdOverridesByDate"].get("2026-09-28")
+        self.assertIsNotNone(monday_delta)
+        active_on_28 = set(calendar_result["serviceIdsByWeekday"]["monday"])
+        active_on_28.update(monday_delta["add"])
+        active_on_28.difference_update(monday_delta["remove"])
+        self.assertEqual(active_on_28, {"B"})
 
     def test_calendar_dates_only_feed_uses_explicit_service_dates(self):
         dates_only = [

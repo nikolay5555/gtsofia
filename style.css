@@ -1160,6 +1160,31 @@ VIRTUAL BOARDS
   overflow-y: auto;
 }
 
+.virtual-board-warning {
+  margin: 12px 16px 4px;
+  padding: 10px 12px;
+  border: 1px solid #f0d7a0;
+  border-radius: 10px;
+  background: #fff9e8;
+  color: #76540d;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.vb-arrival-source {
+  align-self: center;
+  margin-left: 4px;
+  color: #6b7280;
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.vb-next-time[data-source="schedule"] {
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
 .vb-row {
   padding: 13px 16px;
   border-bottom: 1px solid #f0f1f2;
@@ -1727,4 +1752,41 @@ VIRTUAL BOARD FAVORITES
   .virtual-board-favorite-stop {
     padding: 12px 13px;
   }
+}
+
+/* PWA/offline state */
+.network-status {
+  padding: 0.65rem 1rem;
+  text-align: center;
+  font-size: 0.9rem;
+  color: #684b00;
+  background: #fff1c7;
+  border-bottom: 1px solid #e7ce83;
+}
+
+.network-status[hidden] {
+  display: none;
+}
+
+.schedule-favorite-toggle {
+  align-self: flex-start;
+  margin-top: 8px;
+  padding: 6px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #fff;
+  color: #374151;
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.schedule-favorite-toggle.is-favorite {
+  border-color: #e8c76b;
+  background: #fff7d6;
+  color: #805d00;
+}
+
+.schedule-favorite-toggle[hidden] {
+  display: none;
 }

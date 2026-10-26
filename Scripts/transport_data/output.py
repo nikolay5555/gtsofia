@@ -11,7 +11,6 @@ DATASET_KEYS = (
     "stops",
     "trips",
     "directions",
-    "shapes",
     "schedules",
 )
 
@@ -30,6 +29,11 @@ def _write_bytes(path, content):
 def write_output_files(result):
     """Write the large transport payload in independently cacheable files."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Geometry is not used by the browser; remove stale output from older versions.
+    stale_shapes = DATA_DIR / "shapes.json"
+    if stale_shapes.exists():
+        stale_shapes.unlink()
 
     datasets = {key: result[key] for key in DATASET_KEYS}
     hashes = {}

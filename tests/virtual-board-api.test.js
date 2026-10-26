@@ -21,11 +21,12 @@ function field(number, wireType, value) {
 
 const text = value => Buffer.from(String(value), 'utf8');
 
-function encodeTripDescriptor({ tripId, startTime, routeId }) {
+function encodeTripDescriptor({ tripId, startTime, routeId, scheduleRelationship = 0 }) {
   return Buffer.concat([
     field(1, 2, text(tripId)),
     field(2, 2, text(startTime)),
     field(3, 2, text('20260930')),
+    ...(scheduleRelationship ? [field(4, 0, varint(scheduleRelationship))] : []),
     field(5, 2, text(routeId))
   ]);
 }
@@ -111,11 +112,33 @@ const normalTrip = encodeTripUpdate({
   }]
 });
 
+const canceledTrip = encodeTripUpdate({
+  trip: {
+    tripId: 'REALTIME-CANCELED',
+    startTime: '08:50:00',
+    routeId: 'TB2',
+    scheduleRelationship: 3
+  },
+  stopUpdates: []
+});
+
+const deletedTrip = encodeTripUpdate({
+  trip: {
+    tripId: 'REALTIME-DELETED',
+    startTime: '09:00:00',
+    routeId: 'TB2',
+    scheduleRelationship: 7
+  },
+  stopUpdates: []
+});
+
 const feed = Buffer.concat([
   field(2, 2, encodeEntity('skipped', skippedTrip)),
   field(2, 2, encodeEntity('skipped-sequence', sequenceSkippedTrip)),
   field(2, 2, encodeEntity('no-data', noDataTrip)),
-  field(2, 2, encodeEntity('normal', normalTrip))
+  field(2, 2, encodeEntity('normal', normalTrip)),
+  field(2, 2, encodeEntity('canceled', canceledTrip)),
+  field(2, 2, encodeEntity('deleted', deletedTrip))
 ]);
 
 global.fetch = async () => ({
@@ -152,6 +175,11 @@ const res = {
   assert.equal(payload.skipped_trips[1].trip_id, 'REALTIME-SKIPPED-SEQUENCE');
   assert.equal(payload.skipped_trips[1].stop_id, '');
   assert.equal(payload.skipped_trips[1].stop_sequence, 24);
+  assert.equal(payload.canceled_trips.length, 2);
+  assert.deepEqual(
+    payload.canceled_trips.map(item => [item.trip_id, item.schedule_relationship_name]),
+    [['REALTIME-CANCELED', 'CANCELED'], ['REALTIME-DELETED', 'DELETED']]
+  );
 
   assert.equal(
     payload.routes.length,

@@ -38,8 +38,10 @@ from transport_data.direction_merges import (  # noqa: E402
 from transport_data.gtfs import download_gtfs, read_csv  # noqa: E402
 from transport_data.pipeline import main  # noqa: E402
 from transport_data.schedules import build_schedules  # noqa: E402
-from transport_data.shapes import load_shapes  # noqa: E402
-from transport_data.stops import build_stop_index, build_stops, stop_preference_score  # noqa: E402
+from transport_data.shapes import load_shapes  # noqa: E402 - legacy helper export; pipeline does not publish shape geometry
+from transport_data.stops import (  # noqa: E402
+    build_stop_index, build_stops, filter_stops_for_directions, stop_preference_score,
+)
 from transport_data.trips import build_stop_times, build_trips  # noqa: E402
 
 

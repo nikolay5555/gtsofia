@@ -9,7 +9,6 @@ async function loadTransportData() {
         stops: 'stops.json',
         trips: 'trips.json',
         directions: 'directions.json',
-        shapes: 'shapes.json',
         schedules: 'schedules.json'
     };
 
@@ -33,7 +32,6 @@ async function loadTransportData() {
         stops: loaded.stops,
         trips: loaded.trips,
         directions: loaded.directions,
-        shapes: loaded.shapes,
         schedules: loaded.schedules
     };
 
@@ -43,7 +41,6 @@ async function loadTransportData() {
 
     console.log('GTFS routes:', gtfsRoutes.length);
     console.log('GTFS stops:', gtfsStops.length);
-    console.log('GTFS shapes:', Object.keys(data.shapes || {}).length);
 
     return data;
 }
