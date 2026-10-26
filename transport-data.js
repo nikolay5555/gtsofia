@@ -1,49 +1,183 @@
 let gtfsRoutes = [];
 let gtfsStops = [];
+let transportDataPromise = null;
+let transportManifest = null;
+let transportShapesPromise = null;
+const scheduleLoadPromises = new Map();
 
-async function loadTransportData() {
-    const response = await fetch(
-        './data/transport.json'
-    );
+async function readJsonAsset(path, version = "") {
+    const normalized = String(path || "").replace(/^\/+/, "");
+    const suffix = version
+        ? `?v=${encodeURIComponent(version)}`
+        : "";
+    const response = await fetch(`./data/${normalized}${suffix}`);
 
     if (!response.ok) {
-        throw new Error(
-            `Неуспешно зареждане на transport.json: ${response.status}`
-        );
+        throw new Error(`Неуспешно зареждане на ${normalized}: ${response.status}`);
     }
 
-    const data =
-        await response.json();
-
-    gtfsRoutes =
-        data.routes || [];
-
-    gtfsStops =
-        data.stops || [];
-
-    window.transportData =
-        data;
-
-    console.log(
-        'GTFS routes:',
-        gtfsRoutes.length
-    );
-
-    console.log(
-        'GTFS stops:',
-        gtfsStops.length
-    );
-
-    console.log(
-        'GTFS shapes:',
-        Object.keys(
-            data.shapes || {}
-        ).length
-    );
-
-    return data;
+    return response.json();
 }
 
+async function loadTransportData() {
+    if (transportDataPromise) {
+        return transportDataPromise;
+    }
+
+    transportDataPromise = (async () => {
+        let data;
+
+        let manifestResponse = null;
+        try {
+            manifestResponse = await fetch("./data/manifest.json", {
+                cache: "no-cache"
+            });
+        } catch {
+            // Older static deployments may not have a manifest yet.
+        }
+
+        if (!manifestResponse || !manifestResponse.ok) {
+            // Compatibility with an older checkout/deployment that still has
+            // the original bundle. New builds do not ship transport.json.
+            const legacyResponse = await fetch("./data/transport.json", {
+                cache: "no-cache"
+            });
+            if (!legacyResponse.ok) {
+                throw new Error(
+                    `manifest.json and legacy transport.json are unavailable (HTTP ${legacyResponse.status}).`
+                );
+            }
+            data = await legacyResponse.json();
+            transportManifest = null;
+        } else {
+            transportManifest = await manifestResponse.json();
+            if (Number(transportManifest.schemaVersion) < 2) {
+                throw new Error("Неподдържана версия на транспортните данни.");
+            }
+
+            let core;
+            let calendar;
+            if (Number(transportManifest.schemaVersion) >= 3) {
+                const files = transportManifest.dataFiles || {};
+                const [routes, stops, trips, directions, lineOverrides, loadedCalendar] = await Promise.all([
+                    readJsonAsset(files.routes || "routes.json", transportManifest.updatedAt),
+                    readJsonAsset(files.stops || "stops.json", transportManifest.updatedAt),
+                    readJsonAsset(files.trips || "trips.json", transportManifest.updatedAt),
+                    readJsonAsset(files.directions || "directions.json", transportManifest.updatedAt),
+                    readJsonAsset(files.lineOverrides || "line-overrides.json", transportManifest.updatedAt),
+                    readJsonAsset(transportManifest.calendarFile || "calendar.json", transportManifest.updatedAt)
+                ]);
+                core = { routes, stops, trips, directions, lineOverrides };
+                calendar = loadedCalendar;
+            } else {
+                const [legacyCore, loadedCalendar] = await Promise.all([
+                    readJsonAsset(transportManifest.coreFile || "transport-core.json", transportManifest.updatedAt),
+                    readJsonAsset(transportManifest.calendarFile || "calendar.json", transportManifest.updatedAt)
+                ]);
+                core = legacyCore;
+                calendar = loadedCalendar;
+            }
+
+            data = {
+                updatedAt: transportManifest.updatedAt || core.updatedAt || "",
+                source: transportManifest.source || core.source || "",
+                ...core,
+                calendar,
+                // Schedule data is loaded on demand for the selected route(s).
+                schedules: {},
+                // Shapes are optional and intentionally not loaded at startup.
+                shapes: {}
+            };
+        }
+
+        gtfsRoutes = data.routes || [];
+        gtfsStops = data.stops || [];
+        data.schedules = data.schedules || {};
+        data.shapes = data.shapes || {};
+        window.transportData = data;
+
+        console.log("GTFS routes:", gtfsRoutes.length);
+        console.log("GTFS stops:", gtfsStops.length);
+        console.log(
+            "GTFS schedules loaded:",
+            Object.keys(data.schedules).length
+        );
+
+        return data;
+    })();
+
+    try {
+        return await transportDataPromise;
+    } catch (error) {
+        transportDataPromise = null;
+        throw error;
+    }
+}
+
+/** Load only the static schedule files needed for the requested GTFS routes. */
+async function loadTransportSchedules(routeIds = []) {
+    const data = await loadTransportData();
+    const ids = [...new Set(
+        (Array.isArray(routeIds) ? routeIds : [routeIds])
+            .map(value => String(value ?? "").trim())
+            .filter(Boolean)
+    )];
+
+    const manifestFiles = transportManifest?.scheduleFiles || {};
+
+    await Promise.all(ids.map(async routeId => {
+        if (Object.prototype.hasOwnProperty.call(data.schedules, routeId)) {
+            return data.schedules[routeId];
+        }
+
+        if (!scheduleLoadPromises.has(routeId)) {
+            const relativePath = manifestFiles[routeId]
+                || `${transportManifest?.schedulesDirectory || "schedules"}/${encodeURIComponent(routeId)}.json`;
+
+            const promise = readJsonAsset(relativePath, data.updatedAt)
+                .then(schedule => {
+                    data.schedules[routeId] = schedule || {};
+                    return data.schedules[routeId];
+                })
+                .catch(error => {
+                    // Let a later refresh retry a transient failure.
+                    scheduleLoadPromises.delete(routeId);
+                    throw error;
+                });
+
+            scheduleLoadPromises.set(routeId, promise);
+        }
+
+        return scheduleLoadPromises.get(routeId);
+    }));
+
+    return data.schedules;
+}
+
+/** Optional route geometry; no page downloads it unless it is explicitly needed. */
+async function loadTransportShapes() {
+    const data = await loadTransportData();
+
+    if (Object.keys(data.shapes || {}).length) {
+        return data.shapes;
+    }
+
+    if (!transportShapesPromise) {
+        const relativePath = transportManifest?.shapesFile || "shapes.json";
+        transportShapesPromise = readJsonAsset(relativePath, data.updatedAt)
+            .then(shapes => {
+                data.shapes = shapes || {};
+                console.log("GTFS shapes:", Object.keys(data.shapes).length);
+                return data.shapes;
+            })
+            .catch(error => {
+                transportShapesPromise = null;
+                throw error;
+            });
+    }
+
+    return transportShapesPromise;
+}
 
 const TRANSPORT_TIME_ZONE = 'Europe/Sofia';
 function getTransportCalendarDateKey(date = new Date()) {
@@ -61,65 +195,44 @@ function getTransportCalendarDateKey(date = new Date()) {
 }
 
 function getTransportCalendarWeekday(date = new Date()) {
-    const value = new Intl.DateTimeFormat('en-US', {
+    return new Intl.DateTimeFormat('en-US', {
         timeZone: TRANSPORT_TIME_ZONE,
         weekday: 'short'
     }).format(date);
-
-    return value;
 }
 
 function getTransportCalendarDayType(date = new Date()) {
     const key = getTransportCalendarDateKey(date);
     const calendar = window.transportData?.calendar;
 
-    const cachedType =
-        calendar?.dateTypes?.[key];
-
-    if (
-        cachedType === 'weekday' ||
-        cachedType === 'weekend'
-    ) {
+    const cachedType = calendar?.dateTypes?.[key];
+    if (cachedType === 'weekday' || cachedType === 'weekend') {
         return cachedType;
     }
 
-    const configuredType =
-        calendar?.config?.dateOverrides?.[key];
-
-    if (
-        configuredType === 'weekday' ||
-        configuredType === 'weekend'
-    ) {
+    const configuredType = calendar?.config?.dateOverrides?.[key];
+    if (configuredType === 'weekday' || configuredType === 'weekend') {
         return configuredType;
     }
 
     const weekday = getTransportCalendarWeekday(date);
-
-    return weekday === 'Sat' || weekday === 'Sun'
-        ? 'weekend'
-        : 'weekday';
+    return weekday === 'Sat' || weekday === 'Sun' ? 'weekend' : 'weekday';
 }
 
-window.getTransportCalendarDateKey =
-    getTransportCalendarDateKey;
-window.getTransportCalendarDayType =
-    getTransportCalendarDayType;
+window.getTransportCalendarDateKey = getTransportCalendarDateKey;
+window.getTransportCalendarDayType = getTransportCalendarDayType;
 
 
 function getTransportType(routeType) {
     switch (String(routeType)) {
         case '0':
             return 'tram';
-
         case '1':
             return 'metro';
-
         case '3':
             return 'bus';
-
         case '11':
             return 'trolley';
-
         default:
             return 'other';
     }

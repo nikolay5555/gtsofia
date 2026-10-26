@@ -17,8 +17,6 @@ GTFS_URL = "https://gtfs.sofiatraffic.bg/api/v1/static"
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
 GTFS_DIR = ROOT / ".gtfs"
-OUTPUT_FILE = DATA_DIR / "transport.json"
-CALENDAR_CONFIG_FILE = ROOT / "config" / "calendar.json"
 LINE_OVERRIDES_CONFIG_FILE = ROOT / "config" / "line-overrides.json"
 
 
@@ -114,16 +112,6 @@ def get_today():
         SOFIA_TIME_ZONE
     ).date()
 
-
-GTFS_WEEKDAY_FIELDS = (
-    "monday",
-    "tuesday",
-    "wednesday",
-    "thursday",
-    "friday",
-    "saturday",
-    "sunday",
-)
 
 
 def gtfs_date_string(current):
@@ -241,209 +229,17 @@ def read_csv(filename):
 # Services
 # ============================================================
 
-def _calendar_row_covers_date(row, current):
-    start_date = parse_date(row.get("start_date"))
-    end_date = parse_date(row.get("end_date"))
+# Calendar construction lives in a dedicated module so it can be tested and
+# maintained independently from GTFS parsing and output generation.
+try:
+    from Scripts.calendar_builder import build_calendar_context, load_calendar_config
+except ModuleNotFoundError:  # direct execution: python Scripts/generate_transport_data.py
+    from calendar_builder import build_calendar_context, load_calendar_config
 
-    if start_date is None or end_date is None:
-        return False
-
-    if current < start_date or current > end_date:
-        return False
-
-    field = GTFS_WEEKDAY_FIELDS[current.weekday()]
-    return normalize(row.get(field)) == "1"
-
-
-def _apply_calendar_date_exceptions(
-    service_ids,
-    calendar_dates_by_date,
-    current
-):
-    effective = set(service_ids)
-
-    for row in calendar_dates_by_date.get(
-        gtfs_date_string(current),
-        []
-    ):
-        service_id = normalize(row.get("service_id"))
-        exception_type = normalize(row.get("exception_type"))
-
-        if not service_id:
-            continue
-
-        if exception_type == "1":
-            effective.add(service_id)
-        elif exception_type == "2":
-            effective.discard(service_id)
-
-    return effective
-
-
-def load_calendar_config(path=CALENDAR_CONFIG_FILE):
-    if not path.exists():
-        return {"dateOverrides": {}}
-
-    with path.open("r", encoding="utf-8") as file:
-        raw = json.load(file)
-
-    if not isinstance(raw, dict):
-        raise ValueError("Calendar config must be a JSON object.")
-
-    overrides = raw.get("dateOverrides", {})
-    if not isinstance(overrides, dict):
-        raise ValueError("calendar.json dateOverrides must be an object.")
-
-    normalized_overrides = {}
-    for raw_date, raw_day_type in overrides.items():
-        date_value = parse_date(raw_date.replace("-", ""))
-        if date_value is None:
-            raise ValueError(
-                f"Invalid calendar override date: {raw_date}"
-            )
-
-        day_type = normalize(raw_day_type).lower()
-        if day_type not in {"weekday", "weekend"}:
-            raise ValueError(
-                f"Invalid calendar override type for {raw_date}: {raw_day_type}"
-            )
-
-        normalized_overrides[iso_date_string(date_value)] = day_type
-
-    return {
-        "dateOverrides": normalized_overrides,
-    }
-
-
-def build_calendar_context(
-    calendar,
-    calendar_dates,
-    today,
-    horizon_days=15,
-    calendar_config=None
-):
-    """
-    Evaluate GTFS service dates exactly from calendar.txt plus
-    calendar_dates.txt. The resulting weekday/weekend buckets are an
-    application-level view only; GTFS service_id remains the source of truth.
-    """
-
-    end_date = today + timedelta(days=horizon_days)
-    has_calendar = bool(calendar)
-    calendar_config = calendar_config or {"dateOverrides": {}}
-    date_overrides = calendar_config.get("dateOverrides", {})
-
-    calendar_by_service = {}
-    for row in calendar:
-        service_id = normalize(row.get("service_id"))
-        if service_id:
-            calendar_by_service[service_id] = dict(row)
-
-    calendar_dates_by_date = defaultdict(list)
-    for row in calendar_dates:
-        service_id = normalize(row.get("service_id"))
-        date_value = parse_date(row.get("date"))
-        exception_type = normalize(row.get("exception_type"))
-
-        if not service_id or date_value is None:
-            continue
-
-        if exception_type not in {"1", "2"}:
-            continue
-
-        calendar_dates_by_date[gtfs_date_string(date_value)].append(
-            dict(row)
-        )
-
-    date_types = {}
-    service_ids_by_date = {}
-    service_day_types = defaultdict(set)
-
-    current = today
-    while current <= end_date:
-        base_service_ids = {
-            service_id
-            for service_id, row in calendar_by_service.items()
-            if _calendar_row_covers_date(row, current)
-        }
-
-        effective_service_ids = _apply_calendar_date_exceptions(
-            base_service_ids,
-            calendar_dates_by_date,
-            current
-        )
-
-        # GTFS determines which service_ids are active on the date. The
-        # project's two-button UI is a separate application-level view. By
-        # default it follows the local weekday/weekend of the date; explicit
-        # operational overrides live in config/calendar.json so holidays or
-        # other authority-defined schedule regimes are maintained centrally.
-        date_key = iso_date_string(current)
-        day_type = date_overrides.get(
-            date_key,
-            "weekend" if current.weekday() >= 5 else "weekday"
-        )
-
-        date_types[date_key] = day_type
-        service_ids_by_date[date_key] = sorted(effective_service_ids)
-
-        for service_id in effective_service_ids:
-            service_day_types[service_id].add(day_type)
-
-        current += timedelta(days=1)
-
-    # If calendar.txt is omitted, calendar_dates.txt is the complete service
-    # definition according to GTFS. In that form the only defensible
-    # weekday/weekend split available to the application is the actual day of
-    # week of each explicit service date.
-    if not has_calendar:
-        service_day_types.clear()
-        for date_key, day_type in date_types.items():
-            for service_id in service_ids_by_date[date_key]:
-                service_day_types[service_id].add(day_type)
-
-    result = {
-        service_id: sorted(
-            day_types,
-            key=lambda value: 0 if value == "weekday" else 1
-        )
-        for service_id, day_types in service_day_types.items()
-    }
-
-    calendar_result = {
-        "referenceDate": today.isoformat(),
-        "endDate": end_date.isoformat(),
-        "servicePatterns": [dict(row) for row in calendar],
-        "exceptions": [dict(row) for row in calendar_dates],
-        "serviceIdsByDate": service_ids_by_date,
-        "dateTypes": date_types,
-        "serviceDayTypes": result,
-        "config": calendar_config,
-    }
-
-    print(
-        "Service date window: "
-        f"{today} -> {end_date}"
-    )
-    print(
-        "Calendar services: "
-        f"{len(calendar_by_service)}"
-    )
-    print(
-        "Calendar exceptions: "
-        f"{len(calendar_dates)}"
-    )
-    print(
-        "Weekday service IDs: "
-        f"{sum("weekday" in types for types in result.values())}"
-    )
-    print(
-        "Weekend/holiday service IDs: "
-        f"{sum("weekend" in types for types in result.values())}"
-    )
-
-    return result, calendar_result
-
+try:
+    from Scripts.transport_data_writer import write_transport_data
+except ModuleNotFoundError:  # direct execution: python Scripts/generate_transport_data.py
+    from transport_data_writer import write_transport_data
 
 
 # ============================================================
@@ -1795,346 +1591,23 @@ def build_output_directions(
 # Schedules
 # ============================================================
 
-def build_schedules(
-    directions_result,
-    logical_trips,
-    logical_stop_times
-):
-    """
-    Schedules use the SAME D1/D2/... direction keys as directions.
-    """
-
-    schedules = {}
-
-    for route_id, route_directions in (
-        directions_result.items()
-    ):
-
-        route_schedule = {}
-
-        for key, direction in (
-            route_directions.items()
-        ):
-
-            code = direction[
-                "code"
-            ]
-
-            weekday = []
-            weekend = []
-
-            matching_trips = [
-                trip
-                for trip in logical_trips
-                if (
-                    trip[
-                        "route_id"
-                    ]
-                    == route_id
-                    and trip[
-                        "direction_code"
-                    ]
-                    == code
-                    and not trip.get(
-                        "is_deleted",
-                        False
-                    )
-                )
-            ]
-
-            for logical_trip in matching_trips:
-
-                trip_day_types = logical_trip.get(
-                    "day_types",
-                    []
-                )
-
-                if not trip_day_types:
-                    trip_day_types = [
-                        "weekend"
-                        if logical_trip.get(
-                            "is_weekend",
-                            False
-                        )
-                        else "weekday"
-                    ]
-
-                trip_times = [
-                    item
-                    for item in logical_stop_times
-                    if (
-                        item[
-                            "trip"
-                        ]
-                        == logical_trip[
-                            "id"
-                        ]
-                    )
-                ]
-
-                for item in trip_times:
-
-                    values = item.get(
-                        "times",
-                        []
-                    )
-
-                    if not values:
-                        continue
-
-                    non_null = [
-                        value
-                        for value in values
-                        if value is not None
-                    ]
-
-                    if not non_null:
-                        continue
-
-                    first = non_null[
-                        0
-                    ]
-
-                    schedule_row = {
-
-                        "trip_id":
-                            logical_trip[
-                                "id"
-                            ],
-
-                        # Keep the original GTFS trip id on every schedule
-                        # row. GTFS-Realtime references this original id,
-                        # while the public schedule uses the logical trip id
-                        # created by the generator. This lets the virtual board
-                        # suppress a SKIPPED course exactly, without hiding
-                        # later courses in the same direction.
-                        "original_trip_id":
-                            normalize(
-                                item.get(
-                                    "original_trip_id",
-                                    ""
-                                )
-                            ),
-
-                        "service_id":
-                            normalize(
-                                item.get(
-                                    "service_id",
-                                    ""
-                                )
-                            ),
-
-                        "stop_sequences":
-                            [
-                                sequence
-                                if sequence is None
-                                else int(sequence)
-                                for sequence in item.get(
-                                    "stop_sequences",
-                                    []
-                                )
-                            ],
-
-                        "start_time":
-                            (
-                                f"{first // 60:02d}:"
-                                f"{first % 60:02d}:00"
-                            ),
-
-                        "times":
-                            [
-                                (
-                                    f"{value // 60:02d}:"
-                                    f"{value % 60:02d}:00"
-                                )
-                                if value is not None
-                                else None
-                                for value in values
-                            ],
-
-                        "car":
-                            item.get(
-                                "car",
-                                ""
-                            )
-                    }
-
-                    if "weekday" in trip_day_types:
-                        weekday.append(dict(schedule_row))
-
-                    if "weekend" in trip_day_types:
-                        weekend.append(dict(schedule_row))
-
-            weekday.sort(
-                key=lambda item:
-                    parse_time(
-                        item[
-                            "start_time"
-                        ]
-                    )
-                    if parse_time(
-                        item[
-                            "start_time"
-                        ]
-                    ) is not None
-                    else 10**12
-            )
-
-            weekend.sort(
-                key=lambda item:
-                    parse_time(
-                        item[
-                            "start_time"
-                        ]
-                    )
-                    if parse_time(
-                        item[
-                            "start_time"
-                        ]
-                    ) is not None
-                    else 10**12
-            )
-
-            route_schedule[
-                key
-            ] = {
-
-                "weekday":
-                    weekday,
-
-                "weekend":
-                    weekend
-            }
-
-        if route_schedule:
-
-            schedules[
-                route_id
-            ] = route_schedule
-
-    return schedules
+# Schedule serialization is separated from route/direction construction.
+try:
+    from Scripts.schedule_builder import build_schedules
+except ModuleNotFoundError:  # direct execution: python Scripts/generate_transport_data.py
+    from schedule_builder import build_schedules
 
 
 # ============================================================
 # Shapes
 # ============================================================
 
-def load_shapes(
-    shape_ids
-):
-    path = (
-        GTFS_DIR
-        / "shapes.txt"
-    )
-
-    if not path.exists():
-        return {}
-
-    shape_ids = {
-        normalize(value)
-        for value in shape_ids
-        if normalize(value)
-    }
-
-    if not shape_ids:
-        return {}
-
-    points = defaultdict(
-        list
-    )
-
-    with path.open(
-        "r",
-        encoding="utf-8-sig",
-        newline=""
-    ) as file:
-
-        reader = csv.DictReader(
-            file
-        )
-
-        for row in reader:
-
-            shape_id = normalize(
-                row.get(
-                    "shape_id"
-                )
-            )
-
-            if shape_id not in shape_ids:
-                continue
-
-            try:
-
-                lat = float(
-                    row.get(
-                        "shape_pt_lat"
-                    )
-                )
-
-                lon = float(
-                    row.get(
-                        "shape_pt_lon"
-                    )
-                )
-
-                sequence = int(
-                    row.get(
-                        "shape_pt_sequence",
-                        0
-                    )
-                )
-
-            except (
-                TypeError,
-                ValueError
-            ):
-
-                continue
-
-            points[
-                shape_id
-            ].append({
-
-                "lat":
-                    lat,
-
-                "lon":
-                    lon,
-
-                "sequence":
-                    sequence
-            })
-
-    result = {}
-
-    for shape_id, items in points.items():
-
-        items.sort(
-            key=lambda item:
-                item[
-                    "sequence"
-                ]
-        )
-
-        result[
-            shape_id
-        ] = [
-            {
-                "lat":
-                    item[
-                        "lat"
-                    ],
-
-                "lon":
-                    item[
-                        "lon"
-                    ]
-            }
-            for item in items
-        ]
-
-    return result
+# Shape loading is kept in a separate module because route geometry is an
+# optional, relatively large output asset.
+try:
+    from Scripts.shape_loader import load_shapes
+except ModuleNotFoundError:  # direct execution: python Scripts/generate_transport_data.py
+    from shape_loader import load_shapes
 
 
 # ============================================================
@@ -2203,7 +1676,8 @@ def main():
             calendar,
             calendar_dates,
             today,
-            calendar_config=calendar_config
+            calendar_config=calendar_config,
+            include_previous_days=2
         )
 
         # --------------------------------------------------------
@@ -2349,74 +1823,34 @@ def main():
                     )
 
         shapes_result = load_shapes(
-            selected_shape_ids
+            GTFS_DIR, selected_shape_ids
         )
 
         # --------------------------------------------------------
         # Final output
         # --------------------------------------------------------
 
-        result = {
-
-            "updatedAt":
-                today.isoformat(),
-
-            "source":
-                "CGM Sofia official GTFS",
-
-            # Presentation-only mappings. The original GTFS routes above
-            # remain untouched; the frontend applies these overrides when
-            # displaying line metadata.
-            "lineOverrides":
-                line_overrides,
-
-            "calendar":
-                calendar_result,
-
-            "routes":
-                [
-                    dict(row)
-                    for row in routes_data
-                ],
-
-            "stops":
-                output_stops,
-
-            "trips":
-                [
-                    dict(row)
-                    for row in trips_data
-                ],
-
-            "directions":
-                directions_result,
-
-            "shapes":
-                shapes_result,
-
-            "schedules":
-                schedules_result
+        # Core data are kept separate from the calendar, shapes and per-route
+        # schedules. The browser can therefore load only the timetable files
+        # needed by a selected line or stop.
+        core_result = {
+            "updatedAt": today.isoformat(),
+            "source": "CGM Sofia official GTFS",
+            # Presentation mappings; the original GTFS routes remain intact.
+            "lineOverrides": line_overrides,
+            "routes": [dict(row) for row in routes_data],
+            "stops": output_stops,
+            "trips": [dict(row) for row in trips_data],
+            "directions": directions_result,
         }
 
-        DATA_DIR.mkdir(
-            parents=True,
-            exist_ok=True
+        manifest = write_transport_data(
+            DATA_DIR,
+            core_result,
+            calendar_result,
+            schedules_result,
+            shapes_result,
         )
-
-        with OUTPUT_FILE.open(
-            "w",
-            encoding="utf-8"
-        ) as file:
-
-            json.dump(
-                result,
-                file,
-                ensure_ascii=False,
-                separators=(
-                    ",",
-                    ":"
-                )
-            )
 
         print(
             ""
@@ -2521,7 +1955,8 @@ def main():
         )
 
         print(
-            f"Written: {OUTPUT_FILE}"
+            "Written data manifest: "
+            f"{DATA_DIR / 'manifest.json'}"
         )
 
     finally:

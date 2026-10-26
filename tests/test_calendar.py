@@ -123,6 +123,29 @@ class CalendarTests(unittest.TestCase):
         self.assertEqual(len(result["R1"]["D1"]["weekday"]), 1)
         self.assertEqual(len(result["R1"]["D1"]["weekend"]), 1)
 
+    def test_previous_service_dates_can_be_retained_for_overnight_trips(self):
+        service_types, calendar_result = module.build_calendar_context(
+            [],
+            [
+                {"service_id": "OVERNIGHT", "date": "20261025", "exception_type": "1"},
+                {"service_id": "OVERNIGHT", "date": "20261026", "exception_type": "1"},
+            ],
+            date(2026, 10, 26),
+            horizon_days=1,
+            include_previous_days=2,
+        )
+
+        self.assertEqual(
+            calendar_result["serviceIdsByDate"]["2026-10-25"],
+            ["OVERNIGHT"],
+        )
+        self.assertIn("2026-10-24", calendar_result["serviceIdsByDate"])
+        self.assertEqual(service_types["OVERNIGHT"], ["weekday", "weekend"])
+        self.assertTrue(all(
+            "20261024" <= row["date"] <= "20261027"
+            for row in calendar_result["exceptions"]
+        ))
+
     def test_calendar_dates_only_feed_uses_explicit_service_dates(self):
         dates_only = [
             {"service_id": "A", "date": "20260921", "exception_type": "1"},

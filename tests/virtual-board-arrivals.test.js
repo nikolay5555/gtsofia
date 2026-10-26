@@ -27,7 +27,7 @@ function createStorage(initialEntries = []) {
 function loadInternals(storage) {
   const exportedSource = source.replace(
     /\n\}\)\(\);\s*$/,
-    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    shouldUseStaticFallbackForDirection,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
+    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    isScheduleRowActiveToday,\n    isScheduleRowActiveOnDate,\n    getSofiaDateKey,\n    getSofiaServiceDateWithOffset,\n    getSofiaServiceDateCandidates,\n    gtfsSecondsToServiceDateTimestamp,\n    getFutureScheduledTimestamp,\n    formatArrivalCountdown,\n    shouldUseStaticFallbackForDirection,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
   );
 
   const context = {
@@ -134,6 +134,35 @@ assert.equal(
   internals.isServiceActiveOnDate('FUTURE-SERVICE', new Date('2026-10-03T10:00:00+03:00')),
   true,
   'the same service must appear once its GTFS service date starts'
+);
+
+// Static surface schedules cover the next 24 hours across service dates,
+// while preserving GTFS trips whose times are beyond 24:00.
+const boardNow = Date.parse('2026-10-26T08:20:00+02:00') / 1000;
+const serviceToday = new Date('2026-10-26T12:00:00+02:00');
+const lateEveningSeconds = 23 * 3600 + 13 * 60;
+assert.equal(
+  internals.getFutureScheduledTimestamp(lateEveningSeconds, serviceToday, boardNow),
+  Date.parse('2026-10-26T23:13:00+02:00') / 1000,
+  'a static trip at 23:13 must be included when it is within 24 hours'
+);
+assert.equal(
+  internals.getFutureScheduledTimestamp(23 * 3600 + 13 * 60, new Date('2026-10-27T12:00:00+03:00'), boardNow),
+  null,
+  'a trip tomorrow night beyond the 24-hour horizon must be excluded'
+);
+
+const overnightNow = Date.parse('2026-10-26T01:00:00+02:00') / 1000;
+const previousServiceDate = new Date('2026-10-25T12:00:00+03:00');
+assert.equal(
+  internals.getFutureScheduledTimestamp(25 * 3600 + 30 * 60, previousServiceDate, overnightNow),
+  Date.parse('2026-10-26T01:30:00+02:00') / 1000,
+  'a 25:30 GTFS time from the previous service date maps to 01:30 after midnight'
+);
+assert.deepEqual(
+  Array.from(internals.getSofiaServiceDateCandidates(new Date('2026-10-26T08:20:00+02:00')), date => internals.getSofiaDateKey(date)).join(','),
+  '2026-10-24,2026-10-25,2026-10-26,2026-10-27',
+  'static schedule scanning includes previous service dates, today and tomorrow'
 );
 
 const nowSeconds = Date.now() / 1000;

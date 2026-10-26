@@ -1,6 +1,7 @@
 (() => {
   const SOFIA_TIME_ZONE = "Europe/Sofia";
   const REFRESH_MS = 15000;
+  const SURFACE_SCHEDULE_LOOK_AHEAD_SECONDS = 24 * 60 * 60;
   const SOFIA_CENTER = [42.6977, 23.3219];
 
   let map = null;
@@ -826,13 +827,12 @@
       return "0 мин.";
     }
 
-    // Show the ETA rounded to the nearest whole minute.
-    // This intentionally allows "0 мин." for arrivals less than 30 seconds
-    // away, which is the mathematically correct nearest-minute value.
-    const minutes =
-      Math.round(
-        remainingSeconds / 60
-      );
+    // Round to the nearest minute, but never show zero before the vehicle
+    // has arrived. Zero is reserved for an arrival at/past its timestamp.
+    const minutes = Math.max(
+      1,
+      Math.round(remainingSeconds / 60)
+    );
 
     return `${minutes} мин.`;
   }
@@ -1040,6 +1040,32 @@
     );
   }
 
+  // Return a Date whose displayed Sofia calendar date is the requested
+  // number of days from the current Sofia date. Noon UTC avoids ambiguous
+  // local-time parsing around midnight and daylight-saving transitions.
+  function getSofiaServiceDateWithOffset(
+    dayOffset = 0,
+    referenceDate = new Date()
+  ) {
+    const parts = getSofiaDateParts(referenceDate);
+    return new Date(Date.UTC(
+      parts.year,
+      parts.month - 1,
+      parts.day + Number(dayOffset || 0),
+      12, 0, 0
+    ));
+  }
+
+  function getSofiaServiceDateCandidates(
+    referenceDate = new Date()
+  ) {
+    // Some GTFS trips use times beyond 24:00. Include the two preceding
+    // service dates as well as today and tomorrow, then filter by actual ETA.
+    return [-2, -1, 0, 1].map(offset =>
+      getSofiaServiceDateWithOffset(offset, referenceDate)
+    );
+  }
+
   function getSofiaWeekdayField(
     date = new Date()
   ) {
@@ -1194,8 +1220,9 @@
     return active;
   }
 
-  function isScheduleRowActiveToday(
-    schedule
+  function isScheduleRowActiveOnDate(
+    schedule,
+    serviceDate = new Date()
   ) {
     resetServiceActiveCacheIfNeeded();
 
@@ -1208,40 +1235,24 @@
         || ""
       ).trim();
 
-    const dateKey =
-      getSofiaDateKey();
+    const dateKey = getSofiaDateKey(serviceDate);
 
-    if (
-      !serviceId
-      || !dateKey
-    ) {
+    if (!serviceId || !dateKey) {
       return true;
     }
 
-    const cacheKey =
-      `${dateKey}|${serviceId}`;
-
-    if (
-      serviceActiveCache.has(
-        cacheKey
-      )
-    ) {
-      return serviceActiveCache.get(
-        cacheKey
-      );
+    const cacheKey = `${dateKey}|${serviceId}`;
+    if (serviceActiveCache.has(cacheKey)) {
+      return serviceActiveCache.get(cacheKey);
     }
 
-    const active =
-      isServiceActiveOnDate(
-        serviceId
-      );
-
-    serviceActiveCache.set(
-      cacheKey,
-      active
-    );
-
+    const active = isServiceActiveOnDate(serviceId, serviceDate);
+    serviceActiveCache.set(cacheKey, active);
     return active;
+  }
+
+  function isScheduleRowActiveToday(schedule) {
+    return isScheduleRowActiveOnDate(schedule, new Date());
   }
 
   function getSofiaOffsetMs(
@@ -1285,27 +1296,67 @@
     );
   }
 
-  function gtfsSecondsToTodayTimestamp(
-    seconds
+  function gtfsSecondsToServiceDateTimestamp(
+    seconds,
+    serviceDate = new Date()
   ) {
-    const date =
-      getSofiaDateParts();
+    const totalSeconds = Number(seconds);
+    if (!Number.isFinite(totalSeconds)) return NaN;
 
-    const baseUtc =
-      Date.UTC(
-        date.year,
-        date.month - 1,
-        date.day
-      );
+    const serviceParts = getSofiaDateParts(serviceDate);
+    const serviceBaseUtc = Date.UTC(
+      serviceParts.year,
+      serviceParts.month - 1,
+      serviceParts.day
+    );
 
-    const candidate =
-      baseUtc
-      + Number(seconds) * 1000
-      - getSofiaOffsetMs(
-        new Date(baseUtc)
-      );
+    const dayOffset = Math.floor(totalSeconds / 86400);
+    const secondsWithinDay = totalSeconds - dayOffset * 86400;
+    const targetBaseUtc = serviceBaseUtc + dayOffset * 86400000;
+    const targetDate = new Date(targetBaseUtc);
+    const targetYear = targetDate.getUTCFullYear();
+    const targetMonth = targetDate.getUTCMonth();
+    const targetDay = targetDate.getUTCDate();
+    const hour = Math.floor(secondsWithinDay / 3600);
+    const minute = Math.floor((secondsWithinDay % 3600) / 60);
+    const second = Math.floor(secondsWithinDay % 60);
 
-    return candidate / 1000;
+    // Convert the intended Sofia wall-clock time to UTC. Re-check the offset
+    // after the first conversion so dates around a DST change use the offset
+    // of the target local timestamp rather than today's offset.
+    const utcGuess = Date.UTC(
+      targetYear, targetMonth, targetDay, hour, minute, second
+    );
+    let offsetMs = getSofiaOffsetMs(new Date(utcGuess));
+    let timestampMs = utcGuess - offsetMs;
+    const actualOffsetMs = getSofiaOffsetMs(new Date(timestampMs));
+    if (actualOffsetMs !== offsetMs) {
+      offsetMs = actualOffsetMs;
+      timestampMs = utcGuess - offsetMs;
+    }
+
+    return timestampMs / 1000;
+  }
+
+  function gtfsSecondsToTodayTimestamp(seconds) {
+    return gtfsSecondsToServiceDateTimestamp(seconds, new Date());
+  }
+
+  function getFutureScheduledTimestamp(
+    seconds,
+    serviceDate,
+    nowSeconds = Date.now() / 1000,
+    horizonSeconds = SURFACE_SCHEDULE_LOOK_AHEAD_SECONDS
+  ) {
+    const timestamp = gtfsSecondsToServiceDateTimestamp(seconds, serviceDate);
+    if (
+      !Number.isFinite(timestamp)
+      || timestamp < nowSeconds
+      || timestamp > nowSeconds + horizonSeconds
+    ) {
+      return null;
+    }
+    return timestamp;
   }
 
   function findStaticTrip(
@@ -1912,12 +1963,6 @@
             routeId
           ] || {};
 
-      const scheduleSet =
-        transportData
-          ?.schedules?.[
-            routeId
-          ] || {};
-
       const meta =
         getLineMeta(
           routeId,
@@ -1976,8 +2021,7 @@
             directionKey,
             direction,
             stopIndex,
-            meta,
-            scheduleSet
+            meta
           };
 
           directionEntries.set(
@@ -2047,6 +2091,20 @@
       : [];
   }
 
+  function getScheduleRouteIdsForStop(stop) {
+    const selectedStopId = String(
+      stop?.stop_id || stop?.stop_code || ""
+    ).trim();
+    if (!selectedStopId) return [];
+
+    const key = normalizeStopKey(selectedStopId);
+    const entries = [
+      ...(surfaceDirectionsByStop.get(key) || []),
+      ...(metroDirectionsByStop.get(key) || [])
+    ];
+    return [...new Set(entries.map(entry => String(entry.routeId || "").trim()).filter(Boolean))];
+  }
+
   function getMetroScheduledArrivals(
     stop
   ) {
@@ -2102,9 +2160,11 @@
         directionKey,
         direction,
         stopIndex,
-        meta,
-        scheduleSet
+        meta
       } = entry;
+
+      const scheduleSet =
+        transportData?.schedules?.[routeId] || {};
 
       const pattern =
         Array.isArray(
@@ -2858,10 +2918,6 @@
     const nowTimestamp =
       Date.now() / 1000;
 
-    const horizonTimestamp =
-      nowTimestamp
-      + 2 * 60 * 60;
-
     const selectedStop =
       String(
         stop?.stop_id
@@ -2887,8 +2943,8 @@
       return [];
     }
 
-    const dayType =
-      getCurrentScheduleDayType();
+    const serviceDates =
+      getSofiaServiceDateCandidates();
 
     const rowsByTerminal =
       new Map();
@@ -2907,9 +2963,11 @@
         directionKey,
         direction,
         stopIndex,
-        meta,
-        scheduleSet
+        meta
       } = entry;
+
+      const scheduleSet =
+        transportData?.schedules?.[routeId] || {};
 
       const pattern =
         Array.isArray(
@@ -2924,40 +2982,41 @@
         continue;
       }
 
-      const daySchedules =
-        scheduleSet?.[
-          directionKey
-        ]?.[dayType];
+      for (const serviceDate of serviceDates) {
+        const dayType =
+          typeof getTransportCalendarDayType === "function"
+            ? getTransportCalendarDayType(serviceDate)
+            : (
+                new Intl.DateTimeFormat("en-US", {
+                  timeZone: SOFIA_TIME_ZONE,
+                  weekday: "short"
+                }).format(serviceDate) === "Sat"
+                || new Intl.DateTimeFormat("en-US", {
+                  timeZone: SOFIA_TIME_ZONE,
+                  weekday: "short"
+                }).format(serviceDate) === "Sun"
+                  ? "weekend"
+                  : "weekday"
+              );
 
-      if (
-        !Array.isArray(
-          daySchedules
-        )
-      ) {
-        continue;
-      }
+        const daySchedules =
+          scheduleSet?.[directionKey]?.[dayType];
 
-      for (
-        const schedule
-        of daySchedules
-      ) {
-        if (
-          !isScheduleRowActiveToday(
-            schedule
-          )
-        ) {
+        if (!Array.isArray(daySchedules)) {
           continue;
         }
 
-        const seconds =
-          getCachedScheduleTime(
-            schedule,
-            stopIndex
-          );
+        for (const schedule of daySchedules) {
+          if (!isScheduleRowActiveOnDate(schedule, serviceDate)) {
+            continue;
+          }
 
-        if (seconds == null) {
-          continue;
-        }
+          const seconds =
+            getCachedScheduleTime(schedule, stopIndex);
+
+          if (seconds == null) {
+            continue;
+          }
 
         const terminalIndex =
           getCachedScheduleTerminalIndex(
@@ -2996,22 +3055,15 @@
           continue;
         }
 
-        let timestamp =
-          gtfsSecondsToTodayTimestamp(
-            seconds
+        const timestamp =
+          getFutureScheduledTimestamp(
+            seconds,
+            serviceDate,
+            nowTimestamp,
+            SURFACE_SCHEDULE_LOOK_AHEAD_SECONDS
           );
 
-        if (
-          timestamp < nowTimestamp
-        ) {
-          timestamp += 86400;
-        }
-
-        if (
-          timestamp < nowTimestamp
-          || timestamp
-            > horizonTimestamp
-        ) {
+        if (timestamp == null) {
           continue;
         }
 
@@ -3078,8 +3130,9 @@
             }
           );
         }
-      }
-    }
+        } // schedule row
+      } // service date
+    } // direction entry
 
     return [
       ...rowsByTerminal.values()
@@ -5640,6 +5693,19 @@
       true;
 
     try {
+      // Download only timetable files for lines that actually serve this stop.
+      // If one static file is unavailable, keep realtime arrivals working.
+      try {
+        await loadTransportSchedules(
+          getScheduleRouteIdsForStop(stop)
+        );
+      } catch (scheduleError) {
+        console.warn(
+          "Неуспешно зареждане на част от статичните разписания:",
+          scheduleError
+        );
+      }
+
       const data =
         await fetchVirtualBoard(
           stop
@@ -6035,7 +6101,12 @@
   globalThis.__gtsofiaVirtualBoardTestInternals = {
     isServiceActiveOnDate,
     isScheduleRowActiveToday,
+    isScheduleRowActiveOnDate,
     getSofiaDateKey,
+    getSofiaServiceDateWithOffset,
+    getSofiaServiceDateCandidates,
+    gtfsSecondsToServiceDateTimestamp,
+    getFutureScheduledTimestamp,
     shouldUseStaticFallbackForDirection,
     staticArrivalIsCoveredByRealtime,
     getRealtimeScheduledTimestamp

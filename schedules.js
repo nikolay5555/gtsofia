@@ -4,6 +4,7 @@ let selectedDirectionKey = null;
 let selectedStopIndex = 0;
 let selectedDayType = "weekday";
 let selectedCourse = null;
+let scheduleSelectionToken = 0;
 
 const lineGroups = [
   { type: "metro", subtype: "", label: "Метролинии" },
@@ -196,9 +197,9 @@ function closeLineDropdown() {
     );
 }
 
-function selectScheduleLine(line) {
-  selectedScheduleLine =
-    line;
+async function selectScheduleLine(line) {
+  const selectionToken = ++scheduleSelectionToken;
+  selectedScheduleLine = line;
 
   selectedDirectionKey =
     line.directions?.[0]?.key
@@ -248,6 +249,29 @@ function selectScheduleLine(line) {
   );
 
   renderDirections();
+
+  const empty = document.getElementById("scheduleEmpty");
+  if (empty) {
+    empty.hidden = false;
+    empty.textContent = "Зареждане на разписанието…";
+  }
+
+  try {
+    await loadTransportSchedules([line.id]);
+  } catch (error) {
+    if (selectionToken !== scheduleSelectionToken) return;
+    console.error("Неуспешно зареждане на разписанието:", error);
+    if (empty) {
+      empty.hidden = false;
+      empty.textContent = "Разписанието на избраната линия не може да бъде заредено.";
+    }
+    document.getElementById("scheduleSummary").hidden = true;
+    document.getElementById("timetableSection").hidden = true;
+    document.getElementById("courseSection").hidden = true;
+    return;
+  }
+
+  if (selectionToken !== scheduleSelectionToken) return;
   renderSchedule();
 }
 
