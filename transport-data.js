@@ -2,44 +2,48 @@ let gtfsRoutes = [];
 let gtfsStops = [];
 
 async function loadTransportData() {
-    const response = await fetch(
-        './data/transport.json'
+    const files = {
+        metadata: 'metadata.json',
+        calendar: 'calendar.json',
+        routes: 'routes.json',
+        stops: 'stops.json',
+        trips: 'trips.json',
+        directions: 'directions.json',
+        shapes: 'shapes.json',
+        schedules: 'schedules.json'
+    };
+
+    const entries = await Promise.all(
+        Object.entries(files).map(async ([key, filename]) => {
+            const response = await fetch(`./data/${filename}`);
+            if (!response.ok) {
+                throw new Error(
+                    `Неуспешно зареждане на data/${filename}: ${response.status}`
+                );
+            }
+            return [key, await response.json()];
+        })
     );
 
-    if (!response.ok) {
-        throw new Error(
-            `Неуспешно зареждане на transport.json: ${response.status}`
-        );
-    }
+    const loaded = Object.fromEntries(entries);
+    const data = {
+        ...loaded.metadata,
+        calendar: loaded.calendar,
+        routes: loaded.routes,
+        stops: loaded.stops,
+        trips: loaded.trips,
+        directions: loaded.directions,
+        shapes: loaded.shapes,
+        schedules: loaded.schedules
+    };
 
-    const data =
-        await response.json();
+    gtfsRoutes = data.routes || [];
+    gtfsStops = data.stops || [];
+    window.transportData = data;
 
-    gtfsRoutes =
-        data.routes || [];
-
-    gtfsStops =
-        data.stops || [];
-
-    window.transportData =
-        data;
-
-    console.log(
-        'GTFS routes:',
-        gtfsRoutes.length
-    );
-
-    console.log(
-        'GTFS stops:',
-        gtfsStops.length
-    );
-
-    console.log(
-        'GTFS shapes:',
-        Object.keys(
-            data.shapes || {}
-        ).length
-    );
+    console.log('GTFS routes:', gtfsRoutes.length);
+    console.log('GTFS stops:', gtfsStops.length);
+    console.log('GTFS shapes:', Object.keys(data.shapes || {}).length);
 
     return data;
 }

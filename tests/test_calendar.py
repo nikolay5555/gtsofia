@@ -123,6 +123,25 @@ class CalendarTests(unittest.TestCase):
         self.assertEqual(len(result["R1"]["D1"]["weekday"]), 1)
         self.assertEqual(len(result["R1"]["D1"]["weekend"]), 1)
 
+    def test_raw_exceptions_are_replaced_by_a_compact_date_index(self):
+        dates_only = [
+            {"service_id": "A", "date": "20260921", "exception_type": "1"},
+            {"service_id": "A", "date": "20260926", "exception_type": "1"},
+        ]
+
+        service_types, calendar_result = module.build_calendar_context(
+            [],
+            dates_only,
+            date(2026, 9, 21),
+            horizon_days=0,
+        )
+
+        self.assertEqual(calendar_result["endDate"], "2026-09-26")
+        self.assertEqual(calendar_result["serviceIdsByDate"]["2026-09-26"], ["A"])
+        self.assertNotIn("exceptions", calendar_result)
+        # Only the short operational window determines which trips get emitted.
+        self.assertEqual(service_types["A"], ["weekday"])
+
     def test_calendar_dates_only_feed_uses_explicit_service_dates(self):
         dates_only = [
             {"service_id": "A", "date": "20260921", "exception_type": "1"},

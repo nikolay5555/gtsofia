@@ -826,12 +826,12 @@
       return "0 мин.";
     }
 
-    // Show the ETA rounded to the nearest whole minute.
-    // This intentionally allows "0 мин." for arrivals less than 30 seconds
-    // away, which is the mathematically correct nearest-minute value.
+    // Keep every upcoming arrival above zero at a minimum of one minute;
+    // after that, round to the nearest whole minute.
     const minutes =
-      Math.round(
-        remainingSeconds / 60
+      Math.max(
+        1,
+        Math.round(remainingSeconds / 60)
       );
 
     return `${minutes} мин.`;
@@ -1150,46 +1150,11 @@
         ) === "1";
     }
 
-    for (
-      const exception
-      of (calendar?.exceptions || [])
-    ) {
-      if (
-        String(
-          exception?.service_id || ""
-        ).trim() !== id
-      ) {
-        continue;
-      }
+    // serviceIdsByDate is generated for the complete upcoming GTFS coverage
+    // window. Raw calendar_dates rows are intentionally not downloaded; when a
+    // date is outside that index, only a standard calendar.txt pattern can
+    // provide a safe fallback.
 
-      const exceptionDate =
-        String(
-          exception?.date || ""
-        ).trim();
-
-      if (
-        exceptionDate
-        !== dateKey.replaceAll(
-          "-",
-          ""
-        )
-      ) {
-        continue;
-      }
-
-      const type =
-        String(
-          exception?.exception_type || ""
-        ).trim();
-
-      if (type === "1") {
-        active = true;
-      }
-
-      if (type === "2") {
-        active = false;
-      }
-    }
 
     return active;
   }
