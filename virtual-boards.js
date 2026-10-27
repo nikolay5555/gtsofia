@@ -45,7 +45,7 @@
   const ACTIVE_REALTIME_TRIP_TTL_MS =
     6 * 60 * 60 * 1000;
   // The primary countdown plus the next three scheduled/realtime arrivals.
-  const MAX_VISIBLE_BOARD_ARRIVALS = 4;
+  const MAX_VISIBLE_BOARD_ARRIVALS = 3;
 
   const consumedRealtimeArrivals = new Map();
   let consumedRealtimeArrivalsLoaded = false;
