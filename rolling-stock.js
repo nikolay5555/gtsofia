@@ -136,7 +136,7 @@ const rollingStock = [
 
   {
     type: "bus",
-    manufacturer: "	Mercedes",
+    manufacturer: "Mercedes",
     model: "O530 CapaCity",
     year: 2017,
     quantity: 11,
