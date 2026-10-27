@@ -459,10 +459,16 @@
       document.getElementById("stopSearchResults");
 
     if (searchPopover) searchPopover.hidden = true;
-    if (searchButton) searchButton.setAttribute("aria-expanded", "false");
+    if (searchButton) {
+      searchButton.setAttribute("aria-expanded", "false");
+      searchButton.classList.remove("is-active");
+    }
     if (results) results.hidden = true;
     if (favoritesPopover) favoritesPopover.hidden = true;
-    if (favoritesButton) favoritesButton.setAttribute("aria-expanded", "false");
+    if (favoritesButton) {
+      favoritesButton.setAttribute("aria-expanded", "false");
+      favoritesButton.classList.remove("is-active");
+    }
   }
 
   function renderFavoritesList() {
@@ -473,11 +479,30 @@
 
     const favorites =
       getFavoriteStops();
+    const count = document.getElementById("virtualFavoritesCount");
+    const mapCount = document.getElementById("mapFavoritesCount");
+    const favoritesButton = document.getElementById("toggleFavoritesButton");
+
+    if (count) {
+      count.textContent = String(favorites.length);
+      count.setAttribute("aria-label", `${favorites.length} любими спирки`);
+    }
+    if (mapCount) {
+      mapCount.textContent = favorites.length ? String(favorites.length) : "";
+    }
+    if (favoritesButton) {
+      favoritesButton.classList.toggle("has-favorites", favorites.length > 0);
+      favoritesButton.title = favorites.length
+        ? `Любими спирки (${favorites.length})`
+        : "Любими спирки";
+    }
 
     if (!favorites.length) {
       list.innerHTML = `
         <div class="virtual-favorites-empty">
-          Нямате добавени любими спирки. Отворете табло и натиснете звездичката до името на спирката.
+          <span class="virtual-favorites-empty-icon" aria-hidden="true">☆</span>
+          <strong>Все още нямаш любими спирки</strong>
+          <p>Отвори таблото на спирка и натисни звездичката до името ѝ, за да я запазиш тук.</p>
         </div>
       `;
       return;
@@ -490,10 +515,10 @@
         )}">
           <span class="virtual-board-favorite-stop-star" aria-hidden="true">★</span>
           <span class="virtual-board-favorite-stop-info">
-            <strong>${escapeHtml(stop.stop_name || "Спирка")}</strong>
-            <span>[${escapeHtml(stop.stop_code || stop.stop_id || "")}]</span>
+            <strong>${escapeHtml(stop.stop_name || stop.name || "Спирка")}</strong>
+            <span>№ ${escapeHtml(stop.stop_code || stop.stop_id || "—")}</span>
           </span>
-          <span class="virtual-board-favorite-stop-arrow" aria-hidden="true">→</span>
+          <span class="virtual-board-favorite-stop-arrow" aria-hidden="true">↗</span>
         </button>
       `
     ).join("");
@@ -513,6 +538,8 @@
       document.getElementById("toggleFavoritesButton");
     const popover =
       document.getElementById("virtualFavoritesPopover");
+    const closeButton =
+      document.getElementById("closeFavoritesPopover");
 
     if (!button || !popover) return;
 
@@ -528,13 +555,19 @@
         renderFavoritesList();
         popover.hidden = false;
         button.setAttribute("aria-expanded", "true");
+        button.classList.add("is-active");
       }
+    });
+
+    closeButton?.addEventListener("click", event => {
+      event.stopPropagation();
+      closeMapPopovers();
+      button.focus();
     });
 
     document.addEventListener("click", event => {
       if (!event.target.closest(".virtual-favorites-control")) {
-        popover.hidden = true;
-        button.setAttribute("aria-expanded", "false");
+        closeMapPopovers();
       }
     });
   }
@@ -4308,8 +4341,8 @@ if (
 
     panel.innerHTML = `
       <div class="virtual-board-header">
-        <div>
-          <div class="virtual-board-kicker">Спирка ${escapeHtml(
+        <div class="virtual-board-header-copy">
+          <div class="virtual-board-kicker"><span class="virtual-board-kicker-dot" aria-hidden="true"></span> Спирка ${escapeHtml(
             stop.stop_code
             || stop.stop_id
             || ""
@@ -4319,6 +4352,7 @@ if (
             || stop.name
             || "Спирка"
           )}</h2>
+          <p class="virtual-board-subtitle">Предстоящи пристигания</p>
         </div>
         <div class="virtual-board-header-actions">
           <button type="button" class="virtual-board-refresh is-loading" id="virtualBoardRefresh" disabled aria-label="Обнови таблото" title="Обнови таблото"><span aria-hidden="true">↻</span></button>
@@ -4638,6 +4672,8 @@ if (
       document.getElementById("stopSearchPopover");
     const toggleButton =
       document.getElementById("toggleStopSearch");
+    const closeButton =
+      document.getElementById("closeStopSearchPopover");
 
     if (
       !input
@@ -4657,8 +4693,15 @@ if (
       if (opening) {
         popover.hidden = false;
         toggleButton.setAttribute("aria-expanded", "true");
+        toggleButton.classList.add("is-active");
         input.focus();
       }
+    });
+
+    closeButton?.addEventListener("click", event => {
+      event.stopPropagation();
+      closeMapPopovers();
+      toggleButton.focus();
     });
 
     const normalized =
@@ -4841,9 +4884,7 @@ if (
             ".virtual-stop-search-control"
           )
         ) {
-          results.hidden = true;
-          popover.hidden = true;
-          toggleButton.setAttribute("aria-expanded", "false");
+          closeMapPopovers();
         }
       }
     );

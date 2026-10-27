@@ -38,21 +38,36 @@
               aria-controls="stopSearchPopover"
               title="Търсене по спирка"
             >
-              <svg viewBox="0 0 24 24" width="21" height="21" fill="none" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" aria-hidden="true">
                 <circle cx="10.8" cy="10.8" r="6.6" stroke="currentColor" stroke-width="2" />
                 <path d="m16 16 4.3 4.3" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
               </svg>
+              <span class="map-search-label">Търси спирка</span>
             </button>
             <div id="stopSearchPopover" class="virtual-map-popover virtual-stop-search-popover" hidden>
+              <div class="virtual-map-popover-heading">
+                <div class="virtual-popover-heading-copy">
+                  <span class="virtual-map-popover-eyebrow">НАВИГАЦИЯ</span>
+                  <h3>Намери спирка</h3>
+                  <p>Търси по име или номер</p>
+                </div>
+                <button type="button" id="closeStopSearchPopover" class="virtual-popover-close" aria-label="Затвори търсенето" title="Затвори">×</button>
+              </div>
               <label class="sr-only" for="stopSearch">Търсене по спирка</label>
-              <input
-                id="stopSearch"
-                type="search"
-                placeholder="Име или номер на спирка…"
-                autocomplete="off"
-                aria-label="Търсене по спирка"
-              />
-              <div id="stopSearchResults" class="virtual-stop-search-results" hidden></div>
+              <div class="virtual-search-field">
+                <svg viewBox="0 0 24 24" width="19" height="19" fill="none" aria-hidden="true">
+                  <circle cx="10.8" cy="10.8" r="6.6" stroke="currentColor" stroke-width="2" />
+                  <path d="m16 16 4.3 4.3" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                </svg>
+                <input
+                  id="stopSearch"
+                  type="search"
+                  placeholder="Напр. Орлов мост или 2048"
+                  autocomplete="off"
+                  aria-label="Търсене по спирка"
+                />
+              </div>
+              <div id="stopSearchResults" class="virtual-stop-search-results" hidden aria-live="polite"></div>
             </div>
           </div>
 
@@ -75,13 +90,20 @@
               aria-expanded="false"
               aria-controls="virtualFavoritesPopover"
               title="Любими спирки"
-            ><span aria-hidden="true">☆</span></button>
+            ><span class="map-favorites-icon" aria-hidden="true">☆</span><span class="map-favorites-count" id="mapFavoritesCount" aria-hidden="true"></span></button>
             <div id="virtualFavoritesPopover" class="virtual-map-popover virtual-favorites-popover" hidden>
               <div class="virtual-map-popover-heading">
-                <h3>Любими спирки</h3>
-                <span aria-hidden="true">★</span>
+                <div class="virtual-popover-heading-copy">
+                  <span class="virtual-map-popover-eyebrow">БЪРЗ ДОСТЪП</span>
+                  <h3>Любими спирки</h3>
+                  <p>Запазените от теб табла</p>
+                </div>
+                <div class="virtual-popover-heading-actions">
+                  <span class="virtual-favorites-count" id="virtualFavoritesCount" aria-label="Брой любими спирки">0</span>
+                  <button type="button" id="closeFavoritesPopover" class="virtual-popover-close" aria-label="Затвори любимите спирки" title="Затвори">×</button>
+                </div>
               </div>
-              <div id="virtualFavoritesList" class="virtual-board-favorites-list"></div>
+              <div id="virtualFavoritesList" class="virtual-board-favorites-list" aria-live="polite"></div>
             </div>
           </div>
         </div>
@@ -98,6 +120,6 @@
   <script src="navbar.js"></script>
   <script src="transport-data.js"></script>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="virtual-boards.js?v=29"></script>
+  <script src="virtual-boards.js?v=30"></script>
 </body>
 </html>
