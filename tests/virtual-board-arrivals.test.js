@@ -112,7 +112,7 @@ assert.equal(
 // is present, while retaining GTFS as a fallback when no OSM name exists.
 assert.equal(
   internals.MAX_VISIBLE_BOARD_ARRIVALS,
-  4,
+  3,
   'the board should show the primary arrival plus up to three following times'
 );
 assert.deepEqual(
