@@ -22,7 +22,7 @@ jobs:
         with:
           python-version: "3.x"
 
-      - name: Generate transport data from official CGM GTFS
+      - name: Generate transport data from CGM GTFS with OSM-first stop names
         run: python Scripts/generate_transport_data.py
 
       - name: Commit changes
