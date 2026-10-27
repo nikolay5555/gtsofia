@@ -89,6 +89,33 @@ class CalendarTests(unittest.TestCase):
 
         self.assertEqual(service_types["DAILY"], ["weekday", "weekend"])
 
+    def test_raw_calendar_exceptions_are_not_persisted_and_coverage_is_full(self):
+        dates_only = [
+            {"service_id": "A", "date": "20260921", "exception_type": "1"},
+            {"service_id": "A", "date": "20260930", "exception_type": "1"},
+            {"service_id": "A", "date": "20260922", "exception_type": "2"},
+        ]
+
+        _, calendar_result = module.build_calendar_context(
+            [], dates_only, date(2026, 9, 21), horizon_days=0
+        )
+
+        self.assertEqual(calendar_result["exceptions"], [])
+        self.assertEqual(calendar_result["servicePatterns"], [])
+        self.assertEqual(
+            calendar_result["serviceCoverageEndDate"], "2026-09-30"
+        )
+        self.assertEqual(
+            calendar_result["serviceIdsByDate"]["2026-09-21"], ["A"]
+        )
+        self.assertEqual(
+            calendar_result["serviceIdsByDate"]["2026-09-22"], []
+        )
+        self.assertEqual(
+            calendar_result["serviceIdsByDate"]["2026-09-30"], ["A"]
+        )
+        self.assertEqual(len(calendar_result["serviceIdsByDate"]), 10)
+
     def test_trip_available_in_both_buckets_is_written_to_both_schedules(self):
         directions = {
             "R1": {

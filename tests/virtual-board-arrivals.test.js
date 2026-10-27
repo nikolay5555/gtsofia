@@ -160,7 +160,7 @@ assert.deepEqual(
       { timestamp: 30 },
       { timestamp: 60 },
       { timestamp: null }
-    ]),
+    ], 4),
     time => time.timestamp
   ),
   [20, 30, 40, 50],
@@ -474,7 +474,7 @@ assert.deepEqual(
           { timestamp: 500, scheduled: true }
         ]
       }
-    ])[0].times,
+    ], 4)[0].times,
     time => [time.timestamp, time.scheduled]
   ),
   [[100, false], [200, true], [300, true], [400, false]],

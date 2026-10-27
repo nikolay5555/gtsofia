@@ -1221,16 +1221,12 @@
 
     if (
       byDate
-      && Object.prototype.hasOwnProperty.call(
-        byDate,
-        dateKey
-      )
+      && typeof byDate === "object"
     ) {
+      const serviceIds = byDate[dateKey];
       return (
-        Array.isArray(
-          byDate[dateKey]
-        )
-        && byDate[dateKey].some(
+        Array.isArray(serviceIds)
+        && serviceIds.some(
           value =>
             String(value).trim()
             === id

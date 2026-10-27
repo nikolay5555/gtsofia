@@ -1,47 +1,65 @@
 let gtfsRoutes = [];
 let gtfsStops = [];
+let transportDataPromise = null;
+
+const TRANSPORT_DATA_FILES = [
+    ['metadata', './data/metadata.json'],
+    ['calendar', './data/calendar.json'],
+    ['routes', './data/routes.json'],
+    ['stops', './data/stops.json'],
+    ['trips', './data/trips.json'],
+    ['directions', './data/directions.json'],
+    ['shapes', './data/shapes.json'],
+    ['schedules', './data/schedules.json'],
+];
 
 async function loadTransportData() {
-    const response = await fetch(
-        './data/transport.json'
-    );
-
-    if (!response.ok) {
-        throw new Error(
-            `Неуспешно зареждане на transport.json: ${response.status}`
-        );
+    if (transportDataPromise) {
+        return transportDataPromise;
     }
 
-    const data =
-        await response.json();
+    transportDataPromise = (async () => {
+        const entries = await Promise.all(
+            TRANSPORT_DATA_FILES.map(async ([key, path]) => {
+                const response = await fetch(path);
+                if (!response.ok) {
+                    throw new Error(
+                        `Неуспешно зареждане на ${path}: ${response.status}`
+                    );
+                }
+                return [key, await response.json()];
+            })
+        );
+        const parts = Object.fromEntries(entries);
+        const data = {
+            ...(parts.metadata || {}),
+            calendar: parts.calendar || {},
+            routes: parts.routes || [],
+            stops: parts.stops || [],
+            trips: parts.trips || [],
+            directions: parts.directions || {},
+            shapes: parts.shapes || {},
+            schedules: parts.schedules || {},
+        };
 
-    gtfsRoutes =
-        data.routes || [];
+        gtfsRoutes = data.routes;
+        gtfsStops = data.stops;
+        window.transportData = data;
 
-    gtfsStops =
-        data.stops || [];
+        console.log('GTFS routes:', gtfsRoutes.length);
+        console.log('GTFS stops:', gtfsStops.length);
+        console.log('GTFS shapes:', Object.keys(data.shapes).length);
 
-    window.transportData =
-        data;
+        return data;
+    })();
 
-    console.log(
-        'GTFS routes:',
-        gtfsRoutes.length
-    );
-
-    console.log(
-        'GTFS stops:',
-        gtfsStops.length
-    );
-
-    console.log(
-        'GTFS shapes:',
-        Object.keys(
-            data.shapes || {}
-        ).length
-    );
-
-    return data;
+    try {
+        return await transportDataPromise;
+    } catch (error) {
+        // A failed request must not permanently cache a rejected promise.
+        transportDataPromise = null;
+        throw error;
+    }
 }
 
 
