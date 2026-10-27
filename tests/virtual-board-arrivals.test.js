@@ -27,7 +27,7 @@ function createStorage(initialEntries = []) {
 function loadInternals(storage) {
   const exportedSource = source.replace(
     /\n\}\)\(\);\s*$/,
-    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    getConsumedRealtimeTripKey,\n    rememberConsumedRealtimeTrips,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isConsumedRealtimeTrip,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    shouldUseStaticFallbackForDirection,\n    getDestinationDisplayName,\n    getLimitedUniqueArrivalTimes,\n    MAX_VISIBLE_BOARD_ARRIVALS,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
+    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    getConsumedRealtimeTripKey,\n    rememberConsumedRealtimeTrips,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isConsumedRealtimeTrip,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    getDestinationDisplayName,\n    getLimitedUniqueArrivalTimes,\n    mergeBoardRoutesByDestination,\n    MAX_VISIBLE_BOARD_ARRIVALS,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
   );
 
   const context = {
@@ -416,31 +416,76 @@ assert.equal(
   'sequence-only SKIPPED must not suppress a different stop in the same trip'
 );
 
-// Static fallback is directional, not line-wide: the same line may keep a
-// realtime course in one direction while the opposite direction uses static.
-assert.equal(
-  internals.shouldUseStaticFallbackForDirection(
-    { route_id: 'R1', direction_key: 'D1', destination: 'Център' },
-    { realtimeRoutes: [{ route_id: 'R1', direction_key: 'D1' }], activeDirections: [] }
-  ), false, 'same line + direction realtime must suppress static fallback'
+// Realtime and timetable courses on the same displayed line/destination must
+// merge into a single row. Realtime arrivals keep their identity; distinct
+// scheduled courses fill the remaining slots up to four visible times.
+assert.deepEqual(
+  Array.from(
+    internals.mergeBoardRoutesByDestination([
+      {
+        route_id: 'R1', route_ref: '10', destination: 'Център',
+        realtime: true, source: 'realtime',
+        times: [
+          { timestamp: 100, scheduled: false },
+          { timestamp: 400, scheduled: false }
+        ]
+      },
+      {
+        route_id: 'R1', route_ref: '10', destination: 'Център',
+        scheduled: true, source: 'static',
+        times: [
+          { timestamp: 200, scheduled: true },
+          { timestamp: 300, scheduled: true },
+          { timestamp: 500, scheduled: true }
+        ]
+      }
+    ])[0].times,
+    time => [time.timestamp, time.scheduled]
+  ),
+  [[100, false], [200, true], [300, true], [400, false]],
+  'realtime and schedule arrivals should combine, sort, and stop at four'
 );
 assert.equal(
-  internals.shouldUseStaticFallbackForDirection(
-    { route_id: 'R1', direction_key: 'D2', destination: 'Квартал' },
-    { realtimeRoutes: [{ route_id: 'R1', direction_key: 'D1' }], activeDirections: [] }
-  ), true, 'realtime in the opposite direction must not suppress static fallback'
+  internals.mergeBoardRoutesByDestination([
+    {
+      route_id: 'R1', route_ref: '10', destination: 'Център',
+      realtime: true, times: [{ timestamp: 100, scheduled: false }]
+    },
+    {
+      route_id: 'R1', route_ref: '10', destination: 'Център',
+      scheduled: true, times: [{ timestamp: 100, scheduled: true }]
+    }
+  ])[0].times.length,
+  1,
+  'duplicate timestamps from realtime and timetable must not occupy two slots'
 );
 assert.equal(
-  internals.shouldUseStaticFallbackForDirection(
-    { route_id: 'R1', direction_key: 'D2', destination: 'Квартал' },
-    { realtimeRoutes: [], activeDirections: [{ route_id: 'R1', key: 'D2' }] }
-  ), false, 'an active realtime trip without an arrival row must still suppress that direction'
+  internals.mergeBoardRoutesByDestination([
+    {
+      route_id: 'R1', route_ref: '10', destination: 'Център',
+      realtime: true, times: [{ timestamp: 100, scheduled: false }]
+    },
+    {
+      route_id: 'R1', route_ref: '10', destination: 'Квартал',
+      scheduled: true, times: [{ timestamp: 200, scheduled: true }]
+    }
+  ]).length,
+  2,
+  'different destinations on the same line must remain separate rows'
 );
 assert.equal(
-  internals.shouldUseStaticFallbackForDirection(
-    { route_id: 'R1', direction_key: 'D2', destination: 'Квартал' },
-    { realtimeRoutes: [], activeDirections: [{ route_id: 'R1', key: 'D1' }] }
-  ), true, 'an active trip in another direction must not suppress fallback'
+  internals.mergeBoardRoutesByDestination([
+    {
+      route_id: 'R1', route_ref: '—', destination: 'Център',
+      realtime: true, times: [{ timestamp: 100, scheduled: false }]
+    },
+    {
+      route_id: 'R1', route_ref: '10', destination: 'Център',
+      scheduled: true, times: [{ timestamp: 200, scheduled: true }]
+    }
+  ])[0].route_ref,
+  '10',
+  'a missing realtime route label must not prevent merging and should use the static label'
 );
 
 console.log('virtual-board-arrivals: all tests passed');

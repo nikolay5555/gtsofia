@@ -1742,6 +1742,80 @@
       .slice(0, limit);
   }
 
+
+  // Merge realtime and timetable courses into one displayed line/destination
+  // row before limiting it to the primary arrival plus three following times.
+  // This lets non-duplicated scheduled courses fill slots when realtime only
+  // provides one or two predicted arrivals for the same direction.
+  function mergeBoardRoutesByDestination(
+    routes,
+    maxCount = MAX_VISIBLE_BOARD_ARRIVALS
+  ) {
+    const grouped = new Map();
+
+    for (const route of Array.isArray(routes) ? routes : []) {
+      const routeId = String(route?.route_id || '').trim();
+      const destinationKey = normalizeDirectionText(
+        route?.destination || route?.headsign || ''
+      );
+      // route_ref is display metadata and may be missing on one source. The
+      // stable grouping identity is the GTFS route ID plus the OSM-first
+      // destination, not the label copied from either feed.
+      const key = `${routeId}|${destinationKey}`;
+      const routeTimes = Array.isArray(route?.times) ? route.times : [];
+
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          ...route,
+          times: [...routeTimes]
+        });
+        continue;
+      }
+
+      const existing = grouped.get(key);
+      existing.times.push(...routeTimes);
+
+      const existingRef = String(existing?.route_ref || '').trim();
+      const incomingRef = String(route?.route_ref || '').trim();
+      if (
+        (!existingRef || existingRef === '—')
+        && incomingRef
+        && incomingRef !== '—'
+      ) {
+        existing.route_ref = incomingRef;
+      }
+      if (!existing.meta && route?.meta) {
+        existing.meta = route.meta;
+      }
+
+      // Keep realtime metadata on the row when both sources share its key;
+      // individual arrival entries still retain their own scheduled flag.
+      if (route?.realtime && !existing?.realtime) {
+        const displayRef =
+          existingRef && existingRef !== '—'
+            ? existingRef
+            : incomingRef;
+        grouped.set(key, {
+          ...route,
+          route_ref: displayRef || route.route_ref,
+          meta: route.meta || existing.meta,
+          times: existing.times
+        });
+      }
+    }
+
+    return [...grouped.values()]
+      .map(route => ({
+        ...route,
+        times: getLimitedUniqueArrivalTimes(route.times, maxCount)
+      }))
+      .filter(route => route.times.length)
+      .sort((a, b) =>
+        Number(a.times?.[0]?.timestamp)
+        - Number(b.times?.[0]?.timestamp)
+      );
+  }
+
   function getStopDistanceMeters(
     left,
     right
@@ -3090,10 +3164,6 @@
     const nowTimestamp =
       Date.now() / 1000;
 
-    const horizonTimestamp =
-      nowTimestamp
-      + 2 * 60 * 60;
-
     const selectedStop =
       String(
         stop?.stop_id
@@ -3228,22 +3298,17 @@
           continue;
         }
 
-        let timestamp =
+        const timestamp =
           gtfsSecondsToTodayTimestamp(
             seconds
           );
 
-        if (
-          timestamp < nowTimestamp
-        ) {
-          timestamp += 86400;
-        }
-
-        if (
-          timestamp < nowTimestamp
-          || timestamp
-            > horizonTimestamp
-        ) {
+        // Include all remaining departures for the active service date, not
+        // just the next two hours. Otherwise low-frequency routes can never
+        // contribute a fourth time even when later same-day trips exist.
+        // Do not roll already-passed same-day times into tomorrow: tomorrow's
+        // calendar/service pattern may be different.
+        if (timestamp < nowTimestamp) {
           continue;
         }
 
@@ -3856,458 +3921,22 @@
       mergedSurfaceRoutes
     );
 
-    const scheduledSurfaceRoutes =
-      isMetroStop(stop)
-        ? []
-        : getSurfaceScheduledArrivals(
-            stop,
-            skippedTrips
-          );
-
-    function directionPatternsShareLongPrefix(
-      shortDirection,
-      longDirection,
-      selectedStopId
-    ) {
-      const shortPattern =
-        Array.isArray(
-          shortDirection?.pattern
-        )
-          ? shortDirection.pattern.map(
-              String
-            )
-          : [];
-
-      const longPattern =
-        Array.isArray(
-          longDirection?.pattern
-        )
-          ? longDirection.pattern.map(
-              String
-            )
-          : [];
-
-      if (
-        !shortPattern.length
-        || shortPattern.length
-          >= longPattern.length
-      ) {
-        return false;
-      }
-
-      let commonPrefix = 0;
-
-      while (
-        commonPrefix
-          < shortPattern.length
-        && commonPrefix
-          < longPattern.length
-        && stopIdsMatch(
-          shortPattern[
-            commonPrefix
-          ],
-          longPattern[
-            commonPrefix
-          ]
-        )
-      ) {
-        commonPrefix++;
-      }
-
-      const shortRatio =
-        commonPrefix
-        / shortPattern.length;
-
-      const longRatio =
-        commonPrefix
-        / longPattern.length;
-
-      if (
-        commonPrefix < 5
-        || shortRatio < 0.8
-        || longRatio < 0.7
-      ) {
-        return false;
-      }
-
-      const shortStopIndex =
-        shortPattern.findIndex(
-          id =>
-            stopIdsMatch(
-              id,
-              selectedStopId
-            )
-        );
-
-      const longStopIndex =
-        longPattern.findIndex(
-          id =>
-            stopIdsMatch(
-              id,
-              selectedStopId
-            )
-        );
-
-      if (
-        shortStopIndex < 0
-        || longStopIndex < 0
-      ) {
-        return false;
-      }
-
-      return (
-        commonPrefix
-        > Math.max(
-          shortStopIndex,
-          longStopIndex
-        )
-      );
-    }
-
-    function realtimeOverridesScheduledDirection(
-      realtimeRoute,
-      scheduledRoute,
-      selectedStopId
-    ) {
-      const routeId =
-        String(
-          scheduledRoute?.route_id
-          || ""
-        );
-
-      if (
-        !routeId
-        || routeId
-          !== String(
-            realtimeRoute?.route_id
-            || ""
-          )
-      ) {
-        return false;
-      }
-
-      const realtimeDirectionKey =
-        String(
-          realtimeRoute
-            ?.direction_key
-          || ""
-        ).trim();
-
-      const scheduledDirectionKey =
-        String(
-          scheduledRoute
-            ?.direction_key
-          || ""
-        ).trim();
-
-      if (
-        realtimeDirectionKey
-        && scheduledDirectionKey
-        && realtimeDirectionKey
-          === scheduledDirectionKey
-      ) {
-        return true;
-      }
-
-      if (
-        !realtimeDirectionKey
-        || !scheduledDirectionKey
-      ) {
-        return false;
-      }
-
-      const directionSet =
-        transportData
-          ?.directions?.[
-            routeId
-          ] || {};
-
-      const shortDirection =
-        directionSet[
-          realtimeDirectionKey
-        ];
-
-      const longDirection =
-        directionSet[
-          scheduledDirectionKey
-        ];
-
-      if (
-        !shortDirection
-        || !longDirection
-      ) {
-        return false;
-      }
-
-      if (
-        !directionPatternsShareLongPrefix(
-          shortDirection,
-          longDirection,
-          selectedStopId
-        )
-      ) {
-        return false;
-      }
-
-      const realtimeTerminalId =
-        String(
-          realtimeRoute
-            ?.destination_stop_id
-          || ""
-        ).trim();
-
-      const realtimeDestinationKey =
-        normalizeDirectionText(
-          realtimeRoute
-            ?.destination
-          || ""
-        );
-
-      const shortDestinationKey =
-        normalizeDirectionText(
-          shortDirection?.destination
-          || shortDirection?.headsign
-          || ""
-        );
-
-      return (
-        (
-          !!realtimeTerminalId
-          && isTerminalDirectionForStop(
-            routeId,
-            realtimeTerminalId,
-            shortDirection
-          )
-        )
-        || (
-          !!shortDestinationKey
-          && realtimeDestinationKey
-            === shortDestinationKey
-        )
-      );
-    }
-
-    function activeShortDirectionOverridesScheduledDirection(
-      scheduledRoute,
-      activeDirections
-    ) {
-      const routeId =
-        String(
-          scheduledRoute?.route_id
-          || ""
-        ).trim();
-
-      const scheduledDirectionKey =
-        String(
-          scheduledRoute?.direction_key
-          || ""
-        ).trim();
-
-      if (
-        !routeId
-        || !scheduledDirectionKey
-      ) {
-        return false;
-      }
-
-      const directionSet =
-        transportData
-          ?.directions?.[
-            routeId
-          ] || {};
-
-      const longDirection =
-        directionSet[
-          scheduledDirectionKey
-        ];
-
-      if (!longDirection) {
-        return false;
-      }
-
-      for (
-        const activeDirection
-        of activeDirections
-      ) {
-        if (
-          String(
-            activeDirection?.route_id
-            || ""
-          ).trim()
-          !== routeId
-        ) {
-          continue;
-        }
-
-        const shortDirectionKey =
-          String(
-            activeDirection?.key
-            || ""
-          ).trim();
-
-        if (
-          !shortDirectionKey
-          || shortDirectionKey
-            === scheduledDirectionKey
-        ) {
-          continue;
-        }
-
-        const shortDirection =
-          directionSet[
-            shortDirectionKey
-          ];
-
-        if (!shortDirection) {
-          continue;
-        }
-
-        const shortPattern =
-          Array.isArray(
-            shortDirection?.pattern
-          )
-            ? shortDirection.pattern.map(
-                String
-              )
-            : [];
-
-        const longPattern =
-          Array.isArray(
-            longDirection?.pattern
-          )
-            ? longDirection.pattern.map(
-                String
-              )
-            : [];
-
-        if (
-          !shortPattern.length
-          || shortPattern.length
-            >= longPattern.length
-        ) {
-          continue;
-        }
-
-        let commonPrefix = 0;
-
-        while (
-          commonPrefix
-            < shortPattern.length
-          && commonPrefix
-            < longPattern.length
-          && stopIdsMatch(
-            shortPattern[
-              commonPrefix
-            ],
-            longPattern[
-              commonPrefix
-            ]
-          )
-        ) {
-          commonPrefix++;
-        }
-
-        let commonSuffix = 0;
-
-        while (
-          commonSuffix
-            < shortPattern.length
-          && commonSuffix
-            < longPattern.length
-          && stopIdsMatch(
-            shortPattern[
-              shortPattern.length
-              - 1
-              - commonSuffix
-            ],
-            longPattern[
-              longPattern.length
-              - 1
-              - commonSuffix
-            ]
-          )
-        ) {
-          commonSuffix++;
-        }
-
-        const prefixShortRatio =
-          commonPrefix
-          / shortPattern.length;
-
-        const prefixLongRatio =
-          commonPrefix
-          / longPattern.length;
-
-        const suffixShortRatio =
-          commonSuffix
-          / shortPattern.length;
-
-        const suffixLongRatio =
-          commonSuffix
-          / longPattern.length;
-
-        const prefixMatch =
-          commonPrefix >= 5
-          && prefixShortRatio >= 0.8
-          && prefixLongRatio >= 0.7
-          && commonPrefix
-            < shortPattern.length;
-
-        const suffixMatch =
-          commonSuffix >= 5
-          && suffixShortRatio >= 0.8
-          && suffixLongRatio >= 0.7
-          && commonSuffix
-            < shortPattern.length;
-
-        if (
-          !prefixMatch
-          && !suffixMatch
-        ) {
-          continue;
-        }
-
-        return true;
-      }
-
-      return false;
-    }
-
-    const realtimeLogicalRoutes =
-      mergedSurfaceRoutes.filter(
-        route =>
-          String(
-            route.direction_key
-            || ""
-          ).trim()
-      );
-
-    const activeDirections = [];
-    const seenActiveDirectionKeys =
-      new Set();
-
+    // Reserve active courses before building static candidates. A trip may be
+    // active in GTFS-RT without a StopTimeUpdate for this specific stop. Its own
+    // timetable course must stay suppressed, while other courses in the same
+    // line/direction remain eligible to fill the board.
     const activeTripRecords =
-      Array.isArray(
-        data?.active_trips
-      )
+      Array.isArray(data?.active_trips)
         ? data.active_trips
         : (
-          Array.isArray(
-            data?.active_trip_ids
-          )
-            ? data.active_trip_ids.map(
-                tripId => ({
-                  trip_id: tripId,
-                  schedule_relationship_name:
-                    "SCHEDULED"
-                })
-              )
+          Array.isArray(data?.active_trip_ids)
+            ? data.active_trip_ids.map(tripId => ({
+                trip_id: tripId,
+                schedule_relationship_name: "SCHEDULED"
+              }))
             : []
         );
 
-    // An active trip can have no StopTimeUpdate for this exact stop. If its
-    // feed entry then disappears, its static course must still not pop back
-    // into the timetable fallback for the duration of the course window.
     rememberConsumedRealtimeTrips(
       stop,
       activeTripRecords.filter(activeTrip => {
@@ -4319,247 +3948,32 @@
       })
     );
 
-    for (
-      const activeTrip
-      of activeTripRecords
-    ) {
-      const activeTripId =
-        String(
-          activeTrip?.trip_id
-          || ""
-        ).trim();
-
-      if (!activeTripId) {
-        continue;
-      }
-
-      const relationship =
-        String(
-          activeTrip
-            ?.schedule_relationship_name
-          || "SCHEDULED"
-        ).toUpperCase();
-
-      if (
-        relationship === "CANCELED"
-        || relationship === "DELETED"
-      ) {
-        continue;
-      }
-
-      const staticTrip =
-        findStaticTrip(
-          activeTripId
-        );
-
-      const activeRouteId =
-        String(
-          activeTrip?.route_id
-          || staticTrip?.route_id
-          || ""
-        ).trim();
-
-      if (!activeRouteId) {
-        continue;
-      }
-
-      const destinationStop =
-        getStopById(
-          activeTrip
-            ?.destination_stop_id
-        );
-
-      const activeDirection =
-        getStaticDirectionForTrip(
-          staticTrip
-        )
-        || resolveDirectionForRealtimeRoute(
-          activeRouteId,
-          stop.stop_id,
-          null,
-          destinationStop
-            ?.stop_name
-            || "",
-          activeTrip
-            ?.direction_id
-            || ""
-        );
-
-      if (!activeDirection?.key) {
-        continue;
-      }
-
-      const activeKey =
-        `${activeRouteId}|${
-          String(
-            activeDirection.key
-          )
-        }`;
-
-      if (
-        seenActiveDirectionKeys.has(
-          activeKey
-        )
-      ) {
-        continue;
-      }
-
-      seenActiveDirectionKeys.add(
-        activeKey
-      );
-
-      activeDirections.push({
-        route_id:
-          activeRouteId,
-        key:
-          String(
-            activeDirection.key
-          ),
-        trip_id:
-          activeTripId,
-        schedule_relationship:
-          relationship
-      });
-    }
-
-    const surfaceFallbackRoutes =
-      scheduledSurfaceRoutes.filter(
-        route => {
-          /*
-           * IMPORTANT:
-           * Compare the static course against the RAW realtime routes before
-           * the realtime routes are grouped by destination.
-           *
-           * This is the final guard against the exact problem we are fixing:
-           * one physical trip appearing once as realtime and again as static.
-           */
-          if (
-            staticArrivalIsCoveredByRealtime(
-              route,
-              realtime.routes
-            )
-          ) {
-            return false;
-          }
-
-          if (
-            realtimeLogicalRoutes.some(
-              realtimeRoute =>
-                realtimeOverridesScheduledDirection(
-                  realtimeRoute,
-                  route,
-                  stop.stop_id
-                )
-            )
-          ) {
-            return false;
-          }
-
-          if (
-            activeShortDirectionOverridesScheduledDirection(
-              route,
-              activeDirections
-            )
-          ) {
-            return false;
-          }
-
-          return shouldUseStaticFallbackForDirection(
-            route,
-            {
-              realtimeRoutes:
-                mergedSurfaceRoutes,
-              activeDirections
-            }
+    const scheduledSurfaceRoutes =
+      isMetroStop(stop)
+        ? []
+        : getSurfaceScheduledArrivals(
+            stop,
+            skippedTrips
           );
-        }
-      );
 
-    const fallbackByKey =
-      new Map();
-
-    for (
-      const route
-      of surfaceFallbackRoutes
-    ) {
-      /*
-       * Keep the guard here as well. This is deliberately redundant with the
-       * filter above so a later change to the fallback grouping cannot
-       * accidentally reintroduce a realtime/static duplicate.
-       */
-      if (
-        staticArrivalIsCoveredByRealtime(
+    // Suppress only a static arrival representing the same physical course.
+    // Do not suppress all static courses merely because the same direction has
+    // at least one realtime vehicle.
+    const surfaceFallbackRoutes =
+      scheduledSurfaceRoutes.filter(route =>
+        !staticArrivalIsCoveredByRealtime(
           route,
           realtime.routes
         )
-      ) {
-        continue;
-      }
+      );
 
-      const destinationKey =
-        normalizeDirectionText(
-          route.destination
-          || ""
-        );
-
-      const key =
-        `${String(
-          route.route_id
-          || ""
-        )}|${destinationKey}|${
-          String(
-            route.route_ref
-            || ""
-          )
-        }`;
-
-      const existing =
-        fallbackByKey.get(key);
-
-      if (!existing) {
-        fallbackByKey.set(
-          key,
-          {
-            ...route,
-            times: [
-              ...(route.times || [])
-            ]
-          }
-        );
-      } else {
-        existing.times.push(
-          ...(route.times || [])
-        );
-      }
-    }
-
-    const fallbackRoutes =
-      [...fallbackByKey.values()]
-        .map(route => ({
-          ...route,
-          times:
-            getLimitedUniqueArrivalTimes(
-              route.times
-            )
-        }))
-        .filter(route =>
-          route.times.length
-        );
-
+    // The common row key is line + displayed destination + line reference.
+    // Merge first, deduplicate timestamps, then apply the four-time limit.
     const surfaceRoutes =
-      [
+      mergeBoardRoutesByDestination([
         ...mergedSurfaceRoutes,
-        ...fallbackRoutes
-      ]
-        .sort(
-          (a, b) =>
-            Number(
-              a.times?.[0]?.timestamp
-            )
-            - Number(
-              b.times?.[0]?.timestamp
-            )
-        );
+        ...surfaceFallbackRoutes
+      ]);
 
     const realtimeRouteIds =
       new Set(
@@ -6206,99 +5620,13 @@
   );
 
   // Small test seam; production pages do not use this object.
-  function shouldUseStaticFallbackForDirection(
-    scheduledRoute,
-    {
-      realtimeRoutes = [],
-      activeDirections = []
-    } = {}
-  ) {
-    const routeId =
-      String(
-        scheduledRoute?.route_id
-        || ""
-      ).trim();
-
-    const directionKey =
-      String(
-        scheduledRoute
-          ?.direction_key
-        || ""
-      ).trim();
-
-    if (!routeId) {
-      return true;
-    }
-
-    if (directionKey) {
-      const realtimeMatch =
-        realtimeRoutes.some(
-          route =>
-            String(
-              route?.route_id
-              || ""
-            ).trim()
-            === routeId
-            && String(
-              route?.direction_key
-              || ""
-            ).trim()
-            === directionKey
-        );
-
-      if (realtimeMatch) {
-        return false;
-      }
-
-      const activeMatch =
-        activeDirections.some(
-          direction =>
-            String(
-              direction?.route_id
-              || ""
-            ).trim()
-            === routeId
-            && String(
-              direction?.key
-              || ""
-            ).trim()
-            === directionKey
-        );
-
-      return !activeMatch;
-    }
-
-    const destinationKey =
-      normalizeDirectionText(
-        scheduledRoute?.destination
-        || ""
-      );
-
-    if (!destinationKey) {
-      return true;
-    }
-
-    return !realtimeRoutes.some(
-      route =>
-        String(
-          route?.route_id
-          || ""
-        ).trim()
-        === routeId
-        && normalizeDirectionText(
-          route?.destination
-          || ""
-        )
-          === destinationKey
-    );
-  }
-
   globalThis.__gtsofiaVirtualBoardTestInternals = {
     isServiceActiveOnDate,
     isScheduleRowActiveToday,
     getSofiaDateKey,
-    shouldUseStaticFallbackForDirection,
     staticArrivalIsCoveredByRealtime,
-    getRealtimeScheduledTimestamp
+    getRealtimeScheduledTimestamp,
+    mergeBoardRoutesByDestination,
+    getLimitedUniqueArrivalTimes
   };
 })();
