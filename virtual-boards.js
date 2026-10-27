@@ -46,6 +46,7 @@
     6 * 60 * 60 * 1000;
   // The primary countdown plus the next three scheduled/realtime arrivals.
   const MAX_VISIBLE_BOARD_ARRIVALS = 4;
+  const SCHEDULE_FALLBACK_HORIZON_SECONDS = 6 * 60 * 60;
 
   const consumedRealtimeArrivals = new Map();
   let consumedRealtimeArrivalsLoaded = false;
@@ -2534,12 +2535,13 @@
             seconds
           );
 
-        if (
-          timestamp < nowTimestamp
-        ) {
-          continue;
-        }
-
+if (
+  timestamp < nowTimestamp
+  || timestamp >
+    nowTimestamp + SCHEDULE_FALLBACK_HORIZON_SECONDS
+) {
+  continue;
+}
         const groupKey =
           `${routeId}|${directionKey}|${terminalStopId}`;
 
@@ -3308,9 +3310,13 @@
         // contribute a fourth time even when later same-day trips exist.
         // Do not roll already-passed same-day times into tomorrow: tomorrow's
         // calendar/service pattern may be different.
-        if (timestamp < nowTimestamp) {
-          continue;
-        }
+if (
+  timestamp < nowTimestamp
+  || timestamp >
+    nowTimestamp + SCHEDULE_FALLBACK_HORIZON_SECONDS
+) {
+  continue;
+}
 
         if (
           isSkippedStaticSchedule(
