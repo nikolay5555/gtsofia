@@ -45,8 +45,7 @@
   const ACTIVE_REALTIME_TRIP_TTL_MS =
     6 * 60 * 60 * 1000;
   // The primary countdown plus the next three scheduled/realtime arrivals.
-  const MAX_VISIBLE_BOARD_ARRIVALS = 3;
-  const SCHEDULE_FALLBACK_HORIZON_SECONDS = 6 * 60 * 60;
+  const MAX_VISIBLE_BOARD_ARRIVALS = 4;
 
   const consumedRealtimeArrivals = new Map();
   let consumedRealtimeArrivalsLoaded = false;
@@ -958,12 +957,11 @@
       return "0 мин.";
     }
 
-    // Keep every future arrival at least "1 мин."; reserve "0 мин." for
-    // arrivals that have reached or passed the stop.
-    const minutes = Math.max(
-      1,
-      Math.round(remainingSeconds / 60)
-    );
+    // Display whole minutes only, rounded to the nearest minute from the exact
+    // remaining seconds (half a minute rounds up): 9:01 -> 9 мин., 9:30 ->
+    // 10 мин. A remaining time below 30 seconds rounds to 0 мин.; the actual
+    // countdown is recalculated from the timestamp on each refresh.
+    const minutes = Math.round(remainingSeconds / 60);
 
     return `${minutes} мин.`;
   }
@@ -2535,13 +2533,12 @@
             seconds
           );
 
-if (
-  timestamp < nowTimestamp
-  || timestamp >
-    nowTimestamp + SCHEDULE_FALLBACK_HORIZON_SECONDS
-) {
-  continue;
-}
+        if (
+          timestamp < nowTimestamp
+        ) {
+          continue;
+        }
+
         const groupKey =
           `${routeId}|${directionKey}|${terminalStopId}`;
 
@@ -3310,13 +3307,9 @@ if (
         // contribute a fourth time even when later same-day trips exist.
         // Do not roll already-passed same-day times into tomorrow: tomorrow's
         // calendar/service pattern may be different.
-if (
-  timestamp < nowTimestamp
-  || timestamp >
-    nowTimestamp + SCHEDULE_FALLBACK_HORIZON_SECONDS
-) {
-  continue;
-}
+        if (timestamp < nowTimestamp) {
+          continue;
+        }
 
         if (
           isSkippedStaticSchedule(

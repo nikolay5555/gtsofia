@@ -58,14 +58,29 @@ assert.equal(
   'exactly 60 seconds remaining must show one minute'
 );
 assert.equal(
+  internals.formatArrivalCountdown(countdownNow + 60.001, countdownNow),
+  '1 мин.',
+  'a little over one minute rounds to the nearest whole minute'
+);
+assert.equal(
+  internals.formatArrivalCountdown(countdownNow + 59.999, countdownNow),
+  '1 мин.',
+  'just under one minute rounds to one minute'
+);
+assert.equal(
   internals.formatArrivalCountdown(countdownNow + 59.9, countdownNow),
   '1 мин.',
-  'any positive time below one minute must stay at one minute'
+  '59.9 seconds rounds to one minute'
 );
 assert.equal(
   internals.formatArrivalCountdown(countdownNow + 29.9, countdownNow),
+  '0 мин.',
+  'less than 30 seconds rounds to zero minutes'
+);
+assert.equal(
+  internals.formatArrivalCountdown(countdownNow + 30, countdownNow),
   '1 мин.',
-  'the final seconds must not be displayed separately'
+  'exactly 30 seconds rounds up to one minute'
 );
 assert.equal(
   internals.formatArrivalCountdown(countdownNow, countdownNow),
@@ -75,17 +90,22 @@ assert.equal(
 assert.equal(
   internals.formatArrivalCountdown(countdownNow + 60 + 59, countdownNow),
   '2 мин.',
-  '1 minute 59 seconds remaining should round to two minutes'
+  '1 minute 59 seconds rounds to two minutes'
+);
+assert.equal(
+  internals.formatArrivalCountdown(countdownNow + 120, countdownNow),
+  '2 мин.',
+  'exactly two minutes remaining must show two minutes'
 );
 assert.equal(
   internals.formatArrivalCountdown(countdownNow + 60 + 29.9, countdownNow),
   '1 мин.',
-  '1 minute 29.9 seconds remaining should still show one minute'
+  '1 minute 29.9 seconds rounds to one minute'
 );
 assert.equal(
   internals.formatArrivalCountdown(countdownNow + 60 + 30, countdownNow),
   '2 мин.',
-  '1 minute 30 seconds remaining should round to two minutes'
+  '1 minute 30 seconds rounds to two minutes'
 );
 assert.equal(
   internals.formatArrivalCountdown(countdownNow - 30, countdownNow),
@@ -95,24 +115,39 @@ assert.equal(
 assert.equal(
   internals.formatArrivalCountdown(countdownNow + 60 * 2 + 29.9, countdownNow),
   '2 мин.',
-  '2 minutes 29.9 seconds remaining should round down to two minutes'
+  '2 minutes 29.9 seconds rounds to two minutes'
 );
 assert.equal(
   internals.formatArrivalCountdown(countdownNow + 60 * 2 + 30, countdownNow),
   '3 мин.',
-  '2 minutes 30 seconds remaining should round to three minutes'
+  '2 minutes 30 seconds rounds to three minutes'
 );
 assert.equal(
   internals.formatArrivalCountdown(countdownNow + 60 * 3 - 1, countdownNow),
   '3 мин.',
-  '2 minutes 59 seconds remaining must display three minutes'
+  '2 minutes 59 seconds rounds to three minutes'
+);
+assert.equal(
+  internals.formatArrivalCountdown(countdownNow + 9 * 60 + 1, countdownNow),
+  '9 мин.',
+  '9 minutes 1 second must round to nine minutes, not ten'
+);
+assert.equal(
+  internals.formatArrivalCountdown(countdownNow + 9 * 60 + 29, countdownNow),
+  '9 мин.',
+  '9 minutes 29 seconds must round to nine minutes'
+);
+assert.equal(
+  internals.formatArrivalCountdown(countdownNow + 9 * 60 + 30, countdownNow),
+  '10 мин.',
+  '9 minutes 30 seconds must round to ten minutes'
 );
 
 // Virtual-board direction labels must prefer OSM even when the GTFS headsign
 // is present, while retaining GTFS as a fallback when no OSM name exists.
 assert.equal(
   internals.MAX_VISIBLE_BOARD_ARRIVALS,
-  3,
+  4,
   'the board should show the primary arrival plus up to three following times'
 );
 assert.deepEqual(
