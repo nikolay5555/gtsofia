@@ -26,32 +26,69 @@
     <section class="virtual-board-layout">
       <div class="virtual-map-card">
         <div id="virtualMap" class="virtual-map" aria-label="Карта на спирките в София"></div>
-      </div>
 
-      <aside class="virtual-board-panel" id="virtualBoardPanel">
-        <div id="virtualBoardContent" class="virtual-board-content">
-          <div class="virtual-board-controls">
-            <div class="virtual-stop-search virtual-stop-search-panel">
+        <div class="virtual-map-toolbar" aria-label="Контроли на картата">
+          <div class="virtual-map-tool-wrap virtual-stop-search-control">
+            <button
+              type="button"
+              id="toggleStopSearch"
+              class="map-tool-button map-search-button"
+              aria-label="Търсене по спирка"
+              aria-expanded="false"
+              aria-controls="stopSearchPopover"
+              title="Търсене по спирка"
+            >
+              <svg viewBox="0 0 24 24" width="21" height="21" fill="none" aria-hidden="true">
+                <circle cx="10.8" cy="10.8" r="6.6" stroke="currentColor" stroke-width="2" />
+                <path d="m16 16 4.3 4.3" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+              </svg>
+            </button>
+            <div id="stopSearchPopover" class="virtual-map-popover virtual-stop-search-popover" hidden>
               <label class="sr-only" for="stopSearch">Търсене по спирка</label>
               <input
                 id="stopSearch"
                 type="search"
-                placeholder="Търсене по спирка…"
+                placeholder="Име или номер на спирка…"
                 autocomplete="off"
                 aria-label="Търсене по спирка"
               />
               <div id="stopSearchResults" class="virtual-stop-search-results" hidden></div>
             </div>
+          </div>
+
+          <button
+            type="button"
+            id="locateUserButton"
+            class="map-tool-button map-location-button"
+            aria-label="Моята локация"
+            title="Моята локация"
+          >
+            <img src="Icons/location.svg" alt="" aria-hidden="true" />
+          </button>
+
+          <div class="virtual-map-tool-wrap virtual-favorites-control">
             <button
               type="button"
-              id="locateUserButton"
-              class="map-tool-button map-location-button"
-              aria-label="Моята локация"
-              title="Моята локация"
-            >
-              <img src="Icons/location.svg" alt="" aria-hidden="true" />
-            </button>
+              id="toggleFavoritesButton"
+              class="map-tool-button map-favorites-button"
+              aria-label="Любими спирки"
+              aria-expanded="false"
+              aria-controls="virtualFavoritesPopover"
+              title="Любими спирки"
+            ><span aria-hidden="true">☆</span></button>
+            <div id="virtualFavoritesPopover" class="virtual-map-popover virtual-favorites-popover" hidden>
+              <div class="virtual-map-popover-heading">
+                <h3>Любими спирки</h3>
+                <span aria-hidden="true">★</span>
+              </div>
+              <div id="virtualFavoritesList" class="virtual-board-favorites-list"></div>
+            </div>
           </div>
+        </div>
+      </div>
+
+      <aside class="virtual-board-panel" id="virtualBoardPanel" aria-label="Виртуално табло">
+        <div id="virtualBoardContent" class="virtual-board-content">
           <div id="virtualBoardBody" class="virtual-board-body"></div>
         </div>
       </aside>
@@ -61,6 +98,6 @@
   <script src="navbar.js"></script>
   <script src="transport-data.js"></script>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="virtual-boards.js?v=28"></script>
+  <script src="virtual-boards.js?v=29"></script>
 </body>
 </html>

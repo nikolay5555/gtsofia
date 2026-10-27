@@ -446,6 +446,99 @@
     return index < 0;
   }
 
+  function closeMapPopovers() {
+    const searchPopover =
+      document.getElementById("stopSearchPopover");
+    const searchButton =
+      document.getElementById("toggleStopSearch");
+    const favoritesPopover =
+      document.getElementById("virtualFavoritesPopover");
+    const favoritesButton =
+      document.getElementById("toggleFavoritesButton");
+    const results =
+      document.getElementById("stopSearchResults");
+
+    if (searchPopover) searchPopover.hidden = true;
+    if (searchButton) searchButton.setAttribute("aria-expanded", "false");
+    if (results) results.hidden = true;
+    if (favoritesPopover) favoritesPopover.hidden = true;
+    if (favoritesButton) favoritesButton.setAttribute("aria-expanded", "false");
+  }
+
+  function renderFavoritesList() {
+    const list =
+      document.getElementById("virtualFavoritesList");
+
+    if (!list) return;
+
+    const favorites =
+      getFavoriteStops();
+
+    if (!favorites.length) {
+      list.innerHTML = `
+        <div class="virtual-favorites-empty">
+          Нямате добавени любими спирки. Отворете табло и натиснете звездичката до името на спирката.
+        </div>
+      `;
+      return;
+    }
+
+    list.innerHTML = favorites.map(
+      stop => `
+        <button type="button" class="virtual-board-favorite-stop" data-stop-id="${escapeHtml(
+          stop.stop_id
+        )}">
+          <span class="virtual-board-favorite-stop-star" aria-hidden="true">★</span>
+          <span class="virtual-board-favorite-stop-info">
+            <strong>${escapeHtml(stop.stop_name || "Спирка")}</strong>
+            <span>[${escapeHtml(stop.stop_code || stop.stop_id || "")}]</span>
+          </span>
+          <span class="virtual-board-favorite-stop-arrow" aria-hidden="true">→</span>
+        </button>
+      `
+    ).join("");
+
+    list.querySelectorAll("[data-stop-id]").forEach(
+      button => {
+        button.addEventListener("click", () => {
+          const stop = findStopById(button.dataset.stopId);
+          if (stop) selectStopOnMap(stop);
+        });
+      }
+    );
+  }
+
+  function setupFavoritesPanel() {
+    const button =
+      document.getElementById("toggleFavoritesButton");
+    const popover =
+      document.getElementById("virtualFavoritesPopover");
+
+    if (!button || !popover) return;
+
+    renderFavoritesList();
+
+    button.addEventListener("click", event => {
+      event.stopPropagation();
+
+      const opening = popover.hidden;
+      closeMapPopovers();
+
+      if (opening) {
+        renderFavoritesList();
+        popover.hidden = false;
+        button.setAttribute("aria-expanded", "true");
+      }
+    });
+
+    document.addEventListener("click", event => {
+      if (!event.target.closest(".virtual-favorites-control")) {
+        popover.hidden = true;
+        button.setAttribute("aria-expanded", "false");
+      }
+    });
+  }
+
   function escapeHtml(value) {
     return String(value ?? "")
       .replaceAll("&", "&amp;")
@@ -4209,6 +4302,10 @@ if (
 
     if (!panel) return;
 
+    document
+      .getElementById("virtualBoardPanel")
+      ?.classList.add("is-open");
+
     panel.innerHTML = `
       <div class="virtual-board-header">
         <div>
@@ -4327,6 +4424,8 @@ if (
               ? "Премахни от любими"
               : "Добави в любими"
           );
+
+          renderFavoritesList();
         }
       );
 
@@ -4408,75 +4507,20 @@ if (
     const panel =
       boardPanel();
 
+    document
+      .getElementById("virtualBoardPanel")
+      ?.classList.remove("is-open");
+
     if (!panel) return;
-
-    const favorites =
-      getFavoriteStops();
-
-    const favoritesHtml =
-      favorites.length
-        ? `
-        <div class="virtual-board-favorites">
-          <div class="virtual-board-favorites-heading">
-            <h3>Любими спирки</h3>
-          </div>
-          <div class="virtual-board-favorites-list">
-            ${favorites.map(
-              stop => `
-              <button type="button" class="virtual-board-favorite-stop" data-stop-id="${escapeHtml(
-                stop.stop_id
-              )}">
-                <span class="virtual-board-favorite-stop-star" aria-hidden="true">★</span>
-                <span class="virtual-board-favorite-stop-info">
-                  <strong>${escapeHtml(
-                    stop.stop_name
-                    || "Спирка"
-                  )}</strong>
-                  <span>[${escapeHtml(
-                    stop.stop_code
-                    || stop.stop_id
-                    || ""
-                  )}]</span>
-                </span>
-                <span class="virtual-board-favorite-stop-arrow" aria-hidden="true">→</span>
-              </button>
-            `
-            ).join("")}
-          </div>
-        </div>
-      `
-        : "";
 
     panel.innerHTML = `
       <div class="virtual-board-empty">
-        <p>Изберете спирка от картата, за да видите следващите пристигания</p>
-        ${favoritesHtml}
+        <div class="virtual-board-empty-title">Изберете спирка</div>
+        <p>Изберете спирка от картата, за да видите следващите пристигания.</p>
       </div>
     `;
 
-    panel
-      .querySelectorAll(
-        ".virtual-board-favorite-stop"
-      )
-      .forEach(
-        button => {
-          button.addEventListener(
-            "click",
-            () => {
-              const stop =
-                findStopById(
-                  button.dataset.stopId
-                );
-
-              if (stop) {
-                selectStopOnMap(
-                  stop
-                );
-              }
-            }
-          );
-        }
-      );
+    renderFavoritesList();
   }
 
   function findStopById(
@@ -4502,6 +4546,8 @@ if (
     ) {
       return;
     }
+
+    closeMapPopovers();
 
     if (selectedStopMarker) {
       selectedStopMarker.setStyle(
@@ -4588,12 +4634,32 @@ if (
         "stopSearchResults"
       );
 
+    const popover =
+      document.getElementById("stopSearchPopover");
+    const toggleButton =
+      document.getElementById("toggleStopSearch");
+
     if (
       !input
       || !results
+      || !popover
+      || !toggleButton
     ) {
       return;
     }
+
+    toggleButton.addEventListener("click", event => {
+      event.stopPropagation();
+
+      const opening = popover.hidden;
+      closeMapPopovers();
+
+      if (opening) {
+        popover.hidden = false;
+        toggleButton.setAttribute("aria-expanded", "true");
+        input.focus();
+      }
+    });
 
     const normalized =
       value =>
@@ -4714,13 +4780,9 @@ if (
                     );
 
                   if (stop) {
-                    input.value =
-                      stop.name
-                      || stop.stop_name
-                      || "";
-
-                    results.hidden =
-                      true;
+                    input.value = "";
+                    results.hidden = true;
+                    results.innerHTML = "";
 
                     selectStopOnMap(
                       stop
@@ -4776,11 +4838,12 @@ if (
       event => {
         if (
           !event.target.closest(
-            ".virtual-stop-search"
+            ".virtual-stop-search-control"
           )
         ) {
-          results.hidden =
-            true;
+          results.hidden = true;
+          popover.hidden = true;
+          toggleButton.setAttribute("aria-expanded", "false");
         }
       }
     );
@@ -5569,6 +5632,8 @@ if (
       setupStopSearch(
         stops
       );
+
+      setupFavoritesPanel();
 
       setupGeolocation();
 

@@ -1728,3 +1728,430 @@ VIRTUAL BOARD FAVORITES
     padding: 12px 13px;
   }
 }
+
+
+/* =========================
+VIRTUAL BOARDS — MAP-FIRST LAYOUT
+========================= */
+
+.virtual-boards {
+  height: calc(100vh - 70px);
+  height: calc(100dvh - 70px);
+  min-height: 520px;
+}
+
+.virtual-board-layout {
+  position: relative;
+  display: block;
+  min-height: 0;
+  height: 100%;
+  flex: 1 1 auto;
+}
+
+.virtual-map-card {
+  height: 100%;
+  min-height: 0;
+  overflow: visible;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.virtual-map {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid #e5e7eb;
+  border-radius: 18px;
+  background: #e5e7eb;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .05);
+}
+
+.virtual-map-toolbar {
+  position: absolute;
+  z-index: 1100;
+  top: 16px;
+  left: 66px;
+  right: 16px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.virtual-map-tool-wrap {
+  position: relative;
+  flex: 0 0 auto;
+  pointer-events: auto;
+}
+
+.map-tool-button {
+  width: 42px;
+  height: 42px;
+  min-height: 42px;
+  flex: 0 0 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid #d1d5db;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .97);
+  color: #111827;
+  font: inherit;
+  font-weight: 700;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .14);
+  cursor: pointer;
+  pointer-events: auto;
+  white-space: nowrap;
+  transition: background .15s ease, transform .15s ease, box-shadow .15s ease;
+}
+
+.map-tool-button:hover,
+.map-tool-button.is-active {
+  background: #fff;
+  box-shadow: 0 5px 16px rgba(0, 0, 0, .17);
+}
+
+.map-tool-button:active {
+  transform: scale(.96);
+}
+
+.map-tool-button:focus-visible,
+.virtual-map-popover input:focus-visible,
+.virtual-board-favorite-stop:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, .3);
+  outline-offset: 2px;
+}
+
+.map-location-button img {
+  width: 22px;
+  height: 22px;
+  display: block;
+  flex: 0 0 22px;
+}
+
+.map-favorites-button > span {
+  display: block;
+  font-size: 25px;
+  line-height: 1;
+  transform: translateY(-1px);
+}
+
+.virtual-map-popover {
+  position: absolute;
+  top: calc(100% + 10px);
+  z-index: 1200;
+  width: min(330px, calc(100vw - 88px));
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  background: #fff;
+  color: #111827;
+  box-shadow: 0 12px 30px rgba(17, 24, 39, .18);
+  pointer-events: auto;
+}
+
+.virtual-stop-search-popover {
+  right: 0;
+}
+
+.virtual-map-popover[hidden] {
+  display: none !important;
+}
+
+.virtual-map-popover input {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  background: #fff;
+  color: #111827;
+  font: inherit;
+  outline: none;
+}
+
+.virtual-map-popover input:focus {
+  border-color: #9ca3af;
+  box-shadow: 0 0 0 3px rgba(17, 24, 39, .08);
+}
+
+.virtual-stop-search-results {
+  position: static;
+  max-height: 310px;
+  margin-top: 8px;
+  overflow-y: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: none;
+}
+
+.virtual-stop-search-result {
+  padding: 11px 10px;
+  gap: 8px;
+}
+
+.virtual-stop-search-result strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.virtual-stop-search-result span {
+  font-variant-numeric: tabular-nums;
+}
+
+.virtual-favorites-popover {
+  right: 0;
+  width: min(330px, calc(100vw - 88px));
+  max-height: min(440px, calc(100dvh - 120px));
+  overflow-y: auto;
+}
+
+.virtual-map-popover-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 1px 2px 12px;
+}
+
+.virtual-map-popover-heading h3 {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.25;
+}
+
+.virtual-map-popover-heading > span {
+  color: #b7791f;
+  font-size: 20px;
+}
+
+.virtual-board-favorites-list {
+  display: grid;
+  gap: 8px;
+}
+
+.virtual-board-favorite-stop {
+  padding: 10px 11px;
+  border-radius: 10px;
+}
+
+.virtual-board-favorite-stop-info {
+  gap: 4px 7px;
+}
+
+.virtual-board-favorite-stop-info strong {
+  overflow-wrap: anywhere;
+}
+
+.virtual-favorites-empty {
+  padding: 12px 10px;
+  border-radius: 10px;
+  background: #f9fafb;
+  color: #6b7280;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.virtual-board-panel {
+  display: none;
+  position: absolute;
+  z-index: 1000;
+  top: 72px;
+  right: 16px;
+  bottom: 16px;
+  width: min(430px, calc(100% - 32px));
+  max-height: calc(100% - 88px);
+  min-height: 0;
+  overflow: hidden;
+  flex-direction: column;
+  background: rgba(255, 255, 255, .985);
+  border: 1px solid rgba(229, 231, 235, .98);
+  border-radius: 18px;
+  box-shadow: 0 16px 44px rgba(17, 24, 39, .2);
+  backdrop-filter: blur(12px);
+}
+
+.virtual-board-panel.is-open {
+  display: flex;
+}
+
+.virtual-board-content {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.virtual-board-body {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.virtual-board-empty {
+  margin: auto;
+  padding: 28px 22px;
+}
+
+.leaflet-control-zoom.leaflet-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.leaflet-control-zoom-in,
+.leaflet-control-zoom-out {
+  width: 40px !important;
+  height: 40px !important;
+  line-height: 38px !important;
+  border: 1px solid #d1d5db !important;
+  border-radius: 50% !important;
+  background: rgba(255, 255, 255, .97) !important;
+  color: #111827 !important;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .14);
+  font-size: 22px !important;
+  font-weight: 500 !important;
+  text-align: center;
+  transition: background .15s ease, transform .15s ease;
+}
+
+.leaflet-control-zoom-in:hover,
+.leaflet-control-zoom-out:hover {
+  background: #fff !important;
+}
+
+.leaflet-control-zoom-in:active,
+.leaflet-control-zoom-out:active {
+  transform: scale(.96);
+}
+
+.leaflet-control-zoom-in:focus-visible,
+.leaflet-control-zoom-out:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, .3);
+  outline-offset: 2px;
+}
+
+@media (max-width: 900px) {
+  .virtual-boards {
+    height: calc(100vh - 70px);
+    height: calc(100dvh - 70px);
+    min-height: 500px;
+    padding: 12px;
+  }
+
+  .virtual-board-layout {
+    min-height: 0;
+    height: 100%;
+    grid-template-columns: none;
+  }
+
+  .virtual-map-card {
+    height: 100%;
+    min-height: 0;
+  }
+
+  .virtual-map {
+    height: 100%;
+    min-height: 0;
+  }
+
+  .virtual-board-panel {
+    top: auto;
+    right: 10px;
+    bottom: 10px;
+    left: 10px;
+    width: auto;
+    height: min(66%, 560px);
+    max-height: calc(100% - 20px);
+    border-radius: 16px;
+  }
+
+  .virtual-map-toolbar {
+    left: 62px;
+    right: 10px;
+    justify-content: space-between;
+  }
+
+  .virtual-stop-search-popover {
+    right: auto;
+    left: 0;
+    width: min(330px, calc(100vw - 88px));
+  }
+
+  .virtual-favorites-popover {
+    right: 0;
+    width: min(330px, calc(100vw - 88px));
+  }
+}
+
+@media (max-width: 560px) {
+  .virtual-boards {
+    padding: 8px;
+  }
+
+  .virtual-map-toolbar {
+    top: 12px;
+    left: 58px;
+    right: 8px;
+    gap: 6px;
+  }
+
+  .map-tool-button {
+    width: 39px;
+    height: 39px;
+    min-height: 39px;
+    flex-basis: 39px;
+  }
+
+  .map-location-button img {
+    width: 20px;
+    height: 20px;
+    flex-basis: 20px;
+  }
+
+  .leaflet-control-zoom-in,
+  .leaflet-control-zoom-out {
+    width: 37px !important;
+    height: 37px !important;
+    line-height: 35px !important;
+  }
+
+  .virtual-map-popover {
+    top: calc(100% + 8px);
+  }
+
+  .virtual-stop-search-popover,
+  .virtual-favorites-popover {
+    width: min(330px, calc(100vw - 82px));
+  }
+
+  .virtual-board-panel {
+    right: 8px;
+    bottom: 8px;
+    left: 8px;
+    height: min(68%, 560px);
+    max-height: calc(100% - 16px);
+  }
+
+  .virtual-board-header {
+    padding: 15px 14px 10px;
+    gap: 8px;
+  }
+
+  .virtual-board-header h2 {
+    font-size: 19px;
+  }
+
+  .vb-row {
+    padding: 12px;
+  }
+}
