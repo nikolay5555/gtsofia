@@ -27,7 +27,7 @@ function createStorage(initialEntries = []) {
 function loadInternals(storage) {
   const exportedSource = source.replace(
     /\n\}\)\(\);\s*$/,
-    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    shouldUseStaticFallbackForDirection,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
+    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    getConsumedRealtimeTripKey,\n    rememberConsumedRealtimeTrips,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isConsumedRealtimeTrip,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    shouldUseStaticFallbackForDirection,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
   );
 
   const context = {
@@ -145,24 +145,60 @@ const scheduledTime = Math.floor((nowSeconds + 60) / 60) * 60;
 const realtimeTime = scheduledTime - 120; // Two minutes early.
 const nextScheduledTime = scheduledTime + 15 * 60;
 
-// Before the realtime course has actually reached the stop, it must not be
-// marked as consumed: a transient realtime disappearance should not hide the
-// still-upcoming scheduled course.
+// A future course is reserved as soon as it appears in realtime. If the feed
+// drops it temporarily, the same course must not reappear as a static fallback.
+const futureTripId = 'A234-COURSE-FUTURE';
 internals.rememberConsumedRealtimeArrivals({ stop_id: stopId }, [{
   route_id: routeId,
+  trip_id: futureTripId,
   destination,
   times: [{ timestamp: nowSeconds + 30, scheduled_time: scheduledTime }]
 }]);
 assert.equal(
   internals.isConsumedRealtimeScheduledArrival(stopId, routeId, destination, scheduledTime),
+  true,
+  'future realtime arrivals must reserve the matching scheduled course immediately'
+);
+assert.equal(
+  internals.isConsumedRealtimeTrip(stopId, routeId, futureTripId),
+  true,
+  'the exact realtime trip identity must remain reserved when its ETA is future'
+);
+assert.equal(
+  internals.isConsumedRealtimeTrip(stopId, routeId, 'A234-OTHER-COURSE'),
   false,
-  'future realtime arrivals must not consume their scheduled course'
+  'observing one realtime trip must not suppress another course on the same line'
 );
 
-// Once the realtime arrival is at/past the stop, remember the exact scheduled
-// course that it represents.
+internals.rememberConsumedRealtimeTrips({ stop_id: stopId }, [{
+  route_id: routeId,
+  trip_id: 'A234-ACTIVE-WITHOUT-STOP-ETA',
+  schedule_relationship_name: 'SCHEDULED'
+}]);
+assert.equal(
+  internals.isConsumedRealtimeTrip(stopId, routeId, 'A234-ACTIVE-WITHOUT-STOP-ETA'),
+  true,
+  'an active realtime trip suppresses its static fallback even without a stop ETA'
+);
+
+// Exact trip identity also protects the course when the feed does not provide
+// a scheduled_time/delay pair for its stop update.
 internals.rememberConsumedRealtimeArrivals({ stop_id: stopId }, [{
   route_id: routeId,
+  trip_id: 'A234-COURSE-WITHOUT-SCHEDULED-TIME',
+  destination,
+  times: [{ timestamp: nowSeconds + 120, scheduled_time: null, delay: null }]
+}]);
+assert.equal(
+  internals.isConsumedRealtimeTrip(stopId, routeId, 'A234-COURSE-WITHOUT-SCHEDULED-TIME'),
+  true,
+  'trip identity suppresses fallback even when scheduled_time is missing'
+);
+
+// Reconfirming a course after its predicted time keeps the same suppression.
+internals.rememberConsumedRealtimeArrivals({ stop_id: stopId }, [{
+  route_id: routeId,
+  trip_id: futureTripId,
   destination,
   times: [{ timestamp: nowSeconds - 5, scheduled_time: scheduledTime }]
 }]);
@@ -185,6 +221,11 @@ assert.equal(
   reloadedInternals.isConsumedRealtimeScheduledArrival(stopId, routeId, destination, scheduledTime),
   true,
   'consumed scheduled courses must survive a page refresh within the session'
+);
+assert.equal(
+  reloadedInternals.isConsumedRealtimeTrip(stopId, routeId, futureTripId),
+  true,
+  'consumed realtime trip identity must survive a page refresh within the session'
 );
 
 // SKIPPED must suppress exactly the matching scheduled course, not the whole

@@ -6,6 +6,7 @@ import json
 import shutil
 import urllib.request
 import zipfile
+from urllib.parse import urlencode
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -13,6 +14,14 @@ from zoneinfo import ZoneInfo
 
 
 GTFS_URL = "https://gtfs.sofiatraffic.bg/api/v1/static"
+OSM_URL = "https://maps.mail.ru/osm/tools/overpass/api/interpreter"
+OSM_NETWORK_NAME = "Градски транспорт София"
+OSM_STOP_TYPES = (
+    ("subway", "station"),
+    ("tram", "stop_position"),
+    ("bus", "platform"),
+    ("trolleybus", "platform"),
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
@@ -61,6 +70,125 @@ def normalize_stop_id(value):
     )
 
     return digits.zfill(4)
+
+
+def normalize_osm_stop_code(tags):
+    """Use the same public stop-code convention as sofiatraffic-schedules."""
+
+    ref = normalize(tags.get("ref"))
+
+    if not ref:
+        return ""
+
+    if normalize(tags.get("subway")).lower() == "yes":
+        return f"M{ref}"
+
+    return ref.zfill(4)
+
+
+def fetch_osm_stops():
+    """Fetch public transport stop names from OSM; GTFS remains the fallback."""
+
+    elements = "".join(
+        f'node[{transport_type}=yes][public_transport={public_transport}]'
+        f'[ref][network="{OSM_NETWORK_NAME}"];'
+        for transport_type, public_transport in OSM_STOP_TYPES
+    )
+    query = (
+        "[out:json][timeout:50];"
+        f"({elements});"
+        "out body;"
+    )
+    request = urllib.request.Request(
+        OSM_URL,
+        data=urlencode({"data": query}).encode("utf-8"),
+        headers={
+            "User-Agent": "GTSofia transport data generator",
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=70) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception as error:
+        # A temporary Overpass outage must not prevent the core GTFS data
+        # from being generated. All display names will then fall back to GTFS.
+        print(f"WARNING: Could not fetch OSM stop names: {error}")
+        return {}
+
+    elements = payload.get("elements", [])
+
+    # Match Dimitar's preference for platform objects over stop positions
+    # when both OSM objects share the same public stop code.
+    priority = {
+        "station": 0,
+        "stop_position": 1,
+        "platform": 2,
+    }
+    elements.sort(
+        key=lambda element: priority.get(
+            normalize((element.get("tags") or {}).get("public_transport")),
+            99,
+        )
+    )
+
+    result = {}
+
+    for element in elements:
+        tags = element.get("tags") or {}
+        code = normalize_osm_stop_code(tags)
+
+        if not code:
+            continue
+
+        name = normalize(tags.get("name") or tags.get("name:bg"))
+        name_en = normalize(tags.get("name:en"))
+
+        # Keep the record even if OSM has no name: a later GTFS fallback is
+        # still possible and the extra OSM references can be useful metadata.
+        result[code] = {
+            "osm_stop_name": name,
+            "osm_stop_name_en": name_en,
+            "osm_short_name_bg": normalize(tags.get("short_name:bg")),
+            "osm_short_name_en": normalize(tags.get("short_name:en")),
+            "osm_full_name_bg": normalize(tags.get("full_name:bg")),
+            "osm_full_name_en": normalize(tags.get("full_name:en")),
+            "osm_local_ref": normalize(tags.get("local_ref")),
+            "osm_metro_ref": normalize(tags.get("local_ref:metro")),
+            "osm_request_stop": normalize(tags.get("request_stop")).lower() == "yes",
+            "osm_type": normalize(element.get("type")),
+            "osm_id": normalize(element.get("id")),
+        }
+
+    print(f"OSM stops with public refs: {len(result)}")
+    return result
+
+
+def enrich_stops_with_osm(stops_data, osm_stops):
+    """Prefer OSM's public-facing Bulgarian name, preserving GTFS as fallback."""
+
+    enriched = []
+
+    for original in stops_data:
+        row = dict(original)
+        gtfs_name = normalize(row.get("stop_name"))
+        row["gtfs_stop_name"] = gtfs_name
+
+        stop_id = normalize_stop_id(row.get("stop_id"))
+        stop_code = normalize_stop_id(row.get("stop_code"))
+        osm = osm_stops.get(stop_id) or osm_stops.get(stop_code) or {}
+        osm_name = normalize(osm.get("osm_stop_name"))
+
+        row.update(osm)
+        row["osm_stop_name"] = osm_name
+        row["stop_name"] = osm_name or gtfs_name
+        row["stop_name_source"] = "osm" if osm_name else "gtfs"
+
+        enriched.append(row)
+
+    return enriched
 
 
 def parse_date(value):
@@ -466,6 +594,7 @@ def stop_preference_score(stop):
     location_type = normalize(stop.get("location_type"))
 
     return (
+        bool(normalize(stop.get("osm_stop_name"))),
         bool(stop_name),
         bool(stop_code),
         location_type == "0",
@@ -498,11 +627,10 @@ def build_stops(
     stops_data
 ):
     """
-    Keep the existing stop structure and normalized IDs.
-
-    Stop names and metadata come directly from the official GTFS feed.
+    Keep the GTFS stop structure and normalized IDs while preserving the
+    OSM-first display name plus the original GTFS name for fallback/search.
     Duplicate stop_ids are retained in the output, but the lookup index
-    chooses the most useful public stop record.
+    prefers a named OSM record when choosing the representative row.
     """
 
     result = []
@@ -1483,48 +1611,34 @@ def choose_direction_name(
     direction,
     stops_by_id
 ):
-    """
-    Use the official trip_headsign that belongs to this
-    exact direction pattern.
+    """Prefer the OSM name of the terminal stop, then fall back to GTFS."""
 
-    Most frequent value wins.
-    """
+    stops = direction.get("stops", [])
+    terminal_stop = (
+        stops_by_id.get(stops[-1])
+        if stops
+        else None
+    )
+
+    if terminal_stop:
+        osm_name = normalize(terminal_stop.get("osm_stop_name"))
+        if osm_name:
+            return osm_name
 
     headsigns = [
         normalize(value)
-        for value in direction.get(
-            "headsigns",
-            []
-        )
+        for value in direction.get("headsigns", [])
         if normalize(value)
     ]
 
     if headsigns:
+        return Counter(headsigns).most_common(1)[0][0]
 
-        return Counter(
-            headsigns
-        ).most_common(
-            1
-        )[0][0]
-
-    stops = direction.get(
-        "stops",
-        []
-    )
-
-    if stops:
-
-        stop = stops_by_id.get(
-            stops[-1]
+    if terminal_stop:
+        return normalize(
+            terminal_stop.get("stop_name")
+            or terminal_stop.get("gtfs_stop_name")
         )
-
-        if stop:
-
-            return normalize(
-                stop.get(
-                    "stop_name"
-                )
-            )
 
     return ""
 
@@ -1647,19 +1761,13 @@ def build_output_directions(
                     continue
 
                 stop_records.append({
-                    "stop_id":
-                        normalize(
-                            stop.get(
-                                "stop_id"
-                            )
-                        ),
-
-                    "name":
-                        normalize(
-                            stop.get(
-                                "stop_name"
-                            )
-                        )
+                    "stop_id": normalize(stop.get("stop_id")),
+                    "name": normalize(stop.get("stop_name")),
+                    "osm_name": normalize(stop.get("osm_stop_name")),
+                    "gtfs_name": normalize(
+                        stop.get("gtfs_stop_name")
+                        or stop.get("stop_name")
+                    ),
                 })
 
             if not stop_records:
@@ -2207,6 +2315,16 @@ def main():
         )
 
         # --------------------------------------------------------
+        # OSM-first display names with GTFS fallback
+        # --------------------------------------------------------
+
+        osm_stops = fetch_osm_stops()
+        stops_data = enrich_stops_with_osm(
+            stops_data,
+            osm_stops,
+        )
+
+        # --------------------------------------------------------
         # GTFS stops
         # --------------------------------------------------------
 
@@ -2363,6 +2481,12 @@ def main():
 
             "source":
                 "CGM Sofia official GTFS",
+
+            "osmSource":
+                "OpenStreetMap — Градски транспорт София",
+
+            "osmUpdatedAt":
+                today.isoformat() if osm_stops else "",
 
             # Presentation-only mappings. The original GTFS routes above
             # remain untouched; the frontend applies these overrides when

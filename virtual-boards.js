@@ -35,13 +35,15 @@
   const scheduleTimeSecondsCache = new WeakMap();
   const scheduleTerminalIndexCache = new WeakMap();
 
-  // Realtime stop updates disappear shortly after the vehicle passes the
-  // selected stop. Keep the scheduled time they represented so the static
-  // fallback does not immediately resurrect the same course.
+  // Realtime trip updates may disappear temporarily, including before the
+  // scheduled arrival at this stop. Remember both trip identity and scheduled
+  // time so the static fallback cannot resurrect the same course.
   const CONSUMED_REALTIME_ARRIVALS_KEY =
     "gtsofia.virtualBoard.consumedRealtimeArrivals.v1";
   const CONSUMED_REALTIME_ARRIVAL_TTL_MS =
     20 * 60 * 1000;
+  const ACTIVE_REALTIME_TRIP_TTL_MS =
+    6 * 60 * 60 * 1000;
 
   const consumedRealtimeArrivals = new Map();
   let consumedRealtimeArrivalsLoaded = false;
@@ -155,15 +157,98 @@
     ].join("|");
   }
 
+  function getConsumedRealtimeTripKey(
+    stopId,
+    routeId,
+    tripId
+  ) {
+    const normalizedTripId = String(
+      tripId ?? ""
+    ).trim();
+
+    if (!normalizedTripId) return "";
+
+    return [
+      "trip",
+      normalizeStopKey(stopId),
+      String(routeId || "").trim(),
+      normalizedTripId
+    ].join("|");
+  }
+
+  function isConsumedRealtimeTrip(
+    stopId,
+    routeId,
+    tripId
+  ) {
+    pruneConsumedRealtimeArrivals();
+
+    const key = getConsumedRealtimeTripKey(
+      stopId,
+      routeId,
+      tripId
+    );
+
+    return !!key && consumedRealtimeArrivals.has(key);
+  }
+
+  function rememberConsumedRealtimeTrips(
+    stop,
+    activeTrips
+  ) {
+    pruneConsumedRealtimeArrivals();
+
+    const stopId = String(
+      stop?.stop_id
+      || stop?.stop_code
+      || ""
+    ).trim();
+
+    if (!stopId) return;
+
+    const expiresAt = Date.now()
+      + ACTIVE_REALTIME_TRIP_TTL_MS;
+    let changed = false;
+
+    for (const trip of activeTrips || []) {
+      const routeId = String(
+        trip?.route_id || ""
+      ).trim();
+      const tripId = String(
+        trip?.trip_id || ""
+      ).trim();
+
+      if (!routeId || !tripId) continue;
+
+      const key = getConsumedRealtimeTripKey(
+        stopId,
+        routeId,
+        tripId
+      );
+      const existingExpiry =
+        consumedRealtimeArrivals.get(key) || 0;
+
+      if (expiresAt > existingExpiry) {
+        consumedRealtimeArrivals.set(
+          key,
+          expiresAt
+        );
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      persistConsumedRealtimeArrivals();
+    }
+  }
+
   function rememberConsumedRealtimeArrivals(
     stop,
     realtimeRoutes
   ) {
     pruneConsumedRealtimeArrivals();
 
-    const nowSeconds =
-      Date.now() / 1000;
-
+    const now = Date.now();
     const stopId = String(
       stop?.stop_id
       || stop?.stop_code
@@ -185,25 +270,43 @@
         route?.destination || ""
       ).trim();
 
+      const tripId = String(
+        route?.trip_id || ""
+      ).trim();
+
+      // Seeing a concrete realtime trip is enough to reserve its static
+      // course. Do not wait until the predicted time has passed: otherwise a
+      // transient disappearance from the feed makes the same course fall back
+      // to the timetable and appear as a second, contradictory prediction.
+      let tripExpiresAt = now
+        + CONSUMED_REALTIME_ARRIVAL_TTL_MS;
+
       for (const time of route?.times || []) {
-        const actualTimestamp =
-          Number(time?.timestamp);
-
         const scheduledTimestamp =
-          Number(time?.scheduled_time);
+          getRealtimeScheduledTimestamp(time);
 
-        if (
-          !Number.isFinite(actualTimestamp)
-          || !Number.isFinite(scheduledTimestamp)
-        ) {
+        const actualTimestamp = Number(
+          time?.timestamp
+        );
+
+        const referenceTimestamp =
+          Number.isFinite(scheduledTimestamp)
+            ? scheduledTimestamp
+            : actualTimestamp;
+
+        if (Number.isFinite(referenceTimestamp)) {
+          tripExpiresAt = Math.max(
+            tripExpiresAt,
+            referenceTimestamp * 1000
+              + CONSUMED_REALTIME_ARRIVAL_TTL_MS
+          );
+        }
+
+        if (!Number.isFinite(scheduledTimestamp)) {
           continue;
         }
 
-        if (actualTimestamp > nowSeconds) {
-          continue;
-        }
-
-        const key =
+        const timeKey =
           getConsumedRealtimeArrivalKey(
             stopId,
             routeId,
@@ -211,20 +314,46 @@
             scheduledTimestamp
           );
 
-        if (
-          !key
-          || consumedRealtimeArrivals.has(key)
-        ) {
-          continue;
-        }
+        if (!timeKey) continue;
 
-        consumedRealtimeArrivals.set(
-          key,
-          Date.now()
-          + CONSUMED_REALTIME_ARRIVAL_TTL_MS
+        const existingExpiry =
+          consumedRealtimeArrivals.get(timeKey) || 0;
+
+        const expiresAt = Math.max(
+          existingExpiry,
+          Number.isFinite(referenceTimestamp)
+            ? referenceTimestamp * 1000
+              + CONSUMED_REALTIME_ARRIVAL_TTL_MS
+            : now + CONSUMED_REALTIME_ARRIVAL_TTL_MS
         );
 
-        changed = true;
+        if (expiresAt !== existingExpiry) {
+          consumedRealtimeArrivals.set(
+            timeKey,
+            expiresAt
+          );
+          changed = true;
+        }
+      }
+
+      if (tripId) {
+        const tripKey =
+          getConsumedRealtimeTripKey(
+            stopId,
+            routeId,
+            tripId
+          );
+
+        const existingExpiry =
+          consumedRealtimeArrivals.get(tripKey) || 0;
+
+        if (tripExpiresAt > existingExpiry) {
+          consumedRealtimeArrivals.set(
+            tripKey,
+            tripExpiresAt
+          );
+          changed = true;
+        }
       }
     }
 
@@ -826,13 +955,12 @@
       return "0 мин.";
     }
 
-    // Show the ETA rounded to the nearest whole minute.
-    // This intentionally allows "0 мин." for arrivals less than 30 seconds
-    // away, which is the mathematically correct nearest-minute value.
-    const minutes =
-      Math.round(
-        remainingSeconds / 60
-      );
+    // Keep every future arrival at least "1 мин."; reserve "0 мин." for
+    // arrivals that have reached or passed the stop.
+    const minutes = Math.max(
+      1,
+      Math.round(remainingSeconds / 60)
+    );
 
     return `${minutes} мин.`;
   }
@@ -2560,28 +2688,32 @@
   function getRealtimeScheduledTimestamp(
     time
   ) {
+    const scheduledValue = time?.scheduled_time;
     const scheduled =
-      Number(
-        time?.scheduled_time
-      );
+      scheduledValue === null
+      || scheduledValue === undefined
+      || String(scheduledValue).trim() === ""
+        ? NaN
+        : Number(scheduledValue);
 
-    if (
-      Number.isFinite(
-        scheduled
-      )
-    ) {
+    if (Number.isFinite(scheduled)) {
       return scheduled;
     }
 
+    const actualValue = time?.timestamp;
+    const delayValue = time?.delay;
     const actual =
-      Number(
-        time?.timestamp
-      );
-
+      actualValue === null
+      || actualValue === undefined
+      || String(actualValue).trim() === ""
+        ? NaN
+        : Number(actualValue);
     const delay =
-      Number(
-        time?.delay
-      );
+      delayValue === null
+      || delayValue === undefined
+      || String(delayValue).trim() === ""
+        ? NaN
+        : Number(delayValue);
 
     if (
       Number.isFinite(actual)
@@ -3028,6 +3160,27 @@
           continue;
         }
 
+        const staticTripIds = [
+          schedule?.original_trip_id,
+          schedule?.gtfs_trip_id,
+          schedule?.trip_id
+        ].filter(
+          value => String(value ?? "").trim()
+        );
+
+        if (
+          staticTripIds.some(tripId => {
+            const key = getConsumedRealtimeTripKey(
+              selectedStop,
+              routeId,
+              tripId
+            );
+            return !!key && consumedRealtimeArrivals.has(key);
+          })
+        ) {
+          continue;
+        }
+
         const destination =
           normalizeDirectionText(
             direction?.destination
@@ -3410,14 +3563,11 @@
                             time?.timestamp
                           ),
                         delay:
-                          Number.isFinite(
-                            Number(
-                              time?.delay
-                            )
-                          )
-                            ? Number(
-                                time.delay
-                              )
+                          time?.delay !== null
+                          && time?.delay !== undefined
+                          && String(time.delay).trim() !== ""
+                          && Number.isFinite(Number(time.delay))
+                            ? Number(time.delay)
                             : null,
                         scheduled: false,
                         source: "realtime",
@@ -3431,14 +3581,11 @@
                             || "SCHEDULED"
                           ),
                         scheduled_time:
-                          Number.isFinite(
-                            Number(
-                              time?.scheduled_time
-                            )
-                          )
-                            ? Number(
-                                time?.scheduled_time
-                              )
+                          time?.scheduled_time !== null
+                          && time?.scheduled_time !== undefined
+                          && String(time.scheduled_time).trim() !== ""
+                          && Number.isFinite(Number(time.scheduled_time))
+                            ? Number(time.scheduled_time)
                             : null
                       })
                     )
@@ -3465,6 +3612,14 @@
           ? []
           : realtimeRoutes
     };
+
+    // Keep exact trip identities from the ungrouped feed. Grouped arrivals
+    // intentionally combine several trips and therefore cannot preserve a
+    // reliable trip_id-to-time mapping on their own.
+    rememberConsumedRealtimeArrivals(
+      stop,
+      realtime.routes
+    );
 
     const metroRoutes =
       getMetroScheduledArrivals(
@@ -4071,6 +4226,20 @@
               )
             : []
         );
+
+    // An active trip can have no StopTimeUpdate for this exact stop. If its
+    // feed entry then disappears, its static course must still not pop back
+    // into the timetable fallback for the duration of the course window.
+    rememberConsumedRealtimeTrips(
+      stop,
+      activeTripRecords.filter(activeTrip => {
+        const relationship = String(
+          activeTrip?.schedule_relationship_name || "SCHEDULED"
+        ).toUpperCase();
+        return relationship !== "CANCELED"
+          && relationship !== "DELETED";
+      })
+    );
 
     for (
       const activeTrip
