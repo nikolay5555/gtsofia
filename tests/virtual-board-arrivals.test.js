@@ -27,7 +27,7 @@ function createStorage(initialEntries = []) {
 function loadInternals(storage) {
   const exportedSource = source.replace(
     /\n\}\)\(\);\s*$/,
-    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    getConsumedRealtimeTripKey,\n    rememberConsumedRealtimeTrips,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isConsumedRealtimeTrip,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    shouldUseStaticFallbackForDirection,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
+    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    getConsumedRealtimeTripKey,\n    rememberConsumedRealtimeTrips,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isConsumedRealtimeTrip,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    shouldUseStaticFallbackForDirection,\n    getDestinationDisplayName,\n    getLimitedUniqueArrivalTimes,\n    MAX_VISIBLE_BOARD_ARRIVALS,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
   );
 
   const context = {
@@ -106,6 +106,77 @@ assert.equal(
   internals.formatArrivalCountdown(countdownNow + 60 * 3 - 1, countdownNow),
   '3 мин.',
   '2 minutes 59 seconds remaining must display three minutes'
+);
+
+// Virtual-board direction labels must prefer OSM even when the GTFS headsign
+// is present, while retaining GTFS as a fallback when no OSM name exists.
+assert.equal(
+  internals.MAX_VISIBLE_BOARD_ARRIVALS,
+  4,
+  'the board should show the primary arrival plus up to three following times'
+);
+assert.deepEqual(
+  Array.from(
+    internals.getLimitedUniqueArrivalTimes([
+      { timestamp: 50 },
+      { timestamp: 20 },
+      { timestamp: 40 },
+      { timestamp: 20 },
+      { timestamp: 30 },
+      { timestamp: 60 },
+      { timestamp: null }
+    ]),
+    time => time.timestamp
+  ),
+  [20, 30, 40, 50],
+  'arrival lists should be sorted, deduplicated, and limited to four times'
+);
+internals.setTestState({
+  transportData: {
+    stops: [
+      {
+        stop_id: 'OSM-STOP',
+        stop_name: 'Име от OSM',
+        osm_stop_name: 'Име от OSM',
+        gtfs_stop_name: 'GTFS име',
+        stop_name_source: 'osm'
+      },
+      {
+        stop_id: 'GTFS-STOP',
+        stop_name: 'GTFS резерв',
+        osm_stop_name: '',
+        gtfs_stop_name: 'GTFS резерв',
+        stop_name_source: 'gtfs'
+      }
+    ]
+  }
+});
+assert.equal(
+  internals.getDestinationDisplayName(
+    'OSM-STOP',
+    { destination: 'GTFS дестинация', headsign: 'GTFS headsign' }
+  ),
+  'Име от OSM',
+  'OSM stop name must override stale GTFS direction metadata'
+);
+assert.equal(
+  internals.getDestinationDisplayName(
+    'GTFS-STOP',
+    { destination: 'GTFS направление', headsign: 'GTFS headsign' }
+  ),
+  'GTFS направление',
+  'the GTFS direction name must remain a fallback if no OSM name exists'
+);
+assert.equal(
+  internals.getDestinationDisplayName(
+    'DIRECTION-OSM-STOP',
+    {
+      destination: 'GTFS direction',
+      stops: [{ stop_id: 'DIRECTION-OSM-STOP', osm_name: 'OSM от direction metadata' }]
+    }
+  ),
+  'OSM от direction metadata',
+  'direction stop metadata should provide the OSM name if a top-level stop lookup misses'
 );
 
 // A service that begins on Saturday must not be treated as active on Thursday

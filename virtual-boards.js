@@ -44,6 +44,8 @@
     20 * 60 * 1000;
   const ACTIVE_REALTIME_TRIP_TTL_MS =
     6 * 60 * 60 * 1000;
+  // The primary countdown plus the next three scheduled/realtime arrivals.
+  const MAX_VISIBLE_BOARD_ARRIVALS = 4;
 
   const consumedRealtimeArrivals = new Map();
   let consumedRealtimeArrivalsLoaded = false;
@@ -1637,6 +1639,109 @@
     ) || null;
   }
 
+  function getDestinationDisplayName(
+    stopId,
+    direction,
+    fallback = ""
+  ) {
+    const wantedStopId =
+      String(
+        stopId ?? ""
+      ).trim()
+      || getDirectionTerminalStopId(
+        direction
+      );
+
+    const stop =
+      getStopById(
+        wantedStopId
+      );
+
+    const directionStops =
+      Array.isArray(
+        direction?.stops
+      )
+        ? direction.stops
+        : [];
+
+    const directionStop =
+      wantedStopId
+        ? directionStops.find(
+            item =>
+              stopIdsMatch(
+                item?.stop_id,
+                wantedStopId
+              )
+          )
+        : directionStops[
+            directionStops.length - 1
+          ];
+
+    // Prefer OSM explicitly, even if the cached direction/headsign metadata
+    // still contains a GTFS name. Direction stop records are a second source
+    // for the same OSM label when the top-level stop lookup is unavailable.
+    const osmName =
+      String(
+        stop?.osm_stop_name
+        || directionStop?.osm_name
+        || (
+          stop?.stop_name_source === "osm"
+            ? stop?.stop_name
+            : ""
+        )
+        || ""
+      ).trim();
+
+    if (osmName) {
+      return osmName;
+    }
+
+    // Preserve GTFS as the fallback only when the destination has no OSM name.
+    return String(
+      direction?.destination
+      || direction?.headsign
+      || stop?.stop_name
+      || fallback
+      || ""
+    ).trim();
+  }
+
+  function getLimitedUniqueArrivalTimes(
+    times,
+    maxCount = MAX_VISIBLE_BOARD_ARRIVALS
+  ) {
+    const seenTimestamps = new Set();
+    const limit = Math.max(
+      0,
+      Math.floor(Number(maxCount) || 0)
+    );
+
+    return (Array.isArray(times) ? times : [])
+      .filter(time =>
+        time?.timestamp !== null
+        && time?.timestamp !== undefined
+        && Number.isFinite(
+          Number(time.timestamp)
+        )
+      )
+      .sort((a, b) =>
+        Number(a.timestamp)
+        - Number(b.timestamp)
+      )
+      .filter(time => {
+        const timestamp =
+          Number(time.timestamp);
+
+        if (seenTimestamps.has(timestamp)) {
+          return false;
+        }
+
+        seenTimestamps.add(timestamp);
+        return true;
+      })
+      .slice(0, limit);
+  }
+
   function getStopDistanceMeters(
     left,
     right
@@ -2412,8 +2517,8 @@
        * Partial metro courses should only appear 30 minutes before their
        * concrete departure. Normal/full-length courses keep the old behavior.
        *
-       * The filtering is intentionally done BEFORE slice(0, 3), otherwise
-       * a hidden partial course could occupy one of the first three slots
+       * The filtering is intentionally done BEFORE the visible-arrival limit,
+       * otherwise a hidden partial course could occupy one of the first four slots
        * and prevent a later visible course from being displayed.
        */
       const unique =
@@ -2431,7 +2536,7 @@
                 <= partialDisplayLeadSeconds
               )
           )
-          .slice(0, 3);
+          .slice(0, MAX_VISIBLE_BOARD_ARRIVALS);
 
       if (!unique.length) {
         continue;
@@ -2443,19 +2548,14 @@
         );
 
       const destination =
-        isPartialCourse
-          ? (
-              terminalStop?.stop_name
-              || target.direction?.destination
-              || target.direction?.headsign
-              || ""
-            )
-          : (
-              target.direction?.destination
-              || target.direction?.headsign
-              || terminalStop?.stop_name
-              || ""
-            );
+        getDestinationDisplayName(
+          target.terminalStopId,
+          target.direction,
+          target.direction?.destination
+          || target.direction?.headsign
+          || terminalStop?.stop_name
+          || ""
+        );
 
       result.push({
         route_id:
@@ -3183,9 +3283,13 @@
 
         const destination =
           normalizeDirectionText(
-            direction?.destination
-            || direction?.headsign
-            || terminalStopId
+            getDestinationDisplayName(
+              terminalStopId,
+              direction,
+              direction?.destination
+              || direction?.headsign
+              || terminalStopId
+            )
           );
 
         const consumedKey =
@@ -3208,63 +3312,51 @@
         const groupKey =
           `${routeId}|${directionKey}|${terminalStopId}`;
 
-        const existing =
-          rowsByTerminal.get(
-            groupKey
-          );
-
         if (
-          !existing
-          || timestamp < existing.timestamp
+          !rowsByTerminal.has(
+            groupKey
+          )
         ) {
           rowsByTerminal.set(
             groupKey,
-            {
-              route,
-              routeId,
-              directionKey,
-              direction,
-              meta,
-              terminalStopId,
-              timestamp,
-              schedule
-            }
+            []
           );
         }
+
+        rowsByTerminal
+          .get(groupKey)
+          .push({
+            route,
+            routeId,
+            directionKey,
+            direction,
+            meta,
+            terminalStopId,
+            timestamp,
+            schedule
+          });
       }
     }
 
     return [
       ...rowsByTerminal.values()
     ]
+      .flat()
       .map(row => {
-        const isPartialCourse =
-          !stopIdsMatch(
-            row.terminalStopId,
-            getDirectionTerminalStopId(
-              row.direction
-            )
-          );
-
         const terminalStop =
           getStopById(
             row.terminalStopId
           );
 
         const destination =
-          isPartialCourse
-            ? (
-                terminalStop?.stop_name
-                || row.direction?.destination
-                || row.direction?.headsign
-                || ""
-              )
-            : (
-                row.direction?.destination
-                || row.direction?.headsign
-                || terminalStop?.stop_name
-                || ""
-              );
+          getDestinationDisplayName(
+            row.terminalStopId,
+            row.direction,
+            row.direction?.destination
+            || row.direction?.headsign
+            || terminalStop?.stop_name
+            || ""
+          );
 
         const schedule =
           row.schedule
@@ -3549,11 +3641,18 @@
                   route.destination_stop_id
                   || "",
                 destination:
-                  route.destination
-                  || staticTrip?.trip_headsign
-                  || staticDirection?.destination
-                  || staticDirection?.headsign
-                  || "",
+                  getDestinationDisplayName(
+                    route.destination_stop_id
+                    || getDirectionTerminalStopId(
+                      staticDirection
+                    ),
+                    staticDirection,
+                    route.destination
+                    || staticTrip?.trip_headsign
+                    || staticDirection?.destination
+                    || staticDirection?.headsign
+                    || ""
+                  ),
                 times:
                   route.times
                     .map(
@@ -3686,22 +3785,21 @@
           : null;
 
       const destination =
-        isPartialRealtime
-          ? (
-              realtimeTerminal?.stop_name
-              || route.destination
-              || staticTrip?.trip_headsign
-              || staticDirection?.destination
-              || staticDirection?.headsign
-              || ""
-            )
-          : (
-              staticDirection?.destination
-              || staticDirection?.headsign
-              || route.destination
-              || staticTrip?.trip_headsign
-              || ""
-            );
+        getDestinationDisplayName(
+          isPartialRealtime
+            ? realtimeTerminalId
+            : (
+                staticTerminalId
+                || realtimeTerminalId
+              ),
+          staticDirection,
+          route.destination
+          || staticTrip?.trip_headsign
+          || staticDirection?.destination
+          || staticDirection?.headsign
+          || realtimeTerminal?.stop_name
+          || ""
+        );
 
       const directionIdentity =
         normalizeDirectionText(
@@ -3744,29 +3842,9 @@
         .map(route => ({
           ...route,
           times:
-            route.times
-              .sort(
-                (a, b) =>
-                  Number(a.timestamp)
-                  - Number(b.timestamp)
-              )
-              .filter(
-                (
-                  time,
-                  index,
-                  list
-                ) =>
-                  index === 0
-                  || Number(
-                      time.timestamp
-                    )
-                    !== Number(
-                      list[
-                        index - 1
-                      ].timestamp
-                    )
-              )
-              .slice(0, 3)
+            getLimitedUniqueArrivalTimes(
+              route.times
+            )
         }))
         .filter(
           route =>
@@ -4438,26 +4516,40 @@
       const existing =
         fallbackByKey.get(key);
 
-      if (
-        !existing
-        || Number(
-          route.times?.[0]?.timestamp
-        )
-        < Number(
-          existing.times?.[0]?.timestamp
-        )
-      ) {
+      if (!existing) {
         fallbackByKey.set(
           key,
-          route
+          {
+            ...route,
+            times: [
+              ...(route.times || [])
+            ]
+          }
+        );
+      } else {
+        existing.times.push(
+          ...(route.times || [])
         );
       }
     }
 
+    const fallbackRoutes =
+      [...fallbackByKey.values()]
+        .map(route => ({
+          ...route,
+          times:
+            getLimitedUniqueArrivalTimes(
+              route.times
+            )
+        }))
+        .filter(route =>
+          route.times.length
+        );
+
     const surfaceRoutes =
       [
         ...mergedSurfaceRoutes,
-        ...fallbackByKey.values()
+        ...fallbackRoutes
       ]
         .sort(
           (a, b) =>
@@ -4589,7 +4681,7 @@
                   a.timestamp
                   - b.timestamp
               )
-              .slice(0, 3)
+              .slice(0, MAX_VISIBLE_BOARD_ARRIVALS)
         }))
         .filter(
           route =>
@@ -4623,7 +4715,7 @@
 
           const nextTimes =
             arrivals
-              .slice(1, 3)
+              .slice(1, MAX_VISIBLE_BOARD_ARRIVALS)
               .map(
                 time => {
                   const tooltip =
