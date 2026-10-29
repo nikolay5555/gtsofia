@@ -734,56 +734,73 @@ function isCanceledOrDeleted(
   );
 }
 
-function getTerminalStopId(
+/*
+ * Return the stop with the greatest stop_sequence that appears in a TripUpdate.
+ * This is only the last stop reported by the realtime producer; for SCHEDULED
+ * trips it is NOT necessarily the trip's actual destination because past or
+ * unchanged stops may be omitted from partial updates.
+ */
+function getLastUpdatedStopId(
   tripUpdate
 ) {
-  return (
-    tripUpdate
-      ?.stopTimeUpdates
-      || []
-  )
-    .filter(item => {
-      if (!item?.stopId) {
-        return false;
-      }
+  const stopUpdates = (
+    tripUpdate?.stopTimeUpdates || []
+  ).filter(item => item?.stopId);
 
-      const relationship =
-        getStopRelationship(item);
+  if (!stopUpdates.length) {
+    return "";
+  }
 
-      return (
-        relationship
-          !== STOP_RELATIONSHIP.SKIPPED
-        && relationship
-          !== STOP_RELATIONSHIP.NO_DATA
-      );
-    })
-    .sort(
-      (a, b) => {
-        const sa =
-          Number.isFinite(
-            Number(
-              a?.stopSequence
-            )
-          )
-            ? Number(
-                a.stopSequence
-              )
-            : -1;
+  const sequenced = stopUpdates.filter(item =>
+    item?.stopSequence !== null
+    && item?.stopSequence !== undefined
+    && String(item.stopSequence).trim() !== ""
+    && Number.isFinite(Number(item.stopSequence))
+  );
 
-        const sb =
-          Number.isFinite(
-            Number(
-              b?.stopSequence
-            )
-          )
-            ? Number(
-                b.stopSequence
-              )
-            : -1;
+  if (!sequenced.length) {
+    // GTFS-Realtime stop updates should be ordered by stop_sequence. If this
+    // producer omits every sequence, retain the final item as diagnostic data.
+    return String(
+      stopUpdates[stopUpdates.length - 1]?.stopId || ""
+    );
+  }
 
-        return sb - sa;
-      }
-    )[0]?.stopId || "";
+  let last = sequenced[0];
+  for (const item of sequenced.slice(1)) {
+    if (
+      Number(item.stopSequence)
+      > Number(last.stopSequence)
+    ) {
+      last = item;
+    }
+  }
+
+  return String(last.stopId || "");
+}
+
+/*
+ * A destination can be inferred from StopTimeUpdates only when the GTFS-RT
+ * relationship defines the complete stop list. The current specification
+ * requires that full list for NEW and REPLACEMENT. For SCHEDULED, DUPLICATED
+ * and UNSCHEDULED trips, the last provided update may be only a partial feed
+ * update, so leave destination_stop_id empty and let the client resolve the
+ * known scheduled trip/direction from static GTFS data.
+ *
+ * ADDED is intentionally excluded: its behavior is deprecated/unspecified.
+ */
+function getReliableDestinationStopId(
+  tripUpdate,
+  relationship
+) {
+  if (
+    relationship !== TRIP_RELATIONSHIP.NEW
+    && relationship !== TRIP_RELATIONSHIP.REPLACEMENT
+  ) {
+    return "";
+  }
+
+  return getLastUpdatedStopId(tripUpdate);
 }
 
 function buildBoard(
@@ -1016,57 +1033,6 @@ function buildBoard(
         );
 
       if (!grouped.has(key)) {
-        const terminalUpdate =
-          (
-            tripUpdate
-              .stopTimeUpdates
-            || []
-          )
-            .filter(item => {
-              if (!item?.stopId) {
-                return false;
-              }
-
-              const relationship =
-                getStopRelationship(
-                  item
-                );
-
-              return (
-                relationship
-                  !== STOP_RELATIONSHIP.SKIPPED
-                && relationship
-                  !== STOP_RELATIONSHIP.NO_DATA
-              );
-            })
-            .sort(
-              (a, b) => {
-                const sa =
-                  Number.isFinite(
-                    Number(
-                      a?.stopSequence
-                    )
-                  )
-                    ? Number(
-                        a.stopSequence
-                      )
-                    : -1;
-
-                const sb =
-                  Number.isFinite(
-                    Number(
-                      b?.stopSequence
-                    )
-                  )
-                    ? Number(
-                        b.stopSequence
-                      )
-                    : -1;
-
-                return sb - sa;
-              }
-            )[0] || null;
-
         grouped.set(
           key,
           {
@@ -1098,10 +1064,16 @@ function buildBoard(
                 tripRelationship
               ]
                 || `UNKNOWN_${tripRelationship}`,
+            // Do not infer a scheduled trip's destination from the last
+            // StopTimeUpdate: the realtime producer may send a partial list.
             destination_stop_id:
-              terminalUpdate
-                ?.stopId
-              || "",
+              getReliableDestinationStopId(
+                tripUpdate,
+                tripRelationship
+              ),
+            // Retained for diagnostics; this is not necessarily the destination.
+            last_stop_update_stop_id:
+              getLastUpdatedStopId(tripUpdate),
             times: []
           }
         );
@@ -1242,57 +1214,6 @@ function buildBoard(
       tripKey
     );
 
-    const terminalUpdate =
-      (
-        update
-          .stopTimeUpdates
-        || []
-      )
-        .filter(item => {
-          if (!item?.stopId) {
-            return false;
-          }
-
-          const stopRelationship =
-            getStopRelationship(
-              item
-            );
-
-          return (
-            stopRelationship
-              !== STOP_RELATIONSHIP.SKIPPED
-            && stopRelationship
-              !== STOP_RELATIONSHIP.NO_DATA
-          );
-        })
-        .sort(
-          (a, b) => {
-            const sa =
-              Number.isFinite(
-                Number(
-                  a?.stopSequence
-                )
-              )
-                ? Number(
-                    a.stopSequence
-                  )
-                : -1;
-
-            const sb =
-              Number.isFinite(
-                Number(
-                  b?.stopSequence
-                )
-              )
-                ? Number(
-                    b.stopSequence
-                  )
-                : -1;
-
-            return sb - sa;
-          }
-        )[0] || null;
-
     activeTrips.push({
       trip_id:
         String(
@@ -1323,11 +1244,13 @@ function buildBoard(
           trip.directionId || ""
         ),
       destination_stop_id:
-        String(
-          terminalUpdate
-            ?.stopId
-          || ""
+        getReliableDestinationStopId(
+          update,
+          relationship
         ),
+      // Diagnostic only: the last reported stop may be an intermediate stop.
+      last_stop_update_stop_id:
+        getLastUpdatedStopId(update),
       schedule_relationship:
         relationship,
       schedule_relationship_name:
