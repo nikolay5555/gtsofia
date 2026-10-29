@@ -159,10 +159,18 @@ const res = {
     'NO_DATA must not become a suppression signal, and the normal realtime arrival must remain visible'
   );
   assert.equal(payload.routes[0].trip_id, 'REALTIME-NORMAL');
+  const activeNormalTrip = payload.active_trips.find(
+    item => item.trip_id === 'REALTIME-NORMAL'
+  );
   assert.equal(
-    payload.active_trips.find(item => item.trip_id === 'REALTIME-NORMAL').destination_stop_id,
+    activeNormalTrip.destination_stop_id,
+    '',
+    'a SCHEDULED trip must not treat the final reported StopTimeUpdate as its terminal stop'
+  );
+  assert.equal(
+    activeNormalTrip.last_stop_update_stop_id,
     '0605',
-    'active realtime trips must expose their terminal stop so unknown/replacement trips can be direction-resolved'
+    'the final reported StopTimeUpdate remains available as diagnostic data'
   );
 
   console.log('virtual-board-api: all tests passed');
