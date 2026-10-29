@@ -3718,11 +3718,16 @@ if (
                 return null;
               };
 
-              const concreteSchedule = findConcreteSchedule(
-                staticDirection?.scheduleSet
-                  || transportData?.schedules?.[route.route_id]
-                  || null
-              );
+              // Search the route-wide timetable first: short-turn trips may not
+              // be present in the representative direction's scheduleSet.
+              const routeScheduleSet =
+                transportData?.schedules?.[routeId]
+                || transportData?.schedules?.[route.route_id]
+                || null;
+              const concreteSchedule =
+                findConcreteSchedule(routeScheduleSet)
+                || findConcreteSchedule(staticDirection?.scheduleSet)
+                || null;
 
               const concreteTimes = Array.isArray(concreteSchedule?.times)
                 ? concreteSchedule.times
@@ -3744,8 +3749,15 @@ if (
                   ? String(concretePattern[concreteTerminalIndex] || "").trim()
                   : "";
 
+              // For SCHEDULED trips, prefer the matched trip's timetable
+              // terminal over the realtime destination, which can reflect
+              // the full line even when this individual trip is short-turn.
+              const isScheduledRealtime =
+                String(route?.schedule_relationship_name || "SCHEDULED").toUpperCase() === "SCHEDULED"
+                || Number(route?.schedule_relationship) === 0;
               const resolvedRealtimeTerminalId =
-                route.destination_stop_id
+                (isScheduledRealtime && concreteTripTerminalId)
+                || route.destination_stop_id
                 || concreteTripTerminalId
                 || "";
 
