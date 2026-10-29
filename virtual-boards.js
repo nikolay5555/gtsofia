@@ -3680,19 +3680,68 @@ if (
                     || ""
                 );
 
-              // Prefer the concrete trip's own stop sequence over the
-              // direction's representative pattern: partial trips can end
-              // before the direction terminal.
-              const concreteTripStops =
-                tripStopsById.get(
-                  String(route.trip_id || "").trim()
-                ) || [];
+              // Resolve the realtime trip against the actual timetable row.
+              // direction.trip_id is only a representative trip for the
+              // direction; partial trips have their own original_trip_id.
+              // Looking them up in tripStopsById therefore misses most of
+              // the partial trips and silently falls back to the full route.
+              const realtimeTripId = String(
+                route.trip_id || route.original_trip_id || ""
+              ).trim();
 
+              const findConcreteSchedule = (node) => {
+                if (!node || typeof node !== "object") return null;
+                if (Array.isArray(node)) {
+                  for (const item of node) {
+                    const found = findConcreteSchedule(item);
+                    if (found) return found;
+                  }
+                  return null;
+                }
+
+                const scheduleTripId = String(
+                  node.original_trip_id || node.trip_id || ""
+                ).trim();
+                if (
+                  scheduleTripId
+                  && realtimeTripId
+                  && scheduleTripId === realtimeTripId
+                  && Array.isArray(node.times)
+                ) {
+                  return node;
+                }
+
+                for (const value of Object.values(node)) {
+                  const found = findConcreteSchedule(value);
+                  if (found) return found;
+                }
+                return null;
+              };
+
+              const concreteSchedule = findConcreteSchedule(
+                staticDirection?.scheduleSet
+                  || transportData?.schedules?.[route.route_id]
+                  || null
+              );
+
+              const concreteTimes = Array.isArray(concreteSchedule?.times)
+                ? concreteSchedule.times
+                : [];
+              let concreteTerminalIndex = -1;
+              for (let i = concreteTimes.length - 1; i >= 0; i--) {
+                if (parseGtfsTime(concreteTimes[i]) !== null) {
+                  concreteTerminalIndex = i;
+                  break;
+                }
+              }
+
+              const concretePattern = Array.isArray(staticDirection?.direction?.pattern)
+                ? staticDirection.direction.pattern
+                : [];
               const concreteTripTerminalId =
-                concreteTripStops.length
-                  ? String(
-                      concreteTripStops[concreteTripStops.length - 1] || ""
-                    ).trim()
+                concreteTerminalIndex >= 0
+                && concreteTerminalIndex < concretePattern.length
+                  ? String(concretePattern[concreteTerminalIndex] || "").trim()
                   : "";
 
               const resolvedRealtimeTerminalId =
