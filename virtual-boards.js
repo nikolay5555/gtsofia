@@ -3680,6 +3680,26 @@ if (
                     || ""
                 );
 
+              // Prefer the concrete trip's own stop sequence over the
+              // direction's representative pattern: partial trips can end
+              // before the direction terminal.
+              const concreteTripStops =
+                tripStopsById.get(
+                  String(route.trip_id || "").trim()
+                ) || [];
+
+              const concreteTripTerminalId =
+                concreteTripStops.length
+                  ? String(
+                      concreteTripStops[concreteTripStops.length - 1] || ""
+                    ).trim()
+                  : "";
+
+              const resolvedRealtimeTerminalId =
+                route.destination_stop_id
+                || concreteTripTerminalId
+                || "";
+
               return {
                 ...route,
                 source: "realtime",
@@ -3705,11 +3725,10 @@ if (
                   staticDirection?.key
                   || "",
                 destination_stop_id:
-                  route.destination_stop_id
-                  || "",
+                  resolvedRealtimeTerminalId,
                 destination:
                   getDestinationDisplayName(
-                    route.destination_stop_id
+                    resolvedRealtimeTerminalId
                     || getDirectionTerminalStopId(
                       staticDirection
                     ),
