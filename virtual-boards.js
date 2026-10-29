@@ -34,6 +34,7 @@
 
   const scheduleTimeSecondsCache = new WeakMap();
   const scheduleTerminalIndexCache = new WeakMap();
+  const staticScheduledTerminalCache = new Map();
 
   // Realtime trip updates may disappear temporarily, including before the
   // scheduled arrival at this stop. Remember both trip identity and scheduled
@@ -2017,6 +2018,213 @@
       : "";
   }
 
+  function getStaticScheduledTerminalStopId(
+    routeId,
+    tripId,
+    tripStartTime = "",
+    staticTrip = null
+  ) {
+    const normalizedRouteId = String(routeId || "").trim();
+    const normalizedTripId = String(tripId || "").trim();
+    const normalizedStartTime = String(tripStartTime || "").trim();
+
+    if (!normalizedRouteId || !normalizedTripId) return "";
+
+    const cacheKey = [
+      getSofiaDateKey(),
+      getCurrentScheduleDayType(),
+      normalizedRouteId,
+      normalizedTripId,
+      normalizedStartTime
+    ].join("|");
+
+    if (staticScheduledTerminalCache.has(cacheKey)) {
+      return staticScheduledTerminalCache.get(cacheKey);
+    }
+
+    const directions = transportData?.directions?.[normalizedRouteId] || {};
+    const schedules = transportData?.schedules?.[normalizedRouteId] || {};
+    const dayType = getCurrentScheduleDayType();
+    const preferredDirectionKey = String(
+      getStaticDirectionForTrip(staticTrip)?.key || ""
+    ).trim();
+    const matches = [];
+
+    for (const [directionKey, direction] of Object.entries(directions)) {
+      const pattern = Array.isArray(direction?.pattern)
+        ? direction.pattern.map(String)
+        : [];
+      if (!pattern.length) continue;
+
+      const rows = schedules?.[directionKey]?.[dayType];
+      if (!Array.isArray(rows)) continue;
+
+      for (const schedule of rows) {
+        const scheduleTripIds = [
+          schedule?.original_trip_id,
+          schedule?.gtfs_trip_id,
+          // The generated schedule `trip_id` is often a numeric internal index.
+          // Only treat it as a GTFS identity when it is actually a string.
+          typeof schedule?.trip_id === "string" ? schedule.trip_id : ""
+        ].map(value => String(value ?? "").trim()).filter(Boolean);
+
+        if (!scheduleTripIds.includes(normalizedTripId)) continue;
+
+        const terminalIndex = getCachedScheduleTerminalIndex(
+          schedule,
+          pattern.length
+        );
+        if (terminalIndex < 0) continue;
+
+        matches.push({
+          directionKey,
+          terminalStopId: String(pattern[terminalIndex] || "").trim(),
+          startTime: String(schedule?.start_time || "").trim(),
+          activeToday: isScheduleRowActiveToday(schedule)
+        });
+      }
+    }
+
+    if (!matches.length) {
+      staticScheduledTerminalCache.set(cacheKey, "");
+      return "";
+    }
+
+    let candidates = matches;
+
+    // Prefer the direction resolved from the concrete static GTFS trip.
+    if (preferredDirectionKey) {
+      const directionMatches = candidates.filter(
+        item => item.directionKey === preferredDirectionKey
+      );
+      if (directionMatches.length) candidates = directionMatches;
+    }
+
+    // If multiple instances share a trip_id, use an exact start_time when present.
+    const requestedStart = parseGtfsTime(normalizedStartTime);
+    if (requestedStart != null) {
+      const exactStartMatches = candidates.filter(
+        item => parseGtfsTime(item.startTime) === requestedStart
+      );
+      if (exactStartMatches.length) candidates = exactStartMatches;
+    }
+
+    // Prefer today's active service, but retain the exact trip match if the
+    // generated calendar metadata is incomplete or stale.
+    const activeMatches = candidates.filter(item => item.activeToday);
+    if (activeMatches.length) candidates = activeMatches;
+
+    const terminalIds = new Set(
+      candidates.map(item => item.terminalStopId).filter(Boolean)
+    );
+    const terminalStopId = terminalIds.size === 1
+      ? [...terminalIds][0]
+      : "";
+
+    staticScheduledTerminalCache.set(cacheKey, terminalStopId);
+    return terminalStopId;
+  }
+
+  function getRealtimeScheduleRelationshipName(route) {
+    const label = String(
+      route?.schedule_relationship_name || ""
+    ).trim().toUpperCase();
+
+    if (label && !/^UNKNOWN_\d+$/.test(label)) return label;
+
+    const numeric = Number(route?.schedule_relationship);
+    const names = {
+      0: "SCHEDULED",
+      1: "ADDED",
+      2: "UNSCHEDULED",
+      3: "CANCELED",
+      5: "REPLACEMENT",
+      6: "DUPLICATED",
+      7: "DELETED",
+      8: "NEW"
+    };
+
+    return names[numeric] || label || "SCHEDULED";
+  }
+
+  function getRealtimeTerminalStopId(route, staticTrip = null) {
+    const realtimeTerminalId = String(
+      route?.destination_stop_id || ""
+    ).trim();
+    const relationship = getRealtimeScheduleRelationshipName(route);
+
+    // NEW and REPLACEMENT trips define their own stop pattern in GTFS-RT;
+    // the realtime terminal must win over the static route in those cases.
+    if (relationship === "NEW" || relationship === "REPLACEMENT") {
+      return realtimeTerminalId;
+    }
+
+    const routeId = String(
+      route?.route_id || staticTrip?.route_id || ""
+    ).trim();
+    const tripId = String(
+      route?.trip_id || staticTrip?.trip_id || ""
+    ).trim();
+    const startTime = String(
+      route?.trip_start_time || route?.start_time || ""
+    ).trim();
+
+    // For trips linked to a known static trip, use that trip's terminal rather
+    // than assuming the last available StopTimeUpdate is the real destination.
+    // This handles partial SCHEDULED updates and preserves planned short turns,
+    // whose static schedule row ends before the direction's full-route terminal.
+    const scheduledTerminalId = getStaticScheduledTerminalStopId(
+      routeId,
+      tripId,
+      startTime,
+      staticTrip
+    );
+    if (scheduledTerminalId) return scheduledTerminalId;
+
+    // A known static trip may have no row in today's timetable (for example,
+    // frequency/duplicated cases). Its route pattern is still a better source
+    // for SCHEDULED/UNSCHEDULED/DUPLICATED trips than a partial update list.
+    if (
+      staticTrip
+      && ["SCHEDULED", "UNSCHEDULED", "DUPLICATED", "ADDED"].includes(relationship)
+    ) {
+      const staticDirection = getStaticDirectionForTrip(staticTrip);
+      const directionTerminalId = getDirectionTerminalStopId(staticDirection);
+      if (directionTerminalId) return directionTerminalId;
+    }
+
+    return realtimeTerminalId;
+  }
+
+  function shouldShowRealtimeRouteAtStop(route, stop) {
+    const stopId = String(
+      stop?.stop_id || stop?.stop_code || ""
+    ).trim();
+    if (!stopId) return true;
+
+    const staticTrip = findStaticTrip(route?.trip_id);
+    const routeId = String(
+      route?.route_id || staticTrip?.route_id || ""
+    ).trim();
+    const terminalStopId = getRealtimeTerminalStopId(route, staticTrip);
+
+    // Only hide a course when the selected stop is actually its terminal.
+    // Do not reject it merely because its destination is a terminal stop.
+    if (terminalStopId) {
+      return !stopIdsMatch(terminalStopId, stopId);
+    }
+
+    // Fallback for feeds that provide neither a usable trip identity nor a
+    // destination stop id, preserving the previous direction-based safeguard.
+    return !shouldHideTerminalArrival(
+      routeId,
+      stopId,
+      staticTrip,
+      route?.destination || "",
+      route?.direction_id || route?.directionId || ""
+    );
+  }
+
   function getDirectionIdentity(
     direction,
     fallback = ""
@@ -2157,88 +2365,6 @@
     );
   }
 
-  // A TripUpdate for a SCHEDULED trip may contain only a subset of its
-  // StopTimeUpdates. Its last supplied stop is therefore not necessarily the
-  // trip's destination. For scheduled/frequency-based trips (and DUPLICATED
-  // trips that refer back to a static trip), the matched static itinerary is
-  // authoritative. NEW and REPLACEMENT trips define their own stop list in
-  // realtime and must keep the destination inferred from that list.
-  const GTFS_TRIP_RELATIONSHIP = Object.freeze({
-    SCHEDULED: 0,
-    UNSCHEDULED: 2,
-    REPLACEMENT: 5,
-    DUPLICATED: 6,
-    NEW: 8
-  });
-
-  function getRealtimeDestinationStopId(
-    route,
-    staticTrip,
-    staticDirection
-  ) {
-    const relationshipValue =
-      Number(route?.schedule_relationship);
-
-    const relationship =
-      Number.isFinite(relationshipValue)
-        ? relationshipValue
-        : GTFS_TRIP_RELATIONSHIP.SCHEDULED;
-
-    const staticTerminalId =
-      getDirectionTerminalStopId(
-        staticDirection
-      );
-
-    const staticItineraryIsAuthoritative =
-      !!staticTrip
-      && !!staticTerminalId
-      && (
-        relationship === GTFS_TRIP_RELATIONSHIP.SCHEDULED
-        || relationship === GTFS_TRIP_RELATIONSHIP.UNSCHEDULED
-        || relationship === GTFS_TRIP_RELATIONSHIP.DUPLICATED
-      );
-
-    if (staticItineraryIsAuthoritative) {
-      return staticTerminalId;
-    }
-
-    return String(
-      route?.destination_stop_id
-      || staticTerminalId
-      || ""
-    ).trim();
-  }
-
-  function isRealtimeRouteVisibleAtStop(
-    route,
-    stop
-  ) {
-    const staticTrip =
-      findStaticTrip(
-        route?.trip_id
-      );
-
-    const routeId =
-      route?.route_id
-      || staticTrip?.route_id
-      || "";
-
-    // Only the selected stop matters here. The final StopTimeUpdate in a
-    // scheduled trip is not proof that the vehicle has reached, or terminates
-    // at, that stop. Filtering on route.destination_stop_id made valid realtime
-    // arrivals disappear as soon as the feed included an update for the true
-    // terminal stop.
-    return !shouldHideTerminalArrival(
-      routeId,
-      stop?.stop_id || stop?.stop_code || "",
-      staticTrip,
-      route?.destination || "",
-      route?.direction_id
-        || route?.directionId
-        || ""
-    );
-  }
-
   /**
    * Build a compact index of static directions by stop.
    *
@@ -2247,6 +2373,7 @@
    * memory. We only need to avoid scanning every route/direction on refresh.
    */
   function buildStaticScheduleIndexes() {
+    staticScheduledTerminalCache.clear();
     surfaceDirectionsByStop =
       new Map();
 
@@ -3692,10 +3819,7 @@ if (
                 )
             )
             .filter(route =>
-              isRealtimeRouteVisibleAtStop(
-                route,
-                stop
-              )
+              shouldShowRealtimeRouteAtStop(route, stop)
             )
             .map(route => {
               const staticTrip =
@@ -3723,18 +3847,17 @@ if (
                     || ""
                 );
 
-              const destinationStopId =
-                getRealtimeDestinationStopId(
-                  route,
-                  staticTrip,
-                  staticDirection
-                );
-
               const routeMeta =
                 getLineMeta(
                   routeId,
                   route.route_ref
                     || ""
+                );
+
+              const realtimeTerminalStopId =
+                getRealtimeTerminalStopId(
+                  route,
+                  staticTrip
                 );
 
               return {
@@ -3762,18 +3885,18 @@ if (
                   staticDirection?.key
                   || "",
                 destination_stop_id:
-                  destinationStopId,
+                  realtimeTerminalStopId,
                 destination:
                   getDestinationDisplayName(
-                    destinationStopId
+                    realtimeTerminalStopId
                     || getDirectionTerminalStopId(
                       staticDirection
                     ),
                     staticDirection,
-                    staticTrip?.trip_headsign
+                    route.destination
+                    || staticTrip?.trip_headsign
                     || staticDirection?.destination
                     || staticDirection?.headsign
-                    || route.destination
                     || ""
                   ),
                 times:
@@ -5684,6 +5807,9 @@ if (
     getSofiaDateKey,
     staticArrivalIsCoveredByRealtime,
     getRealtimeScheduledTimestamp,
+    getStaticScheduledTerminalStopId,
+    getRealtimeTerminalStopId,
+    shouldShowRealtimeRouteAtStop,
     mergeBoardRoutesByDestination,
     getLimitedUniqueArrivalTimes
   };
