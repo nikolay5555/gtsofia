@@ -2157,6 +2157,88 @@
     );
   }
 
+  // A TripUpdate for a SCHEDULED trip may contain only a subset of its
+  // StopTimeUpdates. Its last supplied stop is therefore not necessarily the
+  // trip's destination. For scheduled/frequency-based trips (and DUPLICATED
+  // trips that refer back to a static trip), the matched static itinerary is
+  // authoritative. NEW and REPLACEMENT trips define their own stop list in
+  // realtime and must keep the destination inferred from that list.
+  const GTFS_TRIP_RELATIONSHIP = Object.freeze({
+    SCHEDULED: 0,
+    UNSCHEDULED: 2,
+    REPLACEMENT: 5,
+    DUPLICATED: 6,
+    NEW: 8
+  });
+
+  function getRealtimeDestinationStopId(
+    route,
+    staticTrip,
+    staticDirection
+  ) {
+    const relationshipValue =
+      Number(route?.schedule_relationship);
+
+    const relationship =
+      Number.isFinite(relationshipValue)
+        ? relationshipValue
+        : GTFS_TRIP_RELATIONSHIP.SCHEDULED;
+
+    const staticTerminalId =
+      getDirectionTerminalStopId(
+        staticDirection
+      );
+
+    const staticItineraryIsAuthoritative =
+      !!staticTrip
+      && !!staticTerminalId
+      && (
+        relationship === GTFS_TRIP_RELATIONSHIP.SCHEDULED
+        || relationship === GTFS_TRIP_RELATIONSHIP.UNSCHEDULED
+        || relationship === GTFS_TRIP_RELATIONSHIP.DUPLICATED
+      );
+
+    if (staticItineraryIsAuthoritative) {
+      return staticTerminalId;
+    }
+
+    return String(
+      route?.destination_stop_id
+      || staticTerminalId
+      || ""
+    ).trim();
+  }
+
+  function isRealtimeRouteVisibleAtStop(
+    route,
+    stop
+  ) {
+    const staticTrip =
+      findStaticTrip(
+        route?.trip_id
+      );
+
+    const routeId =
+      route?.route_id
+      || staticTrip?.route_id
+      || "";
+
+    // Only the selected stop matters here. The final StopTimeUpdate in a
+    // scheduled trip is not proof that the vehicle has reached, or terminates
+    // at, that stop. Filtering on route.destination_stop_id made valid realtime
+    // arrivals disappear as soon as the feed included an update for the true
+    // terminal stop.
+    return !shouldHideTerminalArrival(
+      routeId,
+      stop?.stop_id || stop?.stop_code || "",
+      staticTrip,
+      route?.destination || "",
+      route?.direction_id
+        || route?.directionId
+        || ""
+    );
+  }
+
   /**
    * Build a compact index of static directions by stop.
    *
@@ -3609,44 +3691,12 @@ if (
                   route.times
                 )
             )
-            .filter(route => {
-              const staticTrip =
-                findStaticTrip(
-                  route.trip_id
-                );
-
-              const routeId =
-                route.route_id
-                || staticTrip?.route_id
-                || "";
-
-              if (
-                route.destination_stop_id
-                && shouldHideTerminalArrival(
-                  routeId,
-                  route.destination_stop_id,
-                  staticTrip,
-                  route.destination
-                    || "",
-                  route.direction_id
-                    || route.directionId
-                    || ""
-                )
-              ) {
-                return false;
-              }
-
-              return !shouldHideTerminalArrival(
-                routeId,
-                stop.stop_id,
-                staticTrip,
-                route.destination
-                  || "",
-                route.direction_id
-                  || route.directionId
-                  || ""
-              );
-            })
+            .filter(route =>
+              isRealtimeRouteVisibleAtStop(
+                route,
+                stop
+              )
+            )
             .map(route => {
               const staticTrip =
                 findStaticTrip(
@@ -3671,6 +3721,13 @@ if (
                   route.direction_id
                     || route.directionId
                     || ""
+                );
+
+              const destinationStopId =
+                getRealtimeDestinationStopId(
+                  route,
+                  staticTrip,
+                  staticDirection
                 );
 
               const routeMeta =
@@ -3705,19 +3762,18 @@ if (
                   staticDirection?.key
                   || "",
                 destination_stop_id:
-                  route.destination_stop_id
-                  || "",
+                  destinationStopId,
                 destination:
                   getDestinationDisplayName(
-                    route.destination_stop_id
+                    destinationStopId
                     || getDirectionTerminalStopId(
                       staticDirection
                     ),
                     staticDirection,
-                    route.destination
-                    || staticTrip?.trip_headsign
+                    staticTrip?.trip_headsign
                     || staticDirection?.destination
                     || staticDirection?.headsign
+                    || route.destination
                     || ""
                   ),
                 times:

@@ -27,7 +27,7 @@ function createStorage(initialEntries = []) {
 function loadInternals(storage) {
   const exportedSource = source.replace(
     /\n\}\)\(\);\s*$/,
-    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    getConsumedRealtimeTripKey,\n    rememberConsumedRealtimeTrips,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isConsumedRealtimeTrip,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    getDestinationDisplayName,\n    getLimitedUniqueArrivalTimes,\n    mergeBoardRoutesByDestination,\n    MAX_VISIBLE_BOARD_ARRIVALS,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
+    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    getConsumedRealtimeTripKey,\n    rememberConsumedRealtimeTrips,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isConsumedRealtimeTrip,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    getDestinationDisplayName,\n    getRealtimeDestinationStopId,\n    isRealtimeRouteVisibleAtStop,\n    getLimitedUniqueArrivalTimes,\n    mergeBoardRoutesByDestination,\n    MAX_VISIBLE_BOARD_ARRIVALS,\n    setTestState({ transportData: nextTransportData, trips = [] } = {}) {\n      transportData = nextTransportData || null;\n      tripById = new Map(trips.map(trip => [String(trip.trip_id), trip]));\n    }\n  };\n})();`
   );
 
   const context = {
@@ -521,6 +521,87 @@ assert.equal(
   ])[0].route_ref,
   '10',
   'a missing realtime route label must not prevent merging and should use the static label'
+);
+
+// A scheduled GTFS-RT trip may publish only some StopTimeUpdates. The last
+// supplied stop must not make a valid prediction at an earlier stop disappear
+// merely because it happens to be the route's true terminal.
+const scheduledStaticTrip = {
+  trip_id: 'SCHEDULED-TRIP',
+  route_id: 'TEST_ROUTE',
+  trip_headsign: 'Terminal',
+  shape_id: 'TEST-SHAPE'
+};
+const scheduledDirection = {
+  key: 'D1',
+  destination: 'Terminal',
+  headsign: 'Terminal',
+  shape_id: 'TEST-SHAPE',
+  trip_ids: ['SCHEDULED-TRIP'],
+  pattern: ['1000', '2086', '3000']
+};
+internals.setTestState({
+  transportData: {
+    stops: [
+      { stop_id: '2086', stop_name: 'Intermediate Stop' },
+      { stop_id: '3000', stop_name: 'Terminal' }
+    ],
+    directions: {
+      TEST_ROUTE: { D1: scheduledDirection }
+    }
+  },
+  trips: [scheduledStaticTrip]
+});
+const realtimeTripWithTerminalUpdate = {
+  trip_id: 'SCHEDULED-TRIP',
+  route_id: 'TEST_ROUTE',
+  direction_id: 'D1',
+  schedule_relationship: 0,
+  destination_stop_id: '3000',
+  times: [{ timestamp: 1_900_000_000 }]
+};
+assert.equal(
+  internals.isRealtimeRouteVisibleAtStop(
+    realtimeTripWithTerminalUpdate,
+    { stop_id: '2086' }
+  ),
+  true,
+  'a realtime arrival at an intermediate stop must remain visible when the last StopTimeUpdate is the route terminal'
+);
+assert.equal(
+  internals.isRealtimeRouteVisibleAtStop(
+    realtimeTripWithTerminalUpdate,
+    { stop_id: '3000' }
+  ),
+  false,
+  'the actual terminal stop should still be filtered from its own arrival board'
+);
+assert.equal(
+  internals.getRealtimeDestinationStopId(
+    { ...realtimeTripWithTerminalUpdate, destination_stop_id: '2086' },
+    scheduledStaticTrip,
+    scheduledDirection
+  ),
+  '3000',
+  'SCHEDULED trips must use their matched static itinerary terminal rather than the last supplied StopTimeUpdate'
+);
+assert.equal(
+  internals.getRealtimeDestinationStopId(
+    { ...realtimeTripWithTerminalUpdate, schedule_relationship: 5, destination_stop_id: '2086' },
+    scheduledStaticTrip,
+    scheduledDirection
+  ),
+  '2086',
+  'REPLACEMENT trips must use the stop list supplied by realtime rather than the old static terminal'
+);
+assert.equal(
+  internals.getRealtimeDestinationStopId(
+    { ...realtimeTripWithTerminalUpdate, schedule_relationship: 8, destination_stop_id: '2086' },
+    scheduledStaticTrip,
+    scheduledDirection
+  ),
+  '2086',
+  'NEW trips must use the stop list supplied by realtime'
 );
 
 console.log('virtual-board-arrivals: all tests passed');
