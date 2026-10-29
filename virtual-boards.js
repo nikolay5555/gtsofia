@@ -26,6 +26,10 @@
   let surfaceDirectionsByStop = new Map();
   let metroDirectionsByStop = new Map();
   let realtimeRouteIdsByStop = new Map();
+  // Exact timetable rows keyed by route + original GTFS trip_id. This lets
+  // realtime filtering recognize short-turn terminals that are intermediate
+  // stops in the line's representative direction pattern.
+  let scheduleByOriginalTripId = new Map();
 
   // Caches for calculations that are identical for the lifetime of the
   // currently loaded transport dataset.
@@ -686,6 +690,55 @@
     );
 
     return terminalIndex;
+  }
+
+  function getTripScheduleKey(
+    routeId,
+    tripId
+  ) {
+    const routeKey = String(routeId ?? "").trim();
+    const tripKey = String(tripId ?? "").trim();
+
+    return routeKey && tripKey
+      ? `${routeKey}::${tripKey}`
+      : "";
+  }
+
+  function getScheduledTripTerminalStopId(
+    routeId,
+    staticTrip
+  ) {
+    const tripId = String(
+      staticTrip?.trip_id
+      || staticTrip?.original_trip_id
+      || ""
+    ).trim();
+    const resolvedRouteId = String(
+      routeId
+      || staticTrip?.route_id
+      || ""
+    ).trim();
+    const key = getTripScheduleKey(
+      resolvedRouteId,
+      tripId
+    );
+    const entry = key
+      ? scheduleByOriginalTripId.get(key)
+      : null;
+
+    if (!entry) return "";
+
+    const terminalIndex =
+      getCachedScheduleTerminalIndex(
+        entry.schedule,
+        entry.pattern.length
+      );
+
+    if (terminalIndex < 0) return "";
+
+    return String(
+      entry.pattern[terminalIndex] || ""
+    ).trim();
   }
 
   function normalizeProxyStopCode(stop) {
@@ -1591,168 +1644,6 @@
     return null;
   }
 
-  // Resolve a realtime trip against its exact GTFS timetable row. A route's
-  // representative direction may describe the full line even when this
-  // particular trip is short-turning (e.g. TB1-TB58 ends at stop 0372).
-  function getStaticScheduleInfoForTrip(
-    routeId,
-    tripId
-  ) {
-    const wantedRouteId = String(
-      routeId ?? ""
-    ).trim();
-    const wantedTripId = String(
-      tripId ?? ""
-    ).trim();
-
-    if (!wantedRouteId || !wantedTripId) {
-      return null;
-    }
-
-    const schedulesByDirection =
-      transportData?.schedules?.[wantedRouteId] || {};
-    const directionsByKey =
-      transportData?.directions?.[wantedRouteId] || {};
-    const todayType = getCurrentScheduleDayType();
-    const otherType = todayType === "weekday"
-      ? "weekend"
-      : "weekday";
-
-    // Prefer today's schedule bucket, but allow the other bucket as a fallback
-    // for data sets where the same original trip is serialized in both.
-    for (const dayType of [todayType, otherType]) {
-      for (const [directionKey, scheduleGroups] of Object.entries(
-        schedulesByDirection
-      )) {
-        const rows = Array.isArray(scheduleGroups?.[dayType])
-          ? scheduleGroups[dayType]
-          : [];
-
-        const schedule = rows.find(row =>
-          String(row?.original_trip_id ?? "").trim() === wantedTripId
-        );
-
-        if (!schedule) continue;
-
-        const sourceDirection = directionsByKey?.[directionKey];
-        const pattern = Array.isArray(sourceDirection?.pattern)
-          ? sourceDirection.pattern.map(String)
-          : [];
-
-        if (!pattern.length) continue;
-
-        const terminalIndex = getCachedScheduleTerminalIndex(
-          schedule,
-          pattern.length
-        );
-        const terminalStopId = String(
-          pattern[terminalIndex] ?? ""
-        ).trim();
-
-        if (terminalIndex < 0 || !terminalStopId) continue;
-
-        return {
-          directionKey,
-          direction: {
-            key: directionKey,
-            ...sourceDirection
-          },
-          schedule,
-          terminalIndex,
-          terminalStopId
-        };
-      }
-    }
-
-    return null;
-  }
-
-  function getRealtimeTripDestinationStopId(
-    realtimeRoute,
-    staticScheduleInfo
-  ) {
-    const reportedDestination = String(
-      realtimeRoute?.destination_stop_id ?? ""
-    ).trim();
-
-    const relationshipName = String(
-      realtimeRoute?.schedule_relationship_name ?? ""
-    ).trim().toUpperCase();
-    const relationshipValue = realtimeRoute?.schedule_relationship;
-    const relationshipNumber = Number(relationshipValue);
-    const hasRelationshipValue = relationshipValue !== null
-      && relationshipValue !== undefined
-      && String(relationshipValue).trim() !== "";
-    const isScheduled = relationshipName
-      ? relationshipName === "SCHEDULED"
-      : (!hasRelationshipValue || relationshipNumber === 0);
-
-    // For SCHEDULED trips, GTFS-RT's final StopTimeUpdate is not a reliable
-    // destination. The exact static trip row is authoritative when available.
-    if (isScheduled && staticScheduleInfo?.terminalStopId) {
-      return String(staticScheduleInfo.terminalStopId).trim();
-    }
-
-    return reportedDestination
-      || String(staticScheduleInfo?.terminalStopId ?? "").trim()
-      || "";
-  }
-
-  function resolveRealtimeRouteDestinationDetails(
-    realtimeRoute,
-    staticTrip,
-    routeId,
-    stopId
-  ) {
-    const resolvedRouteId = String(
-      routeId
-      || realtimeRoute?.route_id
-      || staticTrip?.route_id
-      || ""
-    ).trim();
-    const tripId = String(
-      realtimeRoute?.trip_id
-      || staticTrip?.trip_id
-      || ""
-    ).trim();
-
-    const staticScheduleInfo = getStaticScheduleInfoForTrip(
-      resolvedRouteId,
-      tripId
-    );
-    const staticDirection = staticScheduleInfo?.direction
-      || getStaticDirectionForTrip(staticTrip)
-      || resolveDirectionForRealtimeRoute(
-        resolvedRouteId,
-        stopId,
-        staticTrip,
-        realtimeRoute?.destination || "",
-        realtimeRoute?.direction_id || realtimeRoute?.directionId || ""
-      );
-    const destinationStopId = getRealtimeTripDestinationStopId(
-      realtimeRoute,
-      staticScheduleInfo
-    );
-    const displayStopId = destinationStopId
-      || getDirectionTerminalStopId(staticDirection);
-    const destination = getDestinationDisplayName(
-      displayStopId,
-      staticDirection,
-      realtimeRoute?.destination
-      || staticTrip?.trip_headsign
-      || staticDirection?.destination
-      || staticDirection?.headsign
-      || ""
-    );
-
-    return {
-      staticScheduleInfo,
-      staticDirection,
-      destinationStopId,
-      destination
-    };
-  }
-
   function normalizeStopName(
     value
   ) {
@@ -2276,8 +2167,31 @@
     stopId,
     staticTrip,
     destination = "",
-    directionId = ""
+    directionId = "",
+    includeConcreteTripTerminal = false
   ) {
+    // The line-level pattern can continue beyond a short-turn terminus. When
+    // checking the board's selected stop, also consult the exact timetable
+    // row for this vehicle's trip and suppress it if that stop is the trip's
+    // own terminal, even when it is intermediate on the full line.
+    if (includeConcreteTripTerminal) {
+      const concreteTerminalStopId =
+        getScheduledTripTerminalStopId(
+          routeId,
+          staticTrip
+        );
+
+      if (
+        concreteTerminalStopId
+        && stopIdsMatch(
+          concreteTerminalStopId,
+          stopId
+        )
+      ) {
+        return true;
+      }
+    }
+
     const direction =
       resolveDirectionForRealtimeRoute(
         routeId,
@@ -2334,6 +2248,9 @@
       new Map();
 
     realtimeRouteIdsByStop =
+      new Map();
+
+    scheduleByOriginalTripId =
       new Map();
 
     const addEntry = (
@@ -2410,6 +2327,67 @@
 
         if (!pattern.length) {
           continue;
+        }
+
+        // Index real schedule rows by their original GTFS trip ID. A short
+        // turn may have a shape/headsign that does not match the direction's
+        // representative shape/headsign, even though it follows that pattern
+        // only up to an earlier terminal stop.
+        const directionScheduleSet =
+          scheduleSet?.[directionKey] || {};
+
+        for (
+          const daySchedules
+          of Object.values(directionScheduleSet)
+        ) {
+          if (!Array.isArray(daySchedules)) continue;
+
+          for (const schedule of daySchedules) {
+            const originalTripId = String(
+              schedule?.original_trip_id || ""
+            ).trim();
+
+            const key = getTripScheduleKey(
+              routeId,
+              originalTripId
+            );
+
+            if (!key) continue;
+
+            const terminalIndex =
+              getCachedScheduleTerminalIndex(
+                schedule,
+                pattern.length
+              );
+
+            const existing =
+              scheduleByOriginalTripId.get(key);
+
+            const existingTerminalIndex = existing
+              ? getCachedScheduleTerminalIndex(
+                  existing.schedule,
+                  existing.pattern.length
+                )
+              : -1;
+
+            // Rows can appear in both weekday/weekend service arrays. Keep
+            // the entry with the most complete known stop-time sequence.
+            if (
+              !existing
+              || terminalIndex > existingTerminalIndex
+            ) {
+              scheduleByOriginalTripId.set(
+                key,
+                {
+                  routeId,
+                  directionKey,
+                  direction,
+                  schedule,
+                  pattern
+                }
+              );
+            }
+          }
         }
 
         const directionEntries =
@@ -3806,7 +3784,8 @@ if (
                   || "",
                 route.direction_id
                   || route.directionId
-                  || ""
+                  || "",
+                true
               );
             })
             .map(route => {
@@ -3820,15 +3799,20 @@ if (
                 || staticTrip?.route_id
                 || "";
 
-              const destinationDetails =
-                resolveRealtimeRouteDestinationDetails(
-                  route,
-                  staticTrip,
-                  routeId,
-                  stop.stop_id
-                );
               const staticDirection =
-                destinationDetails.staticDirection;
+                getStaticDirectionForTrip(
+                  staticTrip
+                )
+                || resolveDirectionForRealtimeRoute(
+                  routeId,
+                  stop.stop_id,
+                  staticTrip,
+                  route.destination
+                    || "",
+                  route.direction_id
+                    || route.directionId
+                    || ""
+                );
 
               const routeMeta =
                 getLineMeta(
@@ -3862,9 +3846,21 @@ if (
                   staticDirection?.key
                   || "",
                 destination_stop_id:
-                  destinationDetails.destinationStopId,
+                  route.destination_stop_id
+                  || "",
                 destination:
-                  destinationDetails.destination,
+                  getDestinationDisplayName(
+                    route.destination_stop_id
+                    || getDirectionTerminalStopId(
+                      staticDirection
+                    ),
+                    staticDirection,
+                    route.destination
+                    || staticTrip?.trip_headsign
+                    || staticDirection?.destination
+                    || staticDirection?.headsign
+                    || ""
+                  ),
                 times:
                   route.times
                     .map(
@@ -5773,9 +5769,6 @@ if (
     getSofiaDateKey,
     staticArrivalIsCoveredByRealtime,
     getRealtimeScheduledTimestamp,
-    getStaticScheduleInfoForTrip,
-    getRealtimeTripDestinationStopId,
-    resolveRealtimeRouteDestinationDetails,
     mergeBoardRoutesByDestination,
     getLimitedUniqueArrivalTimes
   };
