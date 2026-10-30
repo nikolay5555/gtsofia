@@ -9,7 +9,7 @@ const { buildStopIndexes, findPreferredStop } = require('../stop-utils');
 const SOFIA_TIME_ZONE = 'Europe/Sofia';
 const MAX_ARRIVALS_PER_LINE = 3;
 const MAX_STATIC_LOOKAHEAD_SECONDS = 2 * 60 * 60;
-const MAX_REALTIME_LOOKAHEAD_SECONDS = 12 * 60 * 60;
+const MAX_REALTIME_LOOKAHEAD_SECONDS = 2 * 60 * 60;
 // Allow only minor feed/clock jitter after the predicted stop time.
 const REALTIME_PAST_GRACE_SECONDS = 10;
 
