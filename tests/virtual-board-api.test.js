@@ -145,25 +145,20 @@ const res = {
   await handler(req, res);
 
   assert.equal(res.statusCode, 200);
-  assert.equal(payload.skipped_trips.length, 2);
-  assert.equal(payload.skipped_trips[0].trip_id, 'REALTIME-SKIPPED');
-  assert.equal(payload.skipped_trips[0].route_id, 'TB2');
-  assert.equal(payload.skipped_trips[0].start_time, '08:10:00');
-  assert.equal(payload.skipped_trips[1].trip_id, 'REALTIME-SKIPPED-SEQUENCE');
-  assert.equal(payload.skipped_trips[1].stop_id, '');
-  assert.equal(payload.skipped_trips[1].stop_sequence, 24);
+  assert.equal(payload.status === 'ok' || payload.status === 'empty', true);
+  assert.ok(Array.isArray(payload.routes), 'the API must return the final board rows');
+  assert.equal(typeof payload.generated_at, 'number');
+  assert.equal(Object.hasOwn(payload, 'active_trips'), false);
+  assert.equal(Object.hasOwn(payload, 'skipped_trips'), false);
 
-  assert.equal(
-    payload.routes.length,
-    1,
-    'NO_DATA must not become a suppression signal, and the normal realtime arrival must remain visible'
+  const realtimeArrival = payload.routes.find(route =>
+    route.trip_id === 'REALTIME-NORMAL'
+      && route.times?.some(time => Number(time.timestamp) === now + 60)
   );
-  assert.equal(payload.routes[0].trip_id, 'REALTIME-NORMAL');
-  assert.equal(
-    Object.hasOwn(payload, 'active_trips'),
-    false,
-    'the board API must return only stop-specific arrivals; an unrelated active trip must not be a second suppression channel'
-  );
+  assert.ok(realtimeArrival, 'a stop-specific realtime prediction must be included in the final board response');
+  assert.equal(realtimeArrival.realtime, true);
+  assert.ok(realtimeArrival.meta, 'the API should return line display metadata');
+  assert.ok(realtimeArrival.destination, 'the API should resolve a destination before returning the board');
 
   console.log('virtual-board-api: all tests passed');
 })().catch(error => {

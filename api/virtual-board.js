@@ -1,3 +1,5 @@
+const { buildVirtualBoard } = require('./virtual-board-service');
+
 const FEED_URL = 'https://gtfs.sofiatraffic.bg/api/v1/trip-updates';
 const FEED_TIMEOUT_MS = 15000;
 
@@ -789,8 +791,7 @@ function getTerminalStopId(
 function buildBoard(
   updates,
   stopCode,
-  feedTimestamp,
-  requestedRouteIds = new Set()
+  feedTimestamp
 ) {
   const now =
     Math.floor(
@@ -816,22 +817,6 @@ function buildBoard(
       tripUpdate?.trip;
 
     if (!trip) {
-      continue;
-    }
-
-    // When route_ids were supplied by the frontend, ignore all other routes
-    // immediately and keep the stop-specific response small.
-    const routeId =
-      String(
-        trip.routeId || ""
-      ).trim();
-
-    if (
-      requestedRouteIds.size
-      && !requestedRouteIds.has(
-        routeId
-      )
-    ) {
       continue;
     }
 
@@ -1315,20 +1300,6 @@ module.exports =
         || ""
       ).trim();
 
-    const requestedRouteIds =
-      new Set(
-        String(
-          req.query?.route_ids
-          || ""
-        )
-          .split(",")
-          .map(
-            value =>
-              value.trim()
-          )
-          .filter(Boolean)
-      );
-
     if (!stopCode) {
       return res
         .status(400)
@@ -1342,12 +1313,17 @@ module.exports =
       const feed =
         await getRealtimeFeed();
 
-      const board =
+      const realtimeBoard =
         buildBoard(
           feed.updates,
           stopCode,
-          feed.feedTimestamp,
-          requestedRouteIds
+          feed.feedTimestamp
+        );
+
+      const board =
+        buildVirtualBoard(
+          realtimeBoard,
+          stopCode
         );
 
       res.setHeader(
