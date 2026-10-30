@@ -27,7 +27,7 @@ function createStorage(initialEntries = []) {
 function loadInternals(storage) {
   const exportedSource = source.replace(
     /\n\}\)\(\);\s*$/,
-    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    getConsumedRealtimeTripKey,\n    rememberConsumedRealtimeTrips,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isConsumedRealtimeTrip,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    getDestinationDisplayName,\n    getLimitedUniqueArrivalTimes,\n    mergeBoardRoutesByDestination,\n    getScheduledTripTerminalStopId,\n    shouldHideTerminalArrival,\n    MAX_VISIBLE_BOARD_ARRIVALS,\n    setTestState({ transportData: nextTransportData, trips = [], buildIndexes = false } = {}) {\n      transportData = nextTransportData || null;\n      routeById = new Map((transportData?.routes || []).map(route => [String(route.route_id), route]));\n      const allTrips = trips.length ? trips : (transportData?.trips || []);\n      tripById = new Map(allTrips.map(trip => [String(trip.trip_id), trip]));\n      scheduleByOriginalTripId = new Map();\n      if (buildIndexes) buildStaticScheduleIndexes();\n    }\n  };\n})();`
+    `\n  globalThis.__testInternals = {\n    getConsumedRealtimeArrivalKey,\n    getConsumedRealtimeTripKey,\n    rememberConsumedRealtimeTrips,\n    rememberConsumedRealtimeArrivals,\n    isConsumedRealtimeScheduledArrival,\n    isConsumedRealtimeTrip,\n    isSkippedStaticSchedule,\n    isServiceActiveOnDate,\n    formatArrivalCountdown,\n    getDestinationDisplayName,\n    getLimitedUniqueArrivalTimes,\n    mergeBoardRoutesByDestination,\n    getStaticScheduleInfoForTrip,\n    getRealtimeTripDestinationStopId,\n    resolveRealtimeRouteDestinationDetails,\n    shouldHideTerminalArrival,\n    MAX_VISIBLE_BOARD_ARRIVALS,\n    setTestState({ transportData: nextTransportData, trips = [], buildIndexes = false } = {}) {\n      transportData = nextTransportData || null;\n      routeById = new Map((transportData?.routes || []).map(route => [String(route.route_id), route]));\n      const allTrips = trips.length ? trips : (transportData?.trips || []);\n      tripById = new Map(allTrips.map(trip => [String(trip.trip_id), trip]));\n      if (buildIndexes) buildStaticScheduleIndexes();\n    }\n  };\n})();`
   );
 
   const context = {
@@ -523,10 +523,10 @@ assert.equal(
   'a missing realtime route label must not prevent merging and should use the static label'
 );
 
-// Regression: line 26 has short-turn trips ending at stop 0542 (Модна къща
-// Агресия), which is an intermediate stop in the representative D1 pattern.
-// The realtime filter must hide those specific trips on their own terminal,
-// without hiding full-length trips that merely pass through the same stop.
+// Regression: trolleybus 7's D1 pattern passes ул. Опълченска (2082) and
+// continues to ж.к. Люлин 3 - ухо (0610). A SCHEDULED TripUpdate can end at
+// 2082 even though the exact timetable row reaches 0610. The partial RT prefix
+// must not suppress the static arrival at a later stop on the same trip.
 const dataDir = path.join(__dirname, '..', 'data');
 const readData = name => JSON.parse(fs.readFileSync(path.join(dataDir, name), 'utf8'));
 const actualRoutes = readData('routes.json');
@@ -534,17 +534,24 @@ const actualDirections = readData('directions.json');
 const actualSchedules = readData('schedules.json');
 const actualTrips = readData('trips.json');
 const actualStops = readData('stops.json');
-const bus26 = actualRoutes.find(route => String(route.route_short_name) === '26');
-assert.ok(bus26, 'the provided static data must contain bus 26');
-const bus26RouteId = String(bus26.route_id);
-const directionEntry = Object.entries(actualDirections[bus26RouteId] || {}).find(([, direction]) =>
-  Array.isArray(direction.pattern) && direction.pattern.some(stopId => String(stopId) === '0542')
+const trolley7 = actualRoutes.find(route =>
+  String(route.route_short_name) === '7'
+  && String(route.route_type) === '11'
 );
-assert.ok(directionEntry, 'bus 26 direction must contain stop 0542');
-const [bus26DirectionKey, bus26Direction] = directionEntry;
-const pattern = bus26Direction.pattern.map(String);
-const stopIndex = pattern.findIndex(stopId => stopId === '0542');
-const scheduleSet = actualSchedules[bus26RouteId]?.[bus26DirectionKey] || {};
+assert.ok(trolley7, 'the provided static data must contain trolleybus 7');
+const trolley7RouteId = String(trolley7.route_id);
+const directionEntry = Object.entries(actualDirections[trolley7RouteId] || {}).find(([, direction]) =>
+  String(direction?.headsign || '').toLocaleLowerCase('bg-BG').includes('люлин 3')
+  && Array.isArray(direction.pattern)
+  && direction.pattern.some(stopId => String(stopId) === '2082')
+);
+assert.ok(directionEntry, 'trolleybus 7 direction must include ул. Опълченска and Lyulin 3');
+const [trolley7DirectionKey, trolley7Direction] = directionEntry;
+const pattern = trolley7Direction.pattern.map(String);
+const opalchenskaIndex = pattern.findIndex(stopId => stopId === '2082');
+const boardStopIndex = pattern.findIndex(stopId => stopId === '0325');
+assert.ok(opalchenskaIndex >= 0 && boardStopIndex > opalchenskaIndex, 'the test board stop must be after ул. Опълченска');
+const scheduleSet = actualSchedules[trolley7RouteId]?.[trolley7DirectionKey] || {};
 const allDirectionSchedules = Object.values(scheduleSet).flatMap(rows => Array.isArray(rows) ? rows : []);
 const getTerminalIndex = row => {
   const times = Array.isArray(row?.times) ? row.times : [];
@@ -553,50 +560,93 @@ const getTerminalIndex = row => {
   }
   return -1;
 };
-const partialSchedule = allDirectionSchedules.find(row => getTerminalIndex(row) === stopIndex);
-const fullSchedule = allDirectionSchedules.find(row => getTerminalIndex(row) === pattern.length - 1);
-assert.ok(partialSchedule, 'actual bus 26 data must include a trip terminating at stop 0542');
-assert.ok(fullSchedule, 'actual bus 26 data must include a full trip past stop 0542');
-const partialTrip = actualTrips.find(trip => String(trip.trip_id) === String(partialSchedule.original_trip_id));
+const fullSchedule = allDirectionSchedules.find(row =>
+  getTerminalIndex(row) === pattern.length - 1
+  && row?.times?.[boardStopIndex] != null
+  && row?.times?.[opalchenskaIndex] != null
+);
+assert.ok(fullSchedule, 'trolleybus 7 data must contain a full trip with a scheduled time after ул. Опълченска');
 const fullTrip = actualTrips.find(trip => String(trip.trip_id) === String(fullSchedule.original_trip_id));
-assert.ok(partialTrip, 'the partial schedule must map to its original GTFS trip');
-assert.ok(fullTrip, 'the full schedule must map to its original GTFS trip');
-const stop0542 = actualStops.find(stop => String(stop.stop_id) === '0542');
-assert.ok(stop0542, 'actual stop data must contain stop 0542');
+assert.ok(fullTrip, 'the full timetable course must map to its original GTFS trip');
+const boardStopId = pattern[boardStopIndex];
+const lyulinTerminalId = pattern[pattern.length - 1];
+assert.equal(lyulinTerminalId, '0610', 'the test direction must end at ж.к. Люлин 3 - ухо');
+const boardStop = actualStops.find(stop => String(stop.stop_id) === boardStopId);
+assert.ok(boardStop, 'the test board stop must exist in the stops data');
+
 internals.setTestState({
   transportData: {
-    routes: [bus26],
-    stops: [stop0542],
-    directions: { [bus26RouteId]: { [bus26DirectionKey]: bus26Direction } },
-    schedules: { [bus26RouteId]: { [bus26DirectionKey]: scheduleSet } }
+    routes: [trolley7],
+    stops: actualStops,
+    directions: { [trolley7RouteId]: { [trolley7DirectionKey]: trolley7Direction } },
+    schedules: { [trolley7RouteId]: { [trolley7DirectionKey]: scheduleSet } }
   },
-  trips: [partialTrip, fullTrip],
-  buildIndexes: true
+  trips: [fullTrip]
 });
-assert.equal(
-  internals.getScheduledTripTerminalStopId(bus26RouteId, partialTrip),
-  '0542',
-  'the concrete terminal of the partial bus 26 course must resolve to stop 0542'
+
+const truncatedRealtimeTrip = {
+  trip_id: fullTrip.trip_id,
+  route_id: trolley7RouteId,
+  schedule_relationship: 0,
+  schedule_relationship_name: 'SCHEDULED',
+  destination_stop_id: '2082'
+};
+const staticScheduleInfo = internals.getStaticScheduleInfoForTrip(
+  trolley7RouteId,
+  fullTrip.trip_id
 );
 assert.equal(
-  internals.getScheduledTripTerminalStopId(bus26RouteId, fullTrip),
-  String(pattern[pattern.length - 1]),
-  'the full bus 26 course must retain the full-line terminal'
+  staticScheduleInfo?.terminalStopId,
+  lyulinTerminalId,
+  'the exact static timetable row must resolve the true terminal to ж.к. Люлин 3 - ухо'
 );
 assert.equal(
-  internals.shouldHideTerminalArrival(bus26RouteId, '0542', partialTrip, bus26Direction.headsign || '', '', true),
+  internals.getRealtimeTripDestinationStopId(truncatedRealtimeTrip, staticScheduleInfo),
+  lyulinTerminalId,
+  'a SCHEDULED trip must use its exact static terminal instead of the truncated realtime endpoint'
+);
+assert.equal(
+  internals.resolveRealtimeRouteDestinationDetails(
+    truncatedRealtimeTrip,
+    fullTrip,
+    trolley7RouteId,
+    boardStopId
+  ).destination,
+  'ж.к. Люлин 3 - ухо',
+  'the board destination must be displayed as ж.к. Люлин 3 - ухо'
+);
+
+internals.rememberConsumedRealtimeTrips(
+  { stop_id: boardStopId },
+  [truncatedRealtimeTrip]
+);
+assert.equal(
+  internals.isConsumedRealtimeTrip(boardStopId, trolley7RouteId, fullTrip.trip_id),
+  false,
+  'a truncated realtime prefix ending before the board stop must not suppress the full static course'
+);
+
+// The same must hold when the selected board is exactly at ул. Опълченска:
+// that stop is an intermediate stop for this full scheduled course.
+const opalchenskaStopId = pattern[opalchenskaIndex];
+internals.rememberConsumedRealtimeTrips(
+  { stop_id: opalchenskaStopId },
+  [truncatedRealtimeTrip]
+);
+assert.equal(
+  internals.isConsumedRealtimeTrip(opalchenskaStopId, trolley7RouteId, fullTrip.trip_id),
+  false,
+  'an intermediate stop reported as the realtime endpoint must not hide a full scheduled trip at that same stop'
+);
+
+internals.rememberConsumedRealtimeTrips(
+  { stop_id: boardStopId },
+  [{ ...truncatedRealtimeTrip, destination_stop_id: lyulinTerminalId }]
+);
+assert.equal(
+  internals.isConsumedRealtimeTrip(boardStopId, trolley7RouteId, fullTrip.trip_id),
   true,
-  'hide the partial bus 26 course when viewing its actual terminal at stop 0542'
-);
-assert.equal(
-  internals.shouldHideTerminalArrival(bus26RouteId, '0542', partialTrip, bus26Direction.headsign || '', '', false),
-  false,
-  'the trip-specific terminal rule should be opt-in for the board stop, not the realtime destination probe'
-);
-assert.equal(
-  internals.shouldHideTerminalArrival(bus26RouteId, '0542', fullTrip, bus26Direction.headsign || '', '', true),
-  false,
-  'do not hide a full bus 26 course at stop 0542 because it continues beyond it'
+  'a matching full realtime destination must continue to reserve its static course and prevent duplicates'
 );
 
 console.log('virtual-board-arrivals: all tests passed');

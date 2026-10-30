@@ -39,7 +39,7 @@
   // scheduled arrival at this stop. Remember both trip identity and scheduled
   // time so the static fallback cannot resurrect the same course.
   const CONSUMED_REALTIME_ARRIVALS_KEY =
-    "gtsofia.virtualBoard.consumedRealtimeArrivals.v1";
+    "gtsofia.virtualBoard.consumedRealtimeArrivals.v2";
   const CONSUMED_REALTIME_ARRIVAL_TTL_MS =
     20 * 60 * 1000;
   const ACTIVE_REALTIME_TRIP_TTL_MS =
@@ -222,6 +222,88 @@
       ).trim();
 
       if (!routeId || !tripId) continue;
+
+      /*
+       * A SCHEDULED GTFS-RT TripUpdate can contain only a prefix of the
+       * StopTimeUpdates for the trip. Its last reported stop is then not the
+       * actual destination. If that prefix ends before the exact static
+       * timetable terminal, do not reserve/suppress the course at a stop that
+       * the timetable says it serves. A realtime prediction, when present,
+       * still wins through the normal trip-identity deduplication below.
+       *
+       * This matters on lines such as trolleybus 7, where an update can end at
+       * ул. Опълченска even though the concrete scheduled trip continues to
+       * ж.к. Люлин 3 - ухо. In that case the board has no realtime ETA for the
+       * selected stop, but the static course must remain available as fallback.
+       */
+      const relationshipName = String(
+        trip?.schedule_relationship_name || ""
+      ).trim().toUpperCase();
+      const relationshipValue = trip?.schedule_relationship;
+      const relationshipNumber = Number(relationshipValue);
+      const hasRelationshipValue = relationshipValue !== null
+        && relationshipValue !== undefined
+        && String(relationshipValue).trim() !== "";
+      const isScheduled = relationshipName
+        ? relationshipName === "SCHEDULED"
+        : (!hasRelationshipValue || relationshipNumber === 0);
+
+      const reportedDestinationId = String(
+        trip?.destination_stop_id || ""
+      ).trim();
+
+      if (isScheduled && reportedDestinationId) {
+        const staticScheduleInfo = getStaticScheduleInfoForTrip(
+          routeId,
+          tripId
+        );
+        const pattern = Array.isArray(
+          staticScheduleInfo?.direction?.pattern
+        )
+          ? staticScheduleInfo.direction.pattern.map(String)
+          : [];
+
+        if (
+          staticScheduleInfo
+          && pattern.length
+          && Number.isInteger(staticScheduleInfo.terminalIndex)
+          && staticScheduleInfo.terminalIndex >= 0
+        ) {
+          const reportedDestinationIndex = pattern.findIndex(
+            patternStopId => stopIdsMatch(
+              patternStopId,
+              reportedDestinationId
+            )
+          );
+          const selectedStopIndex = pattern.findIndex(
+            patternStopId => stopIdsMatch(
+              patternStopId,
+              stopId
+            )
+          );
+          const staticTimeAtSelectedStop =
+            selectedStopIndex >= 0
+            ? getCachedScheduleTime(
+                staticScheduleInfo.schedule,
+                selectedStopIndex
+              )
+            : null;
+
+          const realtimePrefixEndsBeforeStaticTerminal =
+            reportedDestinationIndex >= 0
+            && reportedDestinationIndex < staticScheduleInfo.terminalIndex;
+          const staticTripServesBoardStop =
+            staticTimeAtSelectedStop != null
+            && staticScheduleInfo.terminalIndex >= selectedStopIndex;
+
+          if (
+            realtimePrefixEndsBeforeStaticTerminal
+            && staticTripServesBoardStop
+          ) {
+            continue;
+          }
+        }
+      }
 
       const key = getConsumedRealtimeTripKey(
         stopId,
