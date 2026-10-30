@@ -11,7 +11,7 @@ const MAX_ARRIVALS_PER_LINE = 3;
 const MAX_STATIC_LOOKAHEAD_SECONDS = 2 * 60 * 60;
 const MAX_REALTIME_LOOKAHEAD_SECONDS = 2 * 60 * 60;
 // Allow only minor feed/clock jitter after the predicted stop time.
-const REALTIME_PAST_GRACE_SECONDS = 10;
+const REALTIME_PAST_GRACE_SECONDS = 0;
 
 function normalizeStopKey(value) {
   const raw = String(value ?? '').trim();
