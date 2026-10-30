@@ -3,7 +3,10 @@ import shutil
 
 from .config import DATA_DIR, GTFS_DIR, get_today, normalize
 from .gtfs import download_gtfs, read_csv
-from .osm import fetch_osm_stops, enrich_stops_with_osm
+from .osm import (
+    fetch_osm_stops, enrich_stops_with_osm,
+    load_previous_osm_stops, merge_osm_stop_snapshots,
+)
 from .calendar import load_calendar_config, build_calendar_context
 from .stops import build_stops
 from .trips import build_trips, build_stop_times
@@ -14,6 +17,19 @@ from .directions import (
 from .schedules import build_schedules
 from .shapes import load_shapes
 from .output import write_transport_data
+
+
+def load_previous_osm_updated_at():
+    """Return the date of the last successful OSM refresh."""
+    import json
+    metadata_path = DATA_DIR / "metadata.json"
+    if not metadata_path.exists():
+        return ""
+    try:
+        with metadata_path.open("r", encoding="utf-8") as file:
+            return str(json.load(file).get("osmUpdatedAt") or "")
+    except (OSError, ValueError):
+        return ""
 
 def main():
 
@@ -83,7 +99,32 @@ def main():
         # OSM-first display names with GTFS fallback
         # --------------------------------------------------------
 
-        osm_stops = fetch_osm_stops()
+        previous_osm_stops = load_previous_osm_stops()
+        fetched_osm_stops = fetch_osm_stops()
+
+        # Keep the last known-good names when Overpass fails or returns only
+        # a partial set. A temporary OSM outage must never turn every display
+        # name back into the uppercase GTFS variant.
+        osm_stops = merge_osm_stop_snapshots(
+            fetched_osm_stops,
+            previous_osm_stops,
+        )
+        if fetched_osm_stops is None:
+            print(
+                "WARNING: Reusing previous OSM stop names because the OSM "
+                "request failed."
+            )
+        elif len(fetched_osm_stops) < len(previous_osm_stops):
+            print(
+                "WARNING: OSM returned fewer stop records than the previous "
+                f"snapshot ({len(fetched_osm_stops)} vs {len(previous_osm_stops)}); "
+                "previous names are retained for missing stops."
+            )
+        print(
+            "OSM stop-name records available after merge: "
+            f"{len(osm_stops)}"
+        )
+
         stops_data = enrich_stops_with_osm(
             stops_data,
             osm_stops,
@@ -243,7 +284,11 @@ def main():
             "updatedAt": today.isoformat(),
             "source": "CGM Sofia official GTFS",
             "osmSource": "OpenStreetMap — Градски транспорт София",
-            "osmUpdatedAt": today.isoformat() if osm_stops else "",
+            "osmUpdatedAt": (
+                today.isoformat()
+                if fetched_osm_stops is not None and fetched_osm_stops
+                else load_previous_osm_updated_at()
+            ),
             "calendar": calendar_result,
             "routes": [dict(row) for row in routes_data],
             "stops": output_stops,

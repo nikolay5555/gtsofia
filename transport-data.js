@@ -22,7 +22,7 @@ async function loadTransportData() {
     transportDataPromise = (async () => {
         const entries = await Promise.all(
             TRANSPORT_DATA_FILES.map(async ([key, path]) => {
-                const response = await fetch(path);
+                const response = await fetch(path, { cache: 'no-store' });
                 if (!response.ok) {
                     throw new Error(
                         `Неуспешно зареждане на ${path}: ${response.status}`

@@ -24,6 +24,34 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+function getScheduleStopDisplayName(stop) {
+  return String(
+    stop?.osm_name
+    || stop?.osm_stop_name
+    || stop?.name
+    || stop?.gtfs_name
+    || stop?.stop_name
+    || ""
+  ).trim();
+}
+
+function getDirectionDisplayName(direction) {
+  const stops = Array.isArray(direction?.stops)
+    ? direction.stops
+    : [];
+  const terminalStop = stops[stops.length - 1];
+
+  return String(
+    terminalStop?.osm_name
+    || terminalStop?.osm_stop_name
+    || direction?.osm_headsign
+    || direction?.destination
+    || direction?.headsign
+    || getScheduleStopDisplayName(terminalStop)
+    || ""
+  ).trim();
+}
+
 function parseTime(value) {
   const match = String(value || "").match(
     /^(\d+):(\d{2})(?::(\d{2}))?$/
@@ -310,7 +338,7 @@ function renderDirections() {
         .filter(
           direction =>
             direction &&
-            direction.headsign
+            getDirectionDisplayName(direction)
         )
         .map(
           direction => `
@@ -318,7 +346,7 @@ function renderDirections() {
               direction.key
             )}">
               ${escapeHtml(
-                direction.headsign
+                getDirectionDisplayName(direction)
               )}
             </option>`
         )
@@ -347,7 +375,7 @@ function renderDirections() {
   ].filter(
     ([, direction]) =>
       direction &&
-      direction.headsign
+      getDirectionDisplayName(direction)
   );
 
   select.innerHTML =
@@ -356,7 +384,7 @@ function renderDirections() {
         ([key, direction]) => `
           <option value="${key}">
             ${escapeHtml(
-              direction.headsign
+              getDirectionDisplayName(direction)
             )}
           </option>`
       )
@@ -399,7 +427,7 @@ function renderStops() {
       .map(
         (stop, index) => `
           <option value="${index}">
-            ${escapeHtml(stop.name)}
+            ${escapeHtml(getScheduleStopDisplayName(stop))}
           </option>`
       )
       .join("");
@@ -650,14 +678,14 @@ function renderSummary(courses) {
 
         <strong class="schedule-summary-destination">
           ${escapeHtml(
-            direction.headsign
+            getDirectionDisplayName(direction)
           )}
         </strong>
       </div>
 
       <span class="schedule-summary-stop">
         От спирка: ${escapeHtml(
-          stop?.name || ""
+          getScheduleStopDisplayName(stop)
         )}
       </span>
     </div>
@@ -973,7 +1001,7 @@ function showCourse(course) {
               <div class="course-stop-name">
                 <span class="course-stop-name-text">
                   ${escapeHtml(
-                    stop.name
+                    getScheduleStopDisplayName(stop)
                   )}
                 </span>
                 <span class="course-stop-code">

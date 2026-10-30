@@ -14,3 +14,9 @@
 
 `../generate_transport_data.py` remains the executable entry point and re-exports
 commonly used functions so existing tests and scripts can continue importing it.
+
+
+OSM name updates are failure-safe: the generator merges fresh Overpass results
+with the last known-good `data/stops.json` snapshot. If Overpass is unavailable
+or returns only a partial result, existing OSM names are retained and GTFS
+remains only the fallback for stops that have never had an OSM name.

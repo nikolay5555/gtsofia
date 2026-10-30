@@ -15,7 +15,10 @@ from transport_data.config import (  # noqa: F401
     parse_date, parse_time, get_today, gtfs_date_string, iso_date_string,
 )
 from transport_data.gtfs import download_gtfs, read_csv  # noqa: F401
-from transport_data.osm import fetch_osm_stops, enrich_stops_with_osm  # noqa: F401
+from transport_data.osm import (  # noqa: F401
+    fetch_osm_stops, enrich_stops_with_osm,
+    previous_osm_stops_from_rows, merge_osm_stop_snapshots,
+)
 from transport_data.calendar import (  # noqa: F401
     _calendar_row_covers_date, _apply_calendar_date_exceptions,
     load_calendar_config, build_calendar_context,

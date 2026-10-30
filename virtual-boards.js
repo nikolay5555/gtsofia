@@ -65,11 +65,7 @@
           || stop.stop_id
           || ""
         ),
-        stop_name: String(
-          stop.stop_name
-          || stop.name
-          || "Спирка"
-        )
+        stop_name: getStopDisplayName(stop)
       });
     }
 
@@ -88,6 +84,24 @@
       .replaceAll(">", "&gt;")
       .replaceAll('"', "&quot;")
       .replaceAll("'", "&#039;");
+  }
+
+  function getStopDisplayName(stop) {
+    return String(
+      stop?.osm_stop_name
+      || stop?.osm_name
+      || stop?.name
+      || stop?.stop_name
+      || stop?.gtfs_stop_name
+      || "Спирка"
+    ).trim();
+  }
+
+  function getFavoriteStopDisplayName(favorite) {
+    const currentStop = findStopById(favorite?.stop_id);
+    return currentStop
+      ? getStopDisplayName(currentStop)
+      : String(favorite?.stop_name || "Спирка").trim();
   }
 
   function linePillHtml(line) {
@@ -247,7 +261,8 @@
 
   async function fetchStaticJson(url) {
     const response = await fetch(url, {
-      headers: { Accept: "application/json" }
+      headers: { Accept: "application/json" },
+      cache: "no-store"
     });
 
     if (!response.ok) {
@@ -492,9 +507,7 @@
             || ""
           )}</div>
           <h2>${escapeHtml(
-            stop.stop_name
-            || stop.name
-            || "Спирка"
+            getStopDisplayName(stop)
           )}</h2>
         </div>
         <div class="virtual-board-header-actions">
@@ -702,8 +715,7 @@
                 <span class="virtual-board-favorite-stop-star" aria-hidden="true">★</span>
                 <span class="virtual-board-favorite-stop-info">
                   <strong>${escapeHtml(
-                    stop.stop_name
-                    || "Спирка"
+                    getFavoriteStopDisplayName(stop)
                   )}</strong>
                   <span>[${escapeHtml(
                     stop.stop_code
@@ -897,11 +909,11 @@
         return stops
           .filter(
             stop => {
-              const name =
-                normalized(
-                  stop.name
-                  || stop.stop_name
-                );
+              const searchableNames = [
+                getStopDisplayName(stop),
+                stop.osm_stop_name_en,
+                stop.gtfs_stop_name
+              ].map(normalized);
 
               const code =
                 normalized(
@@ -910,9 +922,7 @@
                 );
 
               return (
-                name.includes(
-                  needle
-                )
+                searchableNames.some(name => name.includes(needle))
                 || code.includes(
                   needle
                 )
@@ -954,9 +964,7 @@
                     stop.stop_id
                   )}">
                     <strong>${escapeHtml(
-                      stop.name
-                      || stop.stop_name
-                      || "Спирка"
+                      getStopDisplayName(stop)
                     )}</strong>
                     <span>${escapeHtml(
                       stop.stop_code
@@ -987,10 +995,7 @@
                     );
 
                   if (stop) {
-                    input.value =
-                      stop.name
-                      || stop.stop_name
-                      || "";
+                    input.value = getStopDisplayName(stop);
 
                     results.hidden =
                       true;
@@ -1241,11 +1246,7 @@
         );
 
       const stopTooltip =
-        escapeHtml(
-          stop.name
-          || stop.stop_name
-          || "Спирка"
-        );
+        escapeHtml(getStopDisplayName(stop));
 
       marker.bindTooltip(
         stopTooltip,
