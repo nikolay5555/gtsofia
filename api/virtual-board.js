@@ -820,8 +820,7 @@ function buildBoard(
     }
 
     // When route_ids were supplied by the frontend, ignore all other routes
-    // immediately. This reduces the amount of work needed for active_trips
-    // and the board itself.
+    // immediately and keep the stop-specific response small.
     const routeId =
       String(
         trip.routeId || ""
@@ -1179,195 +1178,6 @@ function buildBoard(
           - b.times[0].timestamp
       );
 
-  // Because requestedRouteIds has already been applied above, this loop
-  // builds active_trips only for relevant routes.
-  const activeTrips = [];
-
-  const seenActive =
-    new Set();
-
-  for (
-    const update
-    of updates || []
-  ) {
-    const trip =
-      update?.trip;
-
-    if (!trip) {
-      continue;
-    }
-
-    const routeId =
-      String(
-        trip.routeId || ""
-      ).trim();
-
-    if (
-      requestedRouteIds.size
-      && !requestedRouteIds.has(
-        routeId
-      )
-    ) {
-      continue;
-    }
-
-    const relationship =
-      getTripRelationship(
-        trip
-      );
-
-    if (
-      relationship
-        === TRIP_RELATIONSHIP.CANCELED
-      || relationship
-        === TRIP_RELATIONSHIP.DELETED
-    ) {
-      continue;
-    }
-
-    const tripKey =
-      getTripKey(
-        update
-      );
-
-    if (
-      seenActive.has(
-        tripKey
-      )
-    ) {
-      continue;
-    }
-
-    seenActive.add(
-      tripKey
-    );
-
-    const terminalUpdate =
-      (
-        update
-          .stopTimeUpdates
-        || []
-      )
-        .filter(item => {
-          if (!item?.stopId) {
-            return false;
-          }
-
-          const stopRelationship =
-            getStopRelationship(
-              item
-            );
-
-          return (
-            stopRelationship
-              !== STOP_RELATIONSHIP.SKIPPED
-            && stopRelationship
-              !== STOP_RELATIONSHIP.NO_DATA
-          );
-        })
-        .sort(
-          (a, b) => {
-            const sa =
-              Number.isFinite(
-                Number(
-                  a?.stopSequence
-                )
-              )
-                ? Number(
-                    a.stopSequence
-                  )
-                : -1;
-
-            const sb =
-              Number.isFinite(
-                Number(
-                  b?.stopSequence
-                )
-              )
-                ? Number(
-                    b.stopSequence
-                  )
-                : -1;
-
-            return sb - sa;
-          }
-        )[0] || null;
-
-    activeTrips.push({
-      trip_id:
-        String(
-          trip.tripId || ""
-        ),
-      start_date:
-        String(
-          trip.startDate
-            || update
-              .tripProperties
-              ?.startDate
-            || ""
-        ),
-      start_time:
-        String(
-          trip.startTime
-            || update
-              .tripProperties
-              ?.startTime
-            || ""
-        ),
-      route_id:
-        String(
-          trip.routeId || ""
-        ),
-      direction_id:
-        String(
-          trip.directionId || ""
-        ),
-      destination_stop_id:
-        String(
-          terminalUpdate
-            ?.stopId
-          || ""
-        ),
-      schedule_relationship:
-        relationship,
-      schedule_relationship_name:
-        TRIP_RELATIONSHIP_NAME[
-          relationship
-        ]
-          || `UNKNOWN_${relationship}`
-    });
-  }
-
-  const realtimeRouteIds =
-    [
-      ...new Set(
-        (updates || [])
-          .filter(update => {
-            const routeId =
-              String(
-                update?.trip
-                  ?.routeId || ""
-              ).trim();
-
-            return (
-              !requestedRouteIds.size
-              || requestedRouteIds.has(
-                routeId
-              )
-            );
-          })
-          .map(
-            update =>
-              String(
-                update?.trip
-                  ?.routeId
-                  || ""
-              ).trim()
-          )
-          .filter(Boolean)
-      )
-    ];
-
   return {
     status:
       routes.length
@@ -1380,22 +1190,8 @@ function buildBoard(
     generated_at:
       feedTimestamp,
 
-    realtime_route_ids:
-      realtimeRouteIds,
-
-    active_trips:
-      activeTrips,
-
     skipped_trips:
       [...skippedTrips.values()],
-
-    active_trip_ids:
-      activeTrips
-        .map(
-          item =>
-            item.trip_id
-        )
-        .filter(Boolean),
 
     routes
   };

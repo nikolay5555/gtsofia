@@ -35,437 +35,14 @@
   const scheduleTimeSecondsCache = new WeakMap();
   const scheduleTerminalIndexCache = new WeakMap();
 
-  // Realtime trip updates may disappear temporarily, including before the
-  // scheduled arrival at this stop. Remember both trip identity and scheduled
-  // time so the static fallback cannot resurrect the same course.
-  const CONSUMED_REALTIME_ARRIVALS_KEY =
-    "gtsofia.virtualBoard.consumedRealtimeArrivals.v2";
-  const CONSUMED_REALTIME_ARRIVAL_TTL_MS =
-    20 * 60 * 1000;
-  const ACTIVE_REALTIME_TRIP_TTL_MS =
-    6 * 60 * 60 * 1000;
-  // The primary countdown plus the next three scheduled/realtime arrivals.
+  // Show the next three departures, as in the reference virtual-board UI.
   const MAX_VISIBLE_BOARD_ARRIVALS = 3;
-  const SCHEDULE_FALLBACK_HORIZON_SECONDS = 2 * 60 * 60;
-
-  const consumedRealtimeArrivals = new Map();
-  let consumedRealtimeArrivalsLoaded = false;
 
   const boardPanel = () =>
     document.getElementById("virtualBoardBody");
 
   const FAVORITE_STOPS_KEY =
     "gtsofia.favoriteStops";
-
-  function loadConsumedRealtimeArrivals() {
-    if (consumedRealtimeArrivalsLoaded) return;
-    consumedRealtimeArrivalsLoaded = true;
-
-    try {
-      const raw = sessionStorage.getItem(
-        CONSUMED_REALTIME_ARRIVALS_KEY
-      );
-
-      const stored = JSON.parse(raw || "[]");
-
-      if (!Array.isArray(stored)) return;
-
-      const now = Date.now();
-
-      for (const item of stored) {
-        const key = String(
-          item?.key || ""
-        ).trim();
-
-        const expiresAt = Number(
-          item?.expiresAt
-        );
-
-        if (
-          key
-          && Number.isFinite(expiresAt)
-          && expiresAt > now
-        ) {
-          consumedRealtimeArrivals.set(
-            key,
-            expiresAt
-          );
-        }
-      }
-    } catch {
-      // sessionStorage can be unavailable in private/restricted browsing
-      // contexts. The in-memory map still protects the current page session.
-    }
-  }
-
-  function pruneConsumedRealtimeArrivals() {
-    loadConsumedRealtimeArrivals();
-
-    const now = Date.now();
-    let changed = false;
-
-    for (
-      const [key, expiresAt]
-      of consumedRealtimeArrivals
-    ) {
-      if (
-        !Number.isFinite(expiresAt)
-        || expiresAt <= now
-      ) {
-        consumedRealtimeArrivals.delete(key);
-        changed = true;
-      }
-    }
-
-    if (changed) {
-      persistConsumedRealtimeArrivals();
-    }
-  }
-
-  function persistConsumedRealtimeArrivals() {
-    try {
-      sessionStorage.setItem(
-        CONSUMED_REALTIME_ARRIVALS_KEY,
-        JSON.stringify(
-          [...consumedRealtimeArrivals.entries()]
-            .map(([key, expiresAt]) => ({
-              key,
-              expiresAt
-            }))
-        )
-      );
-    } catch {
-      // Keep working with the in-memory cache when sessionStorage is blocked.
-    }
-  }
-
-  function getConsumedRealtimeArrivalKey(
-    stopId,
-    routeId,
-    destination,
-    scheduledTimestamp
-  ) {
-    const timestamp =
-      Number(scheduledTimestamp);
-
-    if (!Number.isFinite(timestamp)) {
-      return "";
-    }
-
-    return [
-      normalizeStopKey(stopId),
-      String(routeId || "").trim(),
-      normalizeDirectionText(destination),
-      Math.floor(timestamp / 60)
-    ].join("|");
-  }
-
-  function getConsumedRealtimeTripKey(
-    stopId,
-    routeId,
-    tripId
-  ) {
-    const normalizedTripId = String(
-      tripId ?? ""
-    ).trim();
-
-    if (!normalizedTripId) return "";
-
-    return [
-      "trip",
-      normalizeStopKey(stopId),
-      String(routeId || "").trim(),
-      normalizedTripId
-    ].join("|");
-  }
-
-  function isConsumedRealtimeTrip(
-    stopId,
-    routeId,
-    tripId
-  ) {
-    pruneConsumedRealtimeArrivals();
-
-    const key = getConsumedRealtimeTripKey(
-      stopId,
-      routeId,
-      tripId
-    );
-
-    return !!key && consumedRealtimeArrivals.has(key);
-  }
-
-  function rememberConsumedRealtimeTrips(
-    stop,
-    activeTrips
-  ) {
-    pruneConsumedRealtimeArrivals();
-
-    const stopId = String(
-      stop?.stop_id
-      || stop?.stop_code
-      || ""
-    ).trim();
-
-    if (!stopId) return;
-
-    const expiresAt = Date.now()
-      + ACTIVE_REALTIME_TRIP_TTL_MS;
-    let changed = false;
-
-    for (const trip of activeTrips || []) {
-      const routeId = String(
-        trip?.route_id || ""
-      ).trim();
-      const tripId = String(
-        trip?.trip_id || ""
-      ).trim();
-
-      if (!routeId || !tripId) continue;
-
-      /*
-       * A SCHEDULED GTFS-RT TripUpdate can contain only a prefix of the
-       * StopTimeUpdates for the trip. Its last reported stop is then not the
-       * actual destination. If that prefix ends before the exact static
-       * timetable terminal, do not reserve/suppress the course at a stop that
-       * the timetable says it serves. A realtime prediction, when present,
-       * still wins through the normal trip-identity deduplication below.
-       *
-       * This matters on lines such as trolleybus 7, where an update can end at
-       * ул. Опълченска even though the concrete scheduled trip continues to
-       * ж.к. Люлин 3 - ухо. In that case the board has no realtime ETA for the
-       * selected stop, but the static course must remain available as fallback.
-       */
-      const relationshipName = String(
-        trip?.schedule_relationship_name || ""
-      ).trim().toUpperCase();
-      const relationshipValue = trip?.schedule_relationship;
-      const relationshipNumber = Number(relationshipValue);
-      const hasRelationshipValue = relationshipValue !== null
-        && relationshipValue !== undefined
-        && String(relationshipValue).trim() !== "";
-      const isScheduled = relationshipName
-        ? relationshipName === "SCHEDULED"
-        : (!hasRelationshipValue || relationshipNumber === 0);
-
-      const reportedDestinationId = String(
-        trip?.destination_stop_id || ""
-      ).trim();
-
-      if (isScheduled && reportedDestinationId) {
-        const staticScheduleInfo = getStaticScheduleInfoForTrip(
-          routeId,
-          tripId
-        );
-        const pattern = Array.isArray(
-          staticScheduleInfo?.direction?.pattern
-        )
-          ? staticScheduleInfo.direction.pattern.map(String)
-          : [];
-
-        if (
-          staticScheduleInfo
-          && pattern.length
-          && Number.isInteger(staticScheduleInfo.terminalIndex)
-          && staticScheduleInfo.terminalIndex >= 0
-        ) {
-          const reportedDestinationIndex = pattern.findIndex(
-            patternStopId => stopIdsMatch(
-              patternStopId,
-              reportedDestinationId
-            )
-          );
-          const selectedStopIndex = pattern.findIndex(
-            patternStopId => stopIdsMatch(
-              patternStopId,
-              stopId
-            )
-          );
-          const staticTimeAtSelectedStop =
-            selectedStopIndex >= 0
-            ? getCachedScheduleTime(
-                staticScheduleInfo.schedule,
-                selectedStopIndex
-              )
-            : null;
-
-          const realtimePrefixEndsBeforeStaticTerminal =
-            reportedDestinationIndex >= 0
-            && reportedDestinationIndex < staticScheduleInfo.terminalIndex;
-          const staticTripServesBoardStop =
-            staticTimeAtSelectedStop != null
-            && staticScheduleInfo.terminalIndex >= selectedStopIndex;
-
-          if (
-            realtimePrefixEndsBeforeStaticTerminal
-            && staticTripServesBoardStop
-          ) {
-            continue;
-          }
-        }
-      }
-
-      const key = getConsumedRealtimeTripKey(
-        stopId,
-        routeId,
-        tripId
-      );
-      const existingExpiry =
-        consumedRealtimeArrivals.get(key) || 0;
-
-      if (expiresAt > existingExpiry) {
-        consumedRealtimeArrivals.set(
-          key,
-          expiresAt
-        );
-        changed = true;
-      }
-    }
-
-    if (changed) {
-      persistConsumedRealtimeArrivals();
-    }
-  }
-
-  function rememberConsumedRealtimeArrivals(
-    stop,
-    realtimeRoutes
-  ) {
-    pruneConsumedRealtimeArrivals();
-
-    const now = Date.now();
-    const stopId = String(
-      stop?.stop_id
-      || stop?.stop_code
-      || ""
-    ).trim();
-
-    if (!stopId) return;
-
-    let changed = false;
-
-    for (const route of realtimeRoutes || []) {
-      const routeId = String(
-        route?.route_id || ""
-      ).trim();
-
-      if (!routeId) continue;
-
-      const destination = String(
-        route?.destination || ""
-      ).trim();
-
-      const tripId = String(
-        route?.trip_id || ""
-      ).trim();
-
-      // Seeing a concrete realtime trip is enough to reserve its static
-      // course. Do not wait until the predicted time has passed: otherwise a
-      // transient disappearance from the feed makes the same course fall back
-      // to the timetable and appear as a second, contradictory prediction.
-      let tripExpiresAt = now
-        + CONSUMED_REALTIME_ARRIVAL_TTL_MS;
-
-      for (const time of route?.times || []) {
-        const scheduledTimestamp =
-          getRealtimeScheduledTimestamp(time);
-
-        const actualTimestamp = Number(
-          time?.timestamp
-        );
-
-        const referenceTimestamp =
-          Number.isFinite(scheduledTimestamp)
-            ? scheduledTimestamp
-            : actualTimestamp;
-
-        if (Number.isFinite(referenceTimestamp)) {
-          tripExpiresAt = Math.max(
-            tripExpiresAt,
-            referenceTimestamp * 1000
-              + CONSUMED_REALTIME_ARRIVAL_TTL_MS
-          );
-        }
-
-        if (!Number.isFinite(scheduledTimestamp)) {
-          continue;
-        }
-
-        const timeKey =
-          getConsumedRealtimeArrivalKey(
-            stopId,
-            routeId,
-            destination,
-            scheduledTimestamp
-          );
-
-        if (!timeKey) continue;
-
-        const existingExpiry =
-          consumedRealtimeArrivals.get(timeKey) || 0;
-
-        const expiresAt = Math.max(
-          existingExpiry,
-          Number.isFinite(referenceTimestamp)
-            ? referenceTimestamp * 1000
-              + CONSUMED_REALTIME_ARRIVAL_TTL_MS
-            : now + CONSUMED_REALTIME_ARRIVAL_TTL_MS
-        );
-
-        if (expiresAt !== existingExpiry) {
-          consumedRealtimeArrivals.set(
-            timeKey,
-            expiresAt
-          );
-          changed = true;
-        }
-      }
-
-      if (tripId) {
-        const tripKey =
-          getConsumedRealtimeTripKey(
-            stopId,
-            routeId,
-            tripId
-          );
-
-        const existingExpiry =
-          consumedRealtimeArrivals.get(tripKey) || 0;
-
-        if (tripExpiresAt > existingExpiry) {
-          consumedRealtimeArrivals.set(
-            tripKey,
-            tripExpiresAt
-          );
-          changed = true;
-        }
-      }
-    }
-
-    if (changed) {
-      persistConsumedRealtimeArrivals();
-    }
-  }
-
-  function isConsumedRealtimeScheduledArrival(
-    stopId,
-    routeId,
-    destination,
-    scheduledTimestamp
-  ) {
-    pruneConsumedRealtimeArrivals();
-
-    const key =
-      getConsumedRealtimeArrivalKey(
-        stopId,
-        routeId,
-        destination,
-        scheduledTimestamp
-      );
-
-    return !!key
-      && consumedRealtimeArrivals.has(key);
-  }
 
   function getFavoriteStops() {
     try {
@@ -1749,6 +1326,22 @@
     return null;
   }
 
+  function getScheduledTripTerminalStopId(
+    routeId,
+    staticTripOrId
+  ) {
+    const tripId = typeof staticTripOrId === "object"
+      ? String(staticTripOrId?.trip_id ?? "").trim()
+      : String(staticTripOrId ?? "").trim();
+
+    if (!tripId) return "";
+
+    return getStaticScheduleInfoForTrip(
+      routeId,
+      tripId
+    )?.terminalStopId || "";
+  }
+
   function getRealtimeTripDestinationStopId(
     realtimeRoute,
     staticScheduleInfo
@@ -1984,7 +1577,7 @@
 
 
   // Merge realtime and timetable courses into one displayed line/destination
-  // row before limiting it to the primary arrival plus three following times.
+  // row before limiting it to the next three departures.
   // This lets non-duplicated scheduled courses fill slots when realtime only
   // provides one or two predicted arrivals for the same direction.
   function mergeBoardRoutesByDestination(
@@ -2360,45 +1953,43 @@
     destination = "",
     directionId = ""
   ) {
-    const direction =
-      resolveDirectionForRealtimeRoute(
-        routeId,
-        stopId,
-        staticTrip,
-        destination,
-        directionId
-      );
+    const selectedStopId = String(
+      stopId ?? ""
+    ).trim();
 
-    if (
-      direction?.pattern?.length
-      && isTerminalDirectionForStop(
-        routeId,
-        stopId,
-        direction
-      )
-    ) {
-      return true;
+    if (!selectedStopId) return false;
+
+    // When the Trip ID maps to a GTFS schedule row, that row is the authority.
+    // A last realtime StopTimeUpdate is not necessarily the end of the trip.
+    const exactTripTerminal = getScheduledTripTerminalStopId(
+      routeId,
+      staticTrip
+    );
+
+    if (exactTripTerminal) {
+      return stopIdsMatch(
+        exactTripTerminal,
+        selectedStopId
+      );
     }
 
-    const selectedStop =
-      getStopById(stopId);
-
-    const selectedName =
-      normalizeStopName(
-        selectedStop?.stop_name
-      );
-
-    const destinationName =
-      normalizeDirectionText(
-        destination
-      );
-
-    return (
-      !!selectedName
-      && !!destinationName
-      && selectedName
-        === destinationName
+    // If the trip is unknown to the static feed, use an unambiguous direction
+    // identifier. Do not compare stop and destination names: realtime may only
+    // report an intermediate stop as its last StopTimeUpdate.
+    const direction = resolveDirectionForRealtimeRoute(
+      routeId,
+      selectedStopId,
+      staticTrip,
+      "",
+      directionId
     );
+
+    return !!direction?.pattern?.length
+      && isTerminalDirectionForStop(
+        routeId,
+        selectedStopId,
+        direction
+      );
   }
 
   /**
@@ -2625,9 +2216,6 @@
     const nowTimestamp =
       Date.now() / 1000;
 
-    const partialDisplayLeadSeconds =
-      30 * 60;
-
     const dayType =
       getCurrentScheduleDayType();
 
@@ -2757,30 +2345,14 @@
           continue;
         }
 
-        /*
-         * IMPORTANT:
-         * Do NOT move an expired metro course to tomorrow.
-         *
-         * This keeps the metro board tied to the current service day.
-         * Once the last course for this station has passed, no static
-         * rows remain and the board displays "Няма предстоящи заминавания."
-         *
-         * GTFS times beyond 24:00 are still preserved naturally, because
-         * gtfsSecondsToTodayTimestamp() converts them to the corresponding
-         * next-day clock time as part of the same service day.
-         */
+        // Keep the active service date (including GTFS times beyond 24:00),
+        // but do not roll already-passed trips into tomorrow.
         const timestamp =
-          gtfsSecondsToTodayTimestamp(
-            seconds
-          );
+          gtfsSecondsToTodayTimestamp(seconds);
 
-if (
-  timestamp < nowTimestamp
-  || timestamp >
-    nowTimestamp + SCHEDULE_FALLBACK_HORIZON_SECONDS
-) {
-  continue;
-}
+        if (timestamp < nowTimestamp) {
+          continue;
+        }
 
         const groupKey =
           `${routeId}|${directionKey}|${terminalStopId}`;
@@ -2817,41 +2389,12 @@ if (
       const target
       of byTerminal.values()
     ) {
-      const staticTerminalId =
-        getDirectionTerminalStopId(
-          target.direction
-        );
-
-      const isPartialCourse =
-        !stopIdsMatch(
-          target.terminalStopId,
-          staticTerminalId
-        );
-
-      /*
-       * IMPORTANT:
-       * Partial metro courses should only appear 30 minutes before their
-       * concrete departure. Normal/full-length courses keep the old behavior.
-       *
-       * The filtering is intentionally done BEFORE the visible-arrival limit,
-       * otherwise a hidden partial course could occupy one of the first four slots
-       * and prevent a later visible course from being displayed.
-       */
+      // A partial trip is a real scheduled service and is shown just like a
+      // full-length trip. Its destination is still taken from this schedule
+      // row's actual last served stop.
       const unique =
-        [...new Set(
-          target.timestamps
-        )]
-          .sort(
-            (a, b) => a - b
-          )
-          .filter(
-            timestamp =>
-              !isPartialCourse
-              || (
-                timestamp - nowTimestamp
-                <= partialDisplayLeadSeconds
-              )
-          )
+        [...new Set(target.timestamps)]
+          .sort((a, b) => a - b)
           .slice(0, MAX_VISIBLE_BOARD_ARRIVALS);
 
       if (!unique.length) {
@@ -3241,6 +2784,20 @@ if (
         continue;
       }
 
+      // The API response is stop-specific. A trip record with no valid time
+      // for this stop is not evidence that the static arrival is covered.
+      const realtimeTimes = (
+        Array.isArray(realtimeRoute?.times)
+          ? realtimeRoute.times
+          : []
+      ).filter(time =>
+        Number.isFinite(Number(time?.timestamp))
+      );
+
+      if (!realtimeTimes.length) {
+        continue;
+      }
+
       const realtimeTripId =
         String(
           realtimeRoute?.trip_id
@@ -3288,7 +2845,7 @@ if (
 
       for (
         const time
-        of realtimeRoute?.times || []
+        of realtimeTimes
       ) {
         const realtimeScheduledTimestamp =
           getRealtimeScheduledTimestamp(
@@ -3437,10 +2994,6 @@ if (
     const rowsByTerminal =
       new Map();
 
-    // Prune once for the whole refresh rather than from inside every
-    // individual schedule-row check.
-    pruneConsumedRealtimeArrivals();
-
     for (
       const entry
       of entries
@@ -3545,18 +3098,11 @@ if (
             seconds
           );
 
-        // Include all remaining departures for the active service date, not
-        // just the next two hours. Otherwise low-frequency routes can never
-        // contribute a fourth time even when later same-day trips exist.
-        // Do not roll already-passed same-day times into tomorrow: tomorrow's
-        // calendar/service pattern may be different.
-        if (
-  timestamp < nowTimestamp
-  || timestamp >
-    nowTimestamp + SCHEDULE_FALLBACK_HORIZON_SECONDS
-) {
-  continue;
-}
+        // Keep future departures from the active service date. The visible
+        // list is bounded later to the next three times per line/destination.
+        if (timestamp < nowTimestamp) {
+          continue;
+        }
 
         if (
           isSkippedStaticSchedule(
@@ -3571,27 +3117,6 @@ if (
           continue;
         }
 
-        const staticTripIds = [
-          schedule?.original_trip_id,
-          schedule?.gtfs_trip_id,
-          schedule?.trip_id
-        ].filter(
-          value => String(value ?? "").trim()
-        );
-
-        if (
-          staticTripIds.some(tripId => {
-            const key = getConsumedRealtimeTripKey(
-              selectedStop,
-              routeId,
-              tripId
-            );
-            return !!key && consumedRealtimeArrivals.has(key);
-          })
-        ) {
-          continue;
-        }
-
         const destination =
           normalizeDirectionText(
             getDestinationDisplayName(
@@ -3602,23 +3127,6 @@ if (
               || terminalStopId
             )
           );
-
-        const consumedKey =
-          getConsumedRealtimeArrivalKey(
-            selectedStop,
-            routeId,
-            destination,
-            timestamp
-          );
-
-        if (
-          consumedKey
-          && consumedRealtimeArrivals.has(
-            consumedKey
-          )
-        ) {
-          continue;
-        }
 
         const groupKey =
           `${routeId}|${directionKey}|${terminalStopId}`;
@@ -3783,9 +3291,8 @@ if (
       );
     }
 
-    // The API already supports route_ids. Supplying only lines that actually
-    // serve the selected stop keeps the active_trips portion of the response
-    // much smaller and greatly reduces browser-side work.
+    // Request only the GTFS routes that serve the selected stop. This keeps
+    // the realtime response focused on relevant trips.
     const routeIds =
       getRealtimeRouteIdsForStop(
         stop
@@ -3863,22 +3370,6 @@ if (
                 route.route_id
                 || staticTrip?.route_id
                 || "";
-
-              if (
-                route.destination_stop_id
-                && shouldHideTerminalArrival(
-                  routeId,
-                  route.destination_stop_id,
-                  staticTrip,
-                  route.destination
-                    || "",
-                  route.direction_id
-                    || route.directionId
-                    || ""
-                )
-              ) {
-                return false;
-              }
 
               return !shouldHideTerminalArrival(
                 routeId,
@@ -4005,14 +3496,6 @@ if (
           ? []
           : realtimeRoutes
     };
-
-    // Keep exact trip identities from the ungrouped feed. Grouped arrivals
-    // intentionally combine several trips and therefore cannot preserve a
-    // reliable trip_id-to-time mapping on their own.
-    rememberConsumedRealtimeArrivals(
-      stop,
-      realtime.routes
-    );
 
     const metroRoutes =
       getMetroScheduledArrivals(
@@ -4144,38 +3627,6 @@ if (
           route =>
             route.times.length
         );
-
-    rememberConsumedRealtimeArrivals(
-      stop,
-      mergedSurfaceRoutes
-    );
-
-    // Reserve active courses before building static candidates. A trip may be
-    // active in GTFS-RT without a StopTimeUpdate for this specific stop. Its own
-    // timetable course must stay suppressed, while other courses in the same
-    // line/direction remain eligible to fill the board.
-    const activeTripRecords =
-      Array.isArray(data?.active_trips)
-        ? data.active_trips
-        : (
-          Array.isArray(data?.active_trip_ids)
-            ? data.active_trip_ids.map(tripId => ({
-                trip_id: tripId,
-                schedule_relationship_name: "SCHEDULED"
-              }))
-            : []
-        );
-
-    rememberConsumedRealtimeTrips(
-      stop,
-      activeTripRecords.filter(activeTrip => {
-        const relationship = String(
-          activeTrip?.schedule_relationship_name || "SCHEDULED"
-        ).toUpperCase();
-        return relationship !== "CANCELED"
-          && relationship !== "DELETED";
-      })
-    );
 
     const scheduledSurfaceRoutes =
       isMetroStop(stop)
@@ -5853,12 +5304,28 @@ if (
     isServiceActiveOnDate,
     isScheduleRowActiveToday,
     getSofiaDateKey,
+    formatArrivalCountdown,
+    getDestinationDisplayName,
+    MAX_VISIBLE_BOARD_ARRIVALS,
     staticArrivalIsCoveredByRealtime,
     getRealtimeScheduledTimestamp,
     getStaticScheduleInfoForTrip,
+    getScheduledTripTerminalStopId,
+    shouldHideTerminalArrival,
     getRealtimeTripDestinationStopId,
     resolveRealtimeRouteDestinationDetails,
+    getMetroScheduledArrivals,
+    getSurfaceScheduledArrivals,
+    isSkippedStaticSchedule,
     mergeBoardRoutesByDestination,
-    getLimitedUniqueArrivalTimes
+    getLimitedUniqueArrivalTimes,
+    setTestState({ transportData: nextTransportData, trips = [], buildIndexes = false } = {}) {
+      transportData = nextTransportData || null;
+      routeById = new Map((transportData?.routes || []).map(route => [String(route.route_id), route]));
+      const allTrips = trips.length ? trips : (transportData?.trips || []);
+      tripById = new Map(allTrips.map(trip => [String(trip.trip_id), trip]));
+      tripStopsById = new Map();
+      if (buildIndexes) buildStaticScheduleIndexes();
+    }
   };
 })();
