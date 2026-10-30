@@ -22,7 +22,6 @@ def write_transport_data(result):
             "source": result["source"],
             "osmSource": result["osmSource"],
             "osmUpdatedAt": result["osmUpdatedAt"],
-            "lineOverrides": result["lineOverrides"],
         },
         "calendar.json": result["calendar"],
         "routes.json": result["routes"],

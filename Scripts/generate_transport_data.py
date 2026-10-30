@@ -10,8 +10,8 @@ if str(SCRIPT_DIR) not in sys.path:
 from transport_data.config import (  # noqa: F401
     GTFS_URL, OSM_URL, OSM_NETWORK_NAME, OSM_STOP_TYPES, ROOT, DATA_DIR,
     GTFS_DIR, LEGACY_OUTPUT_FILE, CALENDAR_CONFIG_FILE,
-    LINE_OVERRIDES_CONFIG_FILE, SOFIA_TIME_ZONE, GTFS_WEEKDAY_FIELDS,
-    load_line_overrides, normalize, normalize_stop_id, normalize_osm_stop_code,
+    SOFIA_TIME_ZONE, GTFS_WEEKDAY_FIELDS,
+    normalize, normalize_stop_id, normalize_osm_stop_code,
     parse_date, parse_time, get_today, gtfs_date_string, iso_date_string,
 )
 from transport_data.gtfs import download_gtfs, read_csv  # noqa: F401

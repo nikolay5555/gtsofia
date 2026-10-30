@@ -1,6 +1,5 @@
 """Shared configuration and small utility functions."""
 from datetime import datetime
-import json
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -21,7 +20,6 @@ DATA_DIR = ROOT / "data"
 GTFS_DIR = ROOT / ".gtfs"
 LEGACY_OUTPUT_FILE = DATA_DIR / "transport.json"
 CALENDAR_CONFIG_FILE = ROOT / "config" / "calendar.json"
-LINE_OVERRIDES_CONFIG_FILE = ROOT / "config" / "line-overrides.json"
 
 SOFIA_TIME_ZONE = ZoneInfo("Europe/Sofia")
 GTFS_WEEKDAY_FIELDS = (
@@ -33,24 +31,6 @@ GTFS_WEEKDAY_FIELDS = (
     "saturday",
     "sunday",
 )
-
-def load_line_overrides():
-    if not LINE_OVERRIDES_CONFIG_FILE.exists():
-        return []
-
-    with LINE_OVERRIDES_CONFIG_FILE.open(
-        "r",
-        encoding="utf-8"
-    ) as file:
-        data = json.load(file)
-
-    if not isinstance(data, list):
-        raise ValueError(
-            "config/line-overrides.json must contain an array."
-        )
-
-    return data
-
 
 def normalize(value):
     return str(value).strip() if value is not None else ""

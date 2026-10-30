@@ -3,15 +3,16 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 const test = require('node:test');
+const routeMetadata = require('../route-metadata');
 
 const sourcePath = path.join(__dirname, '..', 'transport-data.js');
 const source = fs.readFileSync(sourcePath, 'utf8');
 
 test('loadTransportData merges the modular files into the legacy in-memory shape', async () => {
   const payloads = {
-    'metadata.json': { updatedAt: '2026-10-27', lineOverrides: [{ cgm_id: 'R1' }] },
+    'metadata.json': { updatedAt: '2026-10-27' },
     'calendar.json': { serviceIdsByDate: { '2026-10-27': ['S1'] } },
-    'routes.json': [{ route_id: 'R1' }],
+    'routes.json': [{ route_id: 'R1', route_short_name: '184', route_type: '11' }],
     'stops.json': [{ stop_id: '0001' }],
     'trips.json': [{ trip_id: 'T1', route_id: 'R1', service_id: 'S1' }],
     'directions.json': { R1: { D1: { headsign: 'Test' } } },
@@ -33,6 +34,7 @@ test('loadTransportData merges the modular files into the legacy in-memory shape
         json: async () => payloads[filename]
       };
     },
+    GTSofiaRouteMetadata: routeMetadata,
     window: null
   };
   context.window = context;
@@ -41,6 +43,8 @@ test('loadTransportData merges the modular files into the legacy in-memory shape
   const data = await context.loadTransportData();
   assert.equal(data.updatedAt, '2026-10-27');
   assert.equal(data.routes[0].route_id, 'R1');
+  assert.equal(data.routes[0].number, '184');
+  assert.equal(data.routes[0].type, 'bus');
   assert.equal(data.stops[0].stop_id, '0001');
   assert.equal(data.trips[0].service_id, 'S1');
   assert.equal(data.directions.R1.D1.headsign, 'Test');
@@ -61,6 +65,7 @@ test('failed modular fetch can be retried', async () => {
     console,
     Intl,
     Date,
+    GTSofiaRouteMetadata: routeMetadata,
     fetch: async (url) => {
       if (fail) {
         fail = false;

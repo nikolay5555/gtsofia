@@ -3,7 +3,7 @@ const directionsData = require('../data/directions.json');
 const schedulesData = require('../data/schedules.json');
 const stopsData = require('../data/stops.json');
 const calendarData = require('../data/calendar.json');
-const lineOverrides = require('../config/line-overrides.json');
+const { getRouteMetadata } = require('../route-metadata');
 
 const SOFIA_TIME_ZONE = 'Europe/Sofia';
 const MAX_ARRIVALS_PER_LINE = 3;
@@ -137,77 +137,8 @@ function isServiceActive(serviceId, date, calendar = calendarData) {
   return active;
 }
 
-function normalizeRouteRef(value) {
-  let ref = String(value || '').trim();
-  if (!ref) return '';
-
-  const number = ref.replace(/[a-zа-я]/gi, '');
-  if (/^E/i.test(ref)) ref = number;
-  else if (/^N/i.test(ref)) ref = `N${number}`;
-  else if (/^Y/i.test(ref)) ref = `У${number}`;
-  return ref;
-}
-
-function createRouteMetadata(route, overrides = lineOverrides) {
-  if (!route) return null;
-  const routeId = String(route.route_id || '').trim();
-  const sourceNumber = String(route.route_short_name || '').trim();
-  const override = overrides.find(item =>
-    String(item?.cgm_id || '').trim() === routeId
-    || (!item?.cgm_id && String(item?.route_ref || '').trim() === sourceNumber)
-  ) || null;
-
-  let type = String(override?.type || '').trim().toLowerCase();
-  if (type === 'trolleybus') type = 'trolley';
-  if (type === 'night') type = 'bus';
-  if (!type) {
-    const normalizedNumber = normalizeRouteRef(override?.route_ref || sourceNumber).toUpperCase();
-    if (normalizedNumber.includes('T') || normalizedNumber.includes('Т')) type = 'bus';
-    else {
-      type = ({ '0': 'tram', '1': 'metro', '3': 'bus', '11': 'trolley' })[String(route.route_type)] || 'other';
-    }
-  }
-
-  const rawNumber = override?.route_ref ? String(override.route_ref).trim() : sourceNumber;
-  let number = normalizeRouteRef(rawNumber);
-  if (type === 'metro') number = number.replace(/^[МM]/i, '');
-
-  const explicitSubtype = String(override?.subtype || '').trim().toLowerCase();
-  let subtype = explicitSubtype;
-  if (!subtype && type === 'bus') {
-    const upper = number.toUpperCase();
-    if (upper.includes('Т') || upper.includes('T')) subtype = 'temporary';
-    else if (upper.startsWith('N')) subtype = 'night';
-    else if (upper.startsWith('У')) subtype = 'school';
-  }
-
-  const icon = type === 'bus' && subtype === 'night'
-    ? 'Icons/Active icons/night-bus.svg'
-    : ({
-      bus: 'Icons/Active icons/bus.svg',
-      trolley: 'Icons/Active icons/trolley.svg',
-      tram: 'Icons/Active icons/tram.svg',
-      metro: 'Icons/Active icons/metro.svg'
-    })[type] || '';
-
-  const overrideColor = String(override?.color || '').trim();
-  const routeColor = String(route.route_color || '').trim();
-  const palette = { bus: '#BE1E2D', tram: '#F7941D', trolley: '#27AAE1', metro: '#1C75BC' };
-  const color = overrideColor
-    ? (overrideColor.startsWith('#') ? overrideColor : `#${overrideColor}`)
-    : (!override?.type && routeColor
-      ? (routeColor.startsWith('#') ? routeColor : `#${routeColor}`)
-      : (palette[type] || palette.bus));
-
-  return {
-    id: routeId,
-    number: number || '—',
-    type,
-    subtype,
-    icon,
-    color,
-    textColor: route.route_text_color ? `#${route.route_text_color}` : '#FFFFFF'
-  };
+function createRouteMetadata(route) {
+  return getRouteMetadata(route);
 }
 
 function createDataContext(data = {}) {
@@ -216,7 +147,6 @@ function createDataContext(data = {}) {
   const schedules = data.schedules || schedulesData;
   const stops = data.stops || stopsData;
   const calendar = data.calendar || calendarData;
-  const overrides = data.lineOverrides || lineOverrides;
 
   const routeById = new Map(routes.map(route => [String(route.route_id), route]));
   const stopById = new Map();
@@ -351,7 +281,7 @@ function createDataContext(data = {}) {
 
       const routeDirections = directions?.[routeId] || {};
       const routeSchedules = schedules?.[routeId] || {};
-      const meta = createRouteMetadata(route, overrides);
+      const meta = createRouteMetadata(route);
 
       for (const [directionKey, direction] of Object.entries(routeDirections)) {
         const pattern = Array.isArray(direction?.pattern) ? direction.pattern.map(String) : [];
@@ -432,9 +362,7 @@ function createDataContext(data = {}) {
       staticArrival?.static_trip_id,
       staticArrival?.trip_id
     ].map(value => String(value ?? '').trim()).filter(Boolean));
-    const staticDirectionKey = String(staticArrival?.direction_key || '').trim();
     const staticTerminalId = String(staticArrival?.terminal_stop_id || '').trim();
-    const staticDestination = normalizeDirectionText(staticArrival?.destination || '');
 
     for (const realtime of realtimeRoutes) {
       if (String(realtime?.route_id || '').trim() !== routeId) continue;
@@ -449,31 +377,22 @@ function createDataContext(data = {}) {
         continue;
       }
 
-      const realtimeDirectionKey = String(realtime?.direction_id || realtime?.directionId || '').trim();
       const realtimeTerminalId = String(realtime?.destination_stop_id || '').trim();
-      const realtimeDestination = normalizeDirectionText(realtime?.destination || '');
 
       for (const time of times) {
         const scheduled = realtimeScheduledTimestamp(time);
-        if (!Number.isFinite(scheduled) || Math.abs(staticTimestamp - scheduled) > 120) continue;
+        if (!Number.isFinite(scheduled) || Math.abs(staticTimestamp - scheduled) > 1) continue;
 
-        const terminalCompatible = !!staticTerminalId && !!realtimeTerminalId && stopIdsMatch(staticTerminalId, realtimeTerminalId);
-        const directionCompatible = !!staticDirectionKey && !!realtimeDirectionKey && staticDirectionKey === realtimeDirectionKey;
-        const destinationCompatible = !!staticDestination && !!realtimeDestination && staticDestination === realtimeDestination;
-
-        if (staticTerminalId && realtimeTerminalId) {
-          if (terminalCompatible || directionCompatible || destinationCompatible) return true;
-          continue;
+        // Without a Trip ID, suppress a static course only when both its
+        // scheduled stop time and terminal stop ID match exactly. A fuzzy
+        // two-minute match or matching text/direction can hide another trip.
+        if (
+          staticTerminalId
+          && realtimeTerminalId
+          && stopIdsMatch(staticTerminalId, realtimeTerminalId)
+        ) {
+          return true;
         }
-        if (staticDirectionKey && realtimeDirectionKey) {
-          if (directionCompatible) return true;
-          continue;
-        }
-        if (staticDestination && realtimeDestination) {
-          if (destinationCompatible) return true;
-          continue;
-        }
-        return true;
       }
     }
 
@@ -557,7 +476,7 @@ function createDataContext(data = {}) {
         : (String(route?.destination_stop_id || '').trim()
           || staticInfo?.terminalStopId
           || String(direction?.pattern?.[direction.pattern.length - 1] || '').trim());
-      const meta = createRouteMetadata(routeById.get(routeId), overrides) || {
+      const meta = createRouteMetadata(routeById.get(routeId)) || {
         id: routeId,
         number: String(route?.route_ref || '—'),
         type: 'bus',

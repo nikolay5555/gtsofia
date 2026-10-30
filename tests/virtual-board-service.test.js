@@ -100,7 +100,6 @@ function createFixture() {
       dateTypes: { '2026-10-30': 'weekday' },
       serviceIdsByDate: { '2026-10-30': ['SERVICE'] }
     },
-    lineOverrides: []
   };
 }
 
@@ -188,6 +187,26 @@ assert.ok(
   'the fallback should deduplicate the matching static trip when realtime omits Trip ID'
 );
 
+// A different scheduled time must no longer be merged just because it falls
+// within the old two-minute tolerance, even when route and terminal match.
+const nearbyNoIdBoard = service.buildBoard({
+  routes: [{
+    route_id: 'TB7',
+    destination_stop_id: 'END',
+    times: [{
+      timestamp: Date.parse('2026-10-30T13:42:00+02:00') / 1000,
+      scheduled_time: Date.parse('2026-10-30T13:41:00+02:00') / 1000,
+      delay: 60
+    }]
+  }],
+  skipped_trips: []
+}, '0200', now);
+const nearbyNoIdRow = nearbyNoIdBoard.routes.find(route => route.route_id === 'TB7');
+assert.ok(
+  nearbyNoIdRow.times.some(time => time.scheduled && Math.round(time.timestamp) === Math.round(Date.parse('2026-10-30T13:40:00+02:00') / 1000)),
+  'a one-minute scheduled-time difference must not suppress a distinct static course'
+);
+
 // An active trip with no arrival at this stop is not a reason to hide a
 // static timetable course. The endpoint receives only stop-specific arrivals.
 const withoutStopPrediction = service.buildBoard({
@@ -237,6 +256,7 @@ const metroRow = metroBoard.routes.find(route => route.route_id === 'M1');
 assert.ok(metroRow, 'metro static departures must be included');
 assert.equal(metroRow.destination, 'Метростанция Крайна');
 assert.equal(metroRow.meta.type, 'metro');
+assert.equal(metroRow.meta.number, '1', 'metro line numbers must be displayed without the M prefix');
 assert.ok(metroRow.times.every(time => time.scheduled), 'metro board rows remain timetable-based');
 
 // Explicit calendar overrides take precedence over a weekday fallback when

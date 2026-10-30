@@ -1,7 +1,7 @@
 """Orchestrate the download, transformation and modular serialization."""
 import shutil
 
-from .config import DATA_DIR, GTFS_DIR, get_today, load_line_overrides, normalize
+from .config import DATA_DIR, GTFS_DIR, get_today, normalize
 from .gtfs import download_gtfs, read_csv
 from .osm import fetch_osm_stops, enrich_stops_with_osm
 from .calendar import load_calendar_config, build_calendar_context
@@ -58,7 +58,6 @@ def main():
         )
 
         today = get_today()
-        line_overrides = load_line_overrides()
 
         print(
             f"Service reference date: {today}"
@@ -245,7 +244,6 @@ def main():
             "source": "CGM Sofia official GTFS",
             "osmSource": "OpenStreetMap — Градски транспорт София",
             "osmUpdatedAt": today.isoformat() if osm_stops else "",
-            "lineOverrides": line_overrides,
             "calendar": calendar_result,
             "routes": [dict(row) for row in routes_data],
             "stops": output_stops,

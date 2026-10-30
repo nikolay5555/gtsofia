@@ -31,10 +31,18 @@ async function loadTransportData() {
             })
         );
         const parts = Object.fromEntries(entries);
+        const routeMetadata = window.GTSofiaRouteMetadata;
+        if (!routeMetadata || typeof routeMetadata.getRouteMetadata !== 'function') {
+            throw new Error('Липсва route-metadata.js.');
+        }
+        const normalizedRoutes = (parts.routes || []).map(route => ({
+            ...route,
+            ...routeMetadata.getRouteMetadata(route)
+        }));
         const data = {
             ...(parts.metadata || {}),
             calendar: parts.calendar || {},
-            routes: parts.routes || [],
+            routes: normalizedRoutes,
             stops: parts.stops || [],
             trips: parts.trips || [],
             directions: parts.directions || {},
@@ -124,147 +132,34 @@ window.getTransportCalendarDayType =
     getTransportCalendarDayType;
 
 
-function getTransportType(routeType) {
-    switch (String(routeType)) {
-        case '0':
-            return 'tram';
+function getRouteMetadata(route) {
+    const existing = route && route.type && route.number
+        ? route
+        : window.GTSofiaRouteMetadata?.getRouteMetadata(route);
 
-        case '1':
-            return 'metro';
-
-        case '3':
-            return 'bus';
-
-        case '11':
-            return 'trolley';
-
-        default:
-            return 'other';
-    }
-}
-
-
-function getLineOverride(route) {
-    const routeId = String(route?.route_id || '').trim();
-    const routeNumber = String(route?.route_short_name || '').trim();
-    const overrides = Array.isArray(window.transportData?.lineOverrides)
-        ? window.transportData.lineOverrides
-        : [];
-
-    return overrides.find(override =>
-        String(override?.cgm_id || '').trim() === routeId ||
-        (
-            !override?.cgm_id &&
-            String(override?.route_ref || '').trim() === routeNumber
-        )
-    ) || null;
-}
-
-
-function normalizeRouteRef(value) {
-    let ref = String(value || '').trim();
-    if (!ref) return '';
-
-    const number = ref.replace(/[a-zа-я]/gi, '');
-
-    if (/^E/i.test(ref)) {
-        ref = number;
-    } else if (/^N/i.test(ref)) {
-        ref = `N${number}`;
-    } else if (/^Y/i.test(ref)) {
-        ref = `У${number}`;
+    if (!existing) {
+        return {
+            type: 'other',
+            number: '—',
+            subtype: '',
+            color: '#BE1E2D'
+        };
     }
 
-    return ref;
-}
-
-
-function normalizeLineType(value) {
-    const type = String(value || '').trim().toLowerCase();
-
-    switch (type) {
-        case 'trolleybus':
-            return 'trolley';
-        case 'night':
-            return 'bus';
-        default:
-            return type;
-    }
+    return existing;
 }
 
 function getLineType(route) {
-    const override = getLineOverride(route);
-
-    // An explicit override is authoritative. In particular, a route whose
-    // number contains T/Т must not silently turn a configured tram/trolley
-    // line into a bus.
-    if (override?.type) {
-        return normalizeLineType(override.type);
-    }
-
-    const sourceNumber = String(route?.route_short_name || '').trim();
-    const normalizedNumber = normalizeRouteRef(
-        override?.route_ref || sourceNumber
-    ).toUpperCase();
-
-    // Replacement services are buses by default when there is no override.
-    if (
-        normalizedNumber.includes('T') ||
-        normalizedNumber.includes('Т')
-    ) {
-        return 'bus';
-    }
-
-    return getTransportType(route?.route_type);
+    return getRouteMetadata(route).type;
 }
-
 
 function getLineDisplayNumber(route, type) {
-    const override = getLineOverride(route);
-    const sourceNumber = String(
-        route.route_short_name || ''
-    ).trim();
-
-    const number = override?.route_ref
-        ? String(override.route_ref).trim()
-        : sourceNumber;
-
-    const normalized = normalizeRouteRef(number);
-
-    return type === 'metro'
-        ? normalized.replace(/^[МM]/i, '')
-        : normalized;
+    return getRouteMetadata(route).number;
 }
-
 
 function getLineSubtype(route, type, displayNumber) {
-    const override = getLineOverride(route);
-    const explicit = String(override?.subtype || '').trim().toLowerCase();
-    if (explicit) return explicit;
-
-    if (type !== 'bus') return '';
-
-    const number = String(
-        displayNumber ??
-        getLineDisplayNumber(route, type)
-    ).trim().toUpperCase();
-
-    // Dimitar's normalization: T/Т routes are replacement buses.
-    if (number.includes('Т') || number.includes('T')) {
-        return 'temporary';
-    }
-
-    if (number.startsWith('N')) {
-        return 'night';
-    }
-
-    if (number.startsWith('У')) {
-        return 'school';
-    }
-
-    return '';
+    return getRouteMetadata(route).subtype || '';
 }
-
 
 function getTransportIcon(
     type,
@@ -294,36 +189,10 @@ function getTransportIcon(
 }
 
 
-const TRANSPORT_TYPE_COLORS = Object.freeze({
-    bus: '#BE1E2D',
-    tram: '#F7941D',
-    trolley: '#27AAE1',
-    metro: '#1C75BC'
-});
-
-function getLineColor(
-    route,
-    type
-) {
-    const override = getLineOverride(route);
-
-    // A configured color remains an optional, explicit exception to the
-    // standard palette for the selected transport type.
-    if (override?.color) {
-        const color = String(override.color).trim();
-        return color.startsWith('#') ? color : `#${color}`;
-    }
-
-    // Keep the original GTFS line color only when the line type itself was
-    // not overridden. Otherwise always use the selected type's standard pill.
-    if (!override?.type && route?.route_color) {
-        const color = String(route.route_color).trim();
-        return color.startsWith('#') ? color : `#${color}`;
-    }
-
-    return TRANSPORT_TYPE_COLORS[normalizeLineType(type)]
-        || TRANSPORT_TYPE_COLORS.bus;
+function getLineColor(route, type) {
+    return getRouteMetadata(route).color;
 }
+
 
 function getDirections(
     routeLongName
@@ -517,10 +386,8 @@ function convertGtfsRoutes(
 }
 
 
-window.getLineOverride = getLineOverride;
 window.getLineDisplayNumber = getLineDisplayNumber;
 window.getLineType = getLineType;
-window.normalizeLineType = normalizeLineType;
 window.getLineSubtype = getLineSubtype;
 window.getLineColor = getLineColor;
 window.getTransportIcon = getTransportIcon;
