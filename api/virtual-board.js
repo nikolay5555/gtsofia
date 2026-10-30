@@ -10,6 +10,8 @@ const FEED_CACHE_TTL_MS = 15000;
 
 const MAX_RESULTS_PER_ROUTE = 3;
 const LOOK_AHEAD_SECONDS = 3 * 60 * 60;
+// Retain a small tolerance for feed/clock jitter, but not a full minute of stale arrivals.
+const REALTIME_PAST_GRACE_SECONDS = 10;
 
 const TEXT_DECODER = new TextDecoder();
 
@@ -435,6 +437,7 @@ function decodeTripUpdate(bytes) {
     trip: null,
     stopTimeUpdates: [],
     timestamp: null,
+    delay: null,
     tripProperties: null
   };
 
@@ -475,6 +478,12 @@ function decodeTripUpdate(bytes) {
         result.timestamp =
           Number(raw);
       }
+    } else if (
+      field.fieldNumber === 5
+      && field.wireType === 0
+    ) {
+      result.delay =
+        toSignedInt32(field.value);
     } else if (
       field.fieldNumber === 6
       && field.wireType === 2
@@ -791,6 +800,27 @@ function getStopRelationship(
     : STOP_RELATIONSHIP.SCHEDULED;
 }
 
+function normalizeStopTimeEvent(event) {
+  if (!event) return null;
+  return {
+    timestamp: Number.isFinite(event.time) ? event.time : null,
+    delay: Number.isFinite(event.delay) ? event.delay : null,
+    scheduled_time: Number.isSafeInteger(event.scheduledTime) ? event.scheduledTime : null,
+    uncertainty: Number.isSafeInteger(event.uncertainty) ? event.uncertainty : null
+  };
+}
+
+function normalizeStopTimeUpdate(stopUpdate) {
+  const sequence = stopUpdate?.stopSequence;
+  return {
+    stop_id: String(stopUpdate?.stopId || '').trim(),
+    stop_sequence: Number.isSafeInteger(sequence) ? sequence : null,
+    schedule_relationship: getStopRelationship(stopUpdate),
+    arrival: normalizeStopTimeEvent(stopUpdate?.arrival),
+    departure: normalizeStopTimeEvent(stopUpdate?.departure)
+  };
+}
+
 function getTripKey(tripUpdate) {
   return [
     getTripId(tripUpdate),
@@ -822,9 +852,10 @@ function buildBoard(
   const skippedTrips =
     new Map();
 
-  // Keep every current TripUpdate descriptor, even when it has no usable
-  // StopTimeUpdate for the selected stop. The API service uses this list to
-  // suppress the static fallback for that exact same course only.
+  // Keep every current TripUpdate descriptor and its timing updates, even
+  // when it has no StopTimeUpdate for the selected stop. The service uses the
+  // trip-level delay and prior stop updates to propagate a prediction forward;
+  // it still suppresses the static fallback for this exact course only.
   const realtimeTrips = new Map();
 
   for (
@@ -844,6 +875,7 @@ function buildBoard(
     }
 
     const descriptorKey = [tripId, startDate, startTime, routeId, directionId].join('|');
+    const normalizedStopUpdates = (tripUpdate.stopTimeUpdates || []).map(normalizeStopTimeUpdate);
     if (!realtimeTrips.has(descriptorKey)) {
       realtimeTrips.set(descriptorKey, {
         trip_id: tripId,
@@ -853,8 +885,20 @@ function buildBoard(
         direction_id: directionId,
         schedule_relationship: tripRelationship,
         schedule_relationship_name: TRIP_RELATIONSHIP_NAME[tripRelationship]
-          || `UNKNOWN_${tripRelationship}`
+          || `UNKNOWN_${tripRelationship}`,
+        trip_update_timestamp: Number.isSafeInteger(tripUpdate.timestamp) ? tripUpdate.timestamp : null,
+        trip_delay: Number.isSafeInteger(tripUpdate.delay) ? tripUpdate.delay : null,
+        stop_time_updates: normalizedStopUpdates
       });
+    } else {
+      const existingDescriptor = realtimeTrips.get(descriptorKey);
+      existingDescriptor.stop_time_updates.push(...normalizedStopUpdates);
+      if (Number.isSafeInteger(tripUpdate.timestamp)
+        && (!Number.isSafeInteger(existingDescriptor.trip_update_timestamp)
+          || tripUpdate.timestamp >= existingDescriptor.trip_update_timestamp)) {
+        existingDescriptor.trip_update_timestamp = tripUpdate.timestamp;
+        if (Number.isSafeInteger(tripUpdate.delay)) existingDescriptor.trip_delay = tripUpdate.delay;
+      }
     }
 
     if (
@@ -986,7 +1030,7 @@ function buildBoard(
       }
 
       if (timestamp === null && delay === null && scheduledTime === null) continue;
-      if (timestamp !== null && timestamp < now - 60) continue;
+      if (timestamp !== null && timestamp < now - REALTIME_PAST_GRACE_SECONDS) continue;
       if (timestamp !== null && timestamp > now + LOOK_AHEAD_SECONDS) continue;
 
       const key =

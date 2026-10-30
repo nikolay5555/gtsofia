@@ -340,6 +340,120 @@ assert.ok(
   'unrelated static courses on the same line must remain visible'
 );
 
+// TripUpdate.delay is propagated from the start of a scheduled trip until a
+// StopTimeUpdate changes it. The matching static trip becomes a realtime row
+// even before a stop-specific prediction has been emitted.
+const tripLevelDelayBoard = service.buildBoard({
+  routes: [],
+  skipped_trips: [],
+  realtime_trips: [{
+    trip_id: 'GTFS-TRIP-A',
+    route_id: 'TB7',
+    trip_start_date: '20261030',
+    trip_start_time: '13:00:00',
+    trip_delay: 300,
+    stop_time_updates: []
+  }]
+}, '0200', now);
+const tripLevelDelayRow = tripLevelDelayBoard.routes.find(route =>
+  route.route_id === 'TB7' && route.trip_id === 'GTFS-TRIP-A'
+);
+assert.ok(tripLevelDelayRow, 'trip-level delay should produce a realtime row before the vehicle leaves its origin');
+assert.equal(tripLevelDelayRow.realtime, true, 'the inferred prediction must be marked as realtime');
+assert.ok(
+  tripLevelDelayRow.times.some(time => Math.round(time.timestamp) === Math.round(Date.parse('2026-10-30T13:45:00+02:00') / 1000)),
+  'trip-level delay should be applied to the selected stop scheduled time'
+);
+assert.ok(
+  !tripLevelDelayRow.times.some(time => time.scheduled && Math.round(time.timestamp) === Math.round(Date.parse('2026-10-30T13:40:00+02:00') / 1000)),
+  'the realtime trip must not also appear as a static fallback'
+);
+
+// StopTimeUpdates with stop_sequence but no stop_id are valid GTFS-Realtime
+// updates. Their delay propagates to the selected downstream stop.
+const sequenceOnlyDelayBoard = service.buildBoard({
+  routes: [],
+  skipped_trips: [],
+  realtime_trips: [{
+    trip_id: 'GTFS-TRIP-A',
+    route_id: 'TB7',
+    trip_start_date: '20261030',
+    trip_start_time: '13:00:00',
+    stop_time_updates: [{
+      stop_sequence: 1,
+      schedule_relationship: 0,
+      departure: {
+        timestamp: Date.parse('2026-10-30T13:05:00+02:00') / 1000,
+        scheduled_time: Date.parse('2026-10-30T13:00:00+02:00') / 1000,
+        delay: 300
+      }
+    }]
+  }]
+}, '0200', now);
+const sequenceOnlyDelayRow = sequenceOnlyDelayBoard.routes.find(route =>
+  route.route_id === 'TB7' && route.trip_id === 'GTFS-TRIP-A'
+);
+assert.ok(sequenceOnlyDelayRow, 'a stop_sequence-only update should be mapped to the GTFS stop');
+assert.ok(
+  sequenceOnlyDelayRow.times.some(time => Math.round(time.timestamp) === Math.round(Date.parse('2026-10-30T13:45:00+02:00') / 1000)),
+  'the sequence-only stop delay should propagate to the selected stop'
+);
+
+// NO_DATA clears an earlier trip-level delay for all subsequent stops; it
+// must not be guessed through that point.
+const noDataClearsDelayBoard = service.buildBoard({
+  routes: [],
+  skipped_trips: [],
+  realtime_trips: [{
+    trip_id: 'GTFS-TRIP-A',
+    route_id: 'TB7',
+    trip_start_date: '20261030',
+    trip_start_time: '13:00:00',
+    trip_delay: 300,
+    stop_time_updates: [{ stop_sequence: 1, schedule_relationship: 2 }]
+  }]
+}, '0200', now);
+const noDataClearsDelayTimes = noDataClearsDelayBoard.routes
+  .filter(route => route.route_id === 'TB7')
+  .flatMap(route => route.times);
+assert.ok(
+  !noDataClearsDelayTimes.some(time => Math.round(time.timestamp) === Math.round(Date.parse('2026-10-30T13:45:00+02:00') / 1000)),
+  'NO_DATA must stop delay propagation rather than inventing a downstream realtime estimate'
+);
+
+// An expired realtime prediction is retained only for a short ten-second
+// tolerance, not for the previous full minute.
+const staleRealtimeBoard = service.buildBoard({
+  routes: [{
+    trip_id: 'GTFS-TRIP-A',
+    route_id: 'TB7',
+    schedule_relationship: 0,
+    times: [{ timestamp: now.getTime() / 1000 - 11 }]
+  }],
+  skipped_trips: []
+}, '0200', now);
+const staleRealtimeTimes = staleRealtimeBoard.routes
+  .filter(route => route.route_id === 'TB7')
+  .flatMap(route => route.times);
+assert.ok(
+  !staleRealtimeTimes.some(time => Math.round(time.timestamp) === Math.round(now.getTime() / 1000 - 11)),
+  'a realtime course should stop appearing shortly after its predicted arrival'
+);
+const recentRealtimeBoard = service.buildBoard({
+  routes: [{
+    trip_id: 'GTFS-TRIP-A',
+    route_id: 'TB7',
+    schedule_relationship: 0,
+    times: [{ timestamp: now.getTime() / 1000 - 9 }]
+  }],
+  skipped_trips: []
+}, '0200', now);
+assert.ok(
+  recentRealtimeBoard.routes.some(route => route.route_id === 'TB7'
+    && route.times.some(time => Math.round(time.timestamp) === Math.round(now.getTime() / 1000 - 9))),
+  'a small ten-second tolerance should remain to absorb clock and feed jitter'
+);
+
 // A CANCELED TripUpdate also suppresses the static fallback for that exact
 // course; it must not reappear merely because the realtime course is hidden.
 const canceledCourseBoard = service.buildBoard({

@@ -57,11 +57,13 @@ function encodeTripProperties({ tripId, startDate, startTime }) {
   ]);
 }
 
-function encodeTripUpdate({ trip = null, tripProperties = null, stopUpdates = [] }) {
+function encodeTripUpdate({ trip = null, tripProperties = null, stopUpdates = [], timestamp = null, delay = null }) {
   return Buffer.concat([
     ...(trip ? [field(1, 2, encodeTripDescriptor(trip))] : []),
-    ...(tripProperties ? [field(6, 2, encodeTripProperties(tripProperties))] : []),
-    ...stopUpdates.map(stopUpdate => field(2, 2, encodeStopTimeUpdate(stopUpdate)))
+    ...stopUpdates.map(stopUpdate => field(2, 2, encodeStopTimeUpdate(stopUpdate))),
+    ...(timestamp != null ? [field(4, 0, varint(timestamp))] : []),
+    ...(delay != null ? [field(5, 0, varint(delay))] : []),
+    ...(tripProperties ? [field(6, 2, encodeTripProperties(tripProperties))] : [])
   ]);
 }
 
@@ -150,11 +152,25 @@ const normalTrip = encodeTripUpdate({
   }]
 });
 
+const predepartureDelayTrip = encodeTripUpdate({
+  trip: {
+    tripId: realtimeOnlyCourse.original_trip_id,
+    startTime: realtimeOnlyCourse.trip_start_time,
+    startDate: sofiaDate,
+    routeId: 'TB7'
+  },
+  timestamp: now,
+  delay: 90
+});
+
 const feed = Buffer.concat([
   field(2, 2, encodeEntity('skipped', skippedTrip)),
   field(2, 2, encodeEntity('skipped-sequence', sequenceSkippedTrip)),
   field(2, 2, encodeEntity('no-data', noDataTrip)),
   field(2, 2, encodeEntity('normal', normalTrip)),
+  // A valid TripUpdate may expose a trip-level delay before a stop-specific
+  // prediction exists. It must be propagated to a downstream board stop.
+  field(2, 2, encodeEntity('predeparture-trip-level-delay', predepartureDelayTrip)),
   // Exact live trip with no StopTimeUpdates: suppresses only its static fallback.
   field(2, 2, encodeEntity('realtime-without-stop-prediction', encodeTripUpdate({
     tripProperties: {
@@ -232,6 +248,15 @@ const res = {
   req.query.stop_code = '2082';
   await handler(req, res);
   assert.equal(res.statusCode, 200);
+  const inferredPredepartureCourse = payload.routes.find(route =>
+    route.trip_id === realtimeOnlyCourse.original_trip_id
+      && route.times?.some(time => Math.round(Number(time.timestamp)) === Math.round(realtimeOnlyTime + 90))
+  );
+  assert.ok(
+    inferredPredepartureCourse,
+    'the protobuf parser and API should expose trip-level delay as a downstream realtime prediction before origin departure'
+  );
+  assert.equal(inferredPredepartureCourse.realtime, true);
   const realtimeOnlyTimes = payload.routes
     .filter(route => route.route_id === 'TB7')
     .flatMap(route => route.times.map(time => Number(time.timestamp)));

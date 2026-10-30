@@ -9,6 +9,9 @@ const { buildStopIndexes, findPreferredStop } = require('../stop-utils');
 const SOFIA_TIME_ZONE = 'Europe/Sofia';
 const MAX_ARRIVALS_PER_LINE = 3;
 const MAX_STATIC_LOOKAHEAD_SECONDS = 2 * 60 * 60;
+const MAX_REALTIME_LOOKAHEAD_SECONDS = 3 * 60 * 60;
+// Allow only minor feed/clock jitter after the predicted stop time.
+const REALTIME_PAST_GRACE_SECONDS = 10;
 
 function normalizeStopKey(value) {
   const raw = String(value ?? '').trim();
@@ -340,6 +343,222 @@ function createDataContext(data = {}) {
     }
 
     return null;
+  }
+
+  function getRealtimeUpdateStopIndex(update, staticInfo) {
+    const pattern = Array.isArray(staticInfo?.direction?.pattern)
+      ? staticInfo.direction.pattern.map(String)
+      : [];
+    const sequences = Array.isArray(staticInfo?.schedule?.stop_sequences)
+      ? staticInfo.schedule.stop_sequences
+      : [];
+
+    const sequence = optionalFiniteNumber(update?.stop_sequence);
+    if (sequence !== null) {
+      const sequenceIndex = sequences.findIndex(value => Number(value) === sequence);
+      if (sequenceIndex >= 0 && sequenceIndex < pattern.length) return sequenceIndex;
+    }
+
+    const stopId = String(update?.stop_id || '').trim();
+    if (!stopId) return -1;
+    const matches = [];
+    for (let index = 0; index < pattern.length; index++) {
+      if (stopIdsMatch(pattern[index], stopId)) matches.push(index);
+    }
+    return matches.length === 1 ? matches[0] : -1;
+  }
+
+  function getRealtimeEvent(update, preferDeparture = false) {
+    const arrival = update?.arrival || null;
+    const departure = update?.departure || null;
+    const hasTiming = event => event
+      && (optionalFiniteNumber(event.timestamp) !== null
+        || optionalFiniteNumber(event.delay) !== null);
+
+    const preferred = preferDeparture ? departure : arrival;
+    const secondary = preferDeparture ? arrival : departure;
+    if (hasTiming(preferred)) return preferred;
+    if (hasTiming(secondary)) return secondary;
+    return null;
+  }
+
+  function getRealtimeEventDelay(event, stopIndex, schedule, now) {
+    const explicitDelay = optionalFiniteNumber(event?.delay);
+    if (explicitDelay !== null) return explicitDelay;
+
+    const timestamp = optionalFiniteNumber(event?.timestamp);
+    if (timestamp === null) return null;
+
+    const explicitScheduled = optionalFiniteNumber(event?.scheduled_time);
+    if (explicitScheduled !== null) return timestamp - explicitScheduled;
+
+    const scheduledSeconds = parseGtfsTime(schedule?.times?.[stopIndex]);
+    if (scheduledSeconds === null) return null;
+    const scheduledTimestamp = gtfsSecondsToTodayTimestamp(scheduledSeconds, now);
+    return timestamp - scheduledTimestamp;
+  }
+
+  function buildRealtimeRouteFromTripUpdate(realtimeTrip, selectedStopId, now) {
+    const relationshipName = String(realtimeTrip?.schedule_relationship_name || '').trim().toUpperCase();
+    const relationship = optionalFiniteNumber(realtimeTrip?.schedule_relationship);
+    const isScheduled = relationshipName
+      ? relationshipName === 'SCHEDULED'
+      : (relationship === null || relationship === 0);
+    if (!isScheduled) return null;
+
+    const realtimeDate = normalizeServiceDate(
+      realtimeTrip?.trip_start_date || realtimeTrip?.start_date
+    );
+    if (realtimeDate && realtimeDate !== normalizeServiceDate(getSofiaDateKey(now))) return null;
+
+    const dayType = getScheduleDayType(now, calendar);
+    const originalTripId = String(realtimeTrip?.trip_id || '').trim();
+    const routeIdHint = String(realtimeTrip?.route_id || '').trim();
+    const realtimeStartTime = String(realtimeTrip?.trip_start_time || realtimeTrip?.start_time || '').trim();
+    const directionId = String(realtimeTrip?.direction_id || '').trim();
+
+    let staticInfo = originalTripId
+      ? findStaticScheduleInfo(routeIdHint, originalTripId, dayType)
+      : null;
+    if (!staticInfo && routeIdHint && realtimeStartTime) {
+      staticInfo = findStaticScheduleInfoByStartTime(routeIdHint, realtimeStartTime, directionId, dayType);
+    }
+    if (!staticInfo) return null;
+
+    const staticStartTime = String(staticInfo.schedule?.start_time || '').trim();
+    if (realtimeStartTime && staticStartTime && realtimeStartTime !== staticStartTime) return null;
+
+    const staticDirectionId = String(staticInfo.direction?.direction_id ?? '').trim();
+    if (directionId && staticDirectionId && directionId !== staticDirectionId) return null;
+
+    const pattern = Array.isArray(staticInfo.direction?.pattern)
+      ? staticInfo.direction.pattern.map(String)
+      : [];
+    const targetIndex = pattern.findIndex(id => stopIdsMatch(id, selectedStopId));
+    if (targetIndex < 0 || targetIndex > staticInfo.terminalIndex) return null;
+    if (stopIdsMatch(staticInfo.terminalStopId, selectedStopId)) return null;
+
+    const targetScheduledSeconds = parseGtfsTime(staticInfo.schedule?.times?.[targetIndex]);
+    if (targetScheduledSeconds === null) return null;
+    const targetScheduledTimestamp = gtfsSecondsToTodayTimestamp(targetScheduledSeconds, now);
+
+    // GTFS-Realtime delay propagation: TripUpdate.delay applies from the start
+    // of the trip until a StopTimeUpdate supplies a new delay. A StopTimeUpdate
+    // with NO_DATA clears the known delay for all following stops; SKIPPED does
+    // not clear it. StopTimeUpdates can identify a stop by stop_sequence alone.
+    let propagatedDelay = optionalFiniteNumber(realtimeTrip?.trip_delay);
+    let propagatedUncertainty = null;
+    let targetEvent = null;
+    let targetRelationship = 0;
+    let targetSkipped = false;
+    let targetNoData = false;
+
+    const updates = (Array.isArray(realtimeTrip?.stop_time_updates) ? realtimeTrip.stop_time_updates : [])
+      .map((update, sourceIndex) => ({
+        update,
+        sourceIndex,
+        stopIndex: getRealtimeUpdateStopIndex(update, staticInfo)
+      }))
+      .filter(item => item.stopIndex >= 0 && item.stopIndex <= targetIndex)
+      .sort((left, right) => left.stopIndex - right.stopIndex || left.sourceIndex - right.sourceIndex);
+
+    for (const item of updates) {
+      const update = item.update;
+      const stopRelationship = optionalFiniteNumber(update?.schedule_relationship) ?? 0;
+      const isTargetStop = item.stopIndex === targetIndex;
+
+      if (stopRelationship === 2) { // NO_DATA
+        propagatedDelay = null;
+        propagatedUncertainty = null;
+        if (isTargetStop) {
+          targetNoData = true;
+          targetRelationship = stopRelationship;
+        }
+        continue;
+      }
+
+      if (stopRelationship === 1) { // SKIPPED: keep the previous delay for later stops.
+        if (isTargetStop) {
+          targetSkipped = true;
+          targetRelationship = stopRelationship;
+        }
+        continue;
+      }
+
+      const event = getRealtimeEvent(update, !isTargetStop);
+      if (event) {
+        const eventDelay = getRealtimeEventDelay(event, item.stopIndex, staticInfo.schedule, now);
+        if (eventDelay !== null) propagatedDelay = eventDelay;
+        const uncertainty = optionalFiniteNumber(event.uncertainty);
+        if (uncertainty !== null) propagatedUncertainty = uncertainty;
+        if (isTargetStop) {
+          targetEvent = event;
+          targetRelationship = stopRelationship;
+        }
+      } else if (isTargetStop) {
+        targetRelationship = stopRelationship;
+      }
+    }
+
+    if (targetSkipped || targetNoData) return null;
+
+    let timestamp = optionalFiniteNumber(targetEvent?.timestamp);
+    const directDelay = getRealtimeEventDelay(targetEvent, targetIndex, staticInfo.schedule, now);
+    const delay = directDelay !== null ? directDelay : propagatedDelay;
+    if (timestamp === null && delay !== null) {
+      timestamp = targetScheduledTimestamp + delay;
+    }
+    if (timestamp === null) return null;
+
+    const nowTimestamp = now.getTime() / 1000;
+    if (timestamp < nowTimestamp - REALTIME_PAST_GRACE_SECONDS) return null;
+    if (timestamp > nowTimestamp + MAX_REALTIME_LOOKAHEAD_SECONDS) return null;
+
+    const routeId = String(staticInfo.routeId || routeIdHint).trim();
+    const route = routeById.get(routeId);
+    if (!routeId || !route) return null;
+
+    const meta = createRouteMetadata(route) || {
+      id: routeId,
+      number: String(route.route_short_name || '—'),
+      type: 'bus',
+      subtype: '',
+      icon: '',
+      color: '#BE1E2D',
+      textColor: '#FFFFFF'
+    };
+    const destination = getDestinationName(
+      staticInfo.terminalStopId,
+      staticInfo.direction,
+      staticInfo.direction?.destination || staticInfo.direction?.headsign || staticInfo.terminalStopId
+    );
+
+    return {
+      route_id: routeId,
+      trip_id: originalTripId,
+      trip_start_date: realtimeDate,
+      trip_start_time: staticStartTime || realtimeStartTime,
+      route_ref: meta.number,
+      meta,
+      direction_key: staticInfo.directionKey,
+      direction_id: String(staticInfo.direction?.direction_id ?? directionId).trim(),
+      terminal_stop_id: staticInfo.terminalStopId,
+      destination_stop_id: staticInfo.terminalStopId,
+      destination,
+      realtime: true,
+      scheduled: false,
+      source: 'realtime',
+      times: [{
+        timestamp,
+        delay,
+        scheduled: false,
+        source: 'realtime',
+        scheduled_time: targetScheduledTimestamp,
+        uncertainty: optionalFiniteNumber(targetEvent?.uncertainty) ?? propagatedUncertainty,
+        stop_schedule_relationship: targetRelationship,
+        stop_schedule_relationship_name: targetRelationship === 1 ? 'SKIPPED' : (targetRelationship === 2 ? 'NO_DATA' : 'SCHEDULED')
+      }]
+    };
   }
 
   function isSkipped(schedule, routeId, stopId, stopIndex, skippedTrips) {
@@ -715,8 +934,8 @@ function createDataContext(data = {}) {
         if (timestamp === null && scheduledTime !== null) timestamp = scheduledTime;
         if (timestamp === null) return null;
 
-        if (timestamp < now.getTime() / 1000 - 60) return null;
-        if (timestamp > now.getTime() / 1000 + 3 * 60 * 60) return null;
+        if (timestamp < now.getTime() / 1000 - REALTIME_PAST_GRACE_SECONDS) return null;
+        if (timestamp > now.getTime() / 1000 + MAX_REALTIME_LOOKAHEAD_SECONDS) return null;
 
         return {
           timestamp,
@@ -751,6 +970,30 @@ function createDataContext(data = {}) {
         source: 'realtime',
         times
       });
+    }
+
+    // A TripUpdate can contain only a trip-level delay or StopTimeUpdates
+    // for earlier stops. Per GTFS-Realtime semantics, that delay propagates to
+    // subsequent stops until a later update changes it or NO_DATA clears it.
+    // Build a stop-specific prediction from that information when the feed has
+    // not supplied a direct prediction for the selected stop.
+    for (const realtimeTrip of realtimeTrips) {
+      const tripId = String(realtimeTrip?.trip_id || '').trim();
+      const tripRouteId = String(realtimeTrip?.route_id || '').trim();
+      const tripStartTime = String(realtimeTrip?.trip_start_time || realtimeTrip?.start_time || '').trim();
+      const alreadyHasStopPrediction = realtimeRoutes.some(route => {
+        const routeTripId = String(route?.trip_id || '').trim();
+        const routeStartTime = String(route?.trip_start_time || '').trim();
+        const sameTrip = tripId && routeTripId
+          ? tripId === routeTripId
+          : (!!tripStartTime && !!routeStartTime && tripStartTime === routeStartTime);
+        const sameRoute = !tripRouteId || !route?.route_id || tripRouteId === String(route.route_id).trim();
+        return sameTrip && sameRoute && (!tripStartTime || !routeStartTime || tripStartTime === routeStartTime);
+      });
+      if (alreadyHasStopPrediction) continue;
+
+      const inferredRoute = buildRealtimeRouteFromTripUpdate(realtimeTrip, selectedStopId, now);
+      if (inferredRoute) realtimeRoutes.push(inferredRoute);
     }
 
     const allStaticArrivals = getStaticArrivals(
