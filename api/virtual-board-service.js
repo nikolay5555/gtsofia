@@ -7,6 +7,7 @@ const { getRouteMetadata } = require('../route-metadata');
 
 const SOFIA_TIME_ZONE = 'Europe/Sofia';
 const MAX_ARRIVALS_PER_LINE = 3;
+const MAX_STATIC_LOOKAHEAD_SECONDS = 2 * 60 * 60;
 
 function normalizeStopKey(value) {
   const raw = String(value ?? '').trim();
@@ -313,8 +314,14 @@ function createDataContext(data = {}) {
           const terminalStopId = String(pattern[terminalIndex] || '').trim();
           if (!terminalStopId || isSkipped(schedule, routeId, stopId, stopIndex, skippedTrips)) continue;
 
+          // A timetable trip must not be shown at the stop where that exact
+          // trip ends. The last populated time identifies the terminal for
+          // both full-length and partial (short-turn) trips.
+          if (stopIdsMatch(terminalStopId, stopId)) continue;
+
           const timestamp = gtfsSecondsToTodayTimestamp(seconds, now);
           if (timestamp < nowTimestamp) continue;
+          if (timestamp > nowTimestamp + MAX_STATIC_LOOKAHEAD_SECONDS) continue;
 
           result.push({
             route_id: routeId,
@@ -471,6 +478,19 @@ function createDataContext(data = {}) {
       const isScheduled = relationshipName
         ? relationshipName === 'SCHEDULED'
         : (!Number.isFinite(relationship) || relationship === 0);
+      const scheduledTerminalStopId = isScheduled
+        ? (staticInfo?.terminalStopId
+          || String(direction?.pattern?.[direction.pattern.length - 1] || '').trim())
+        : '';
+
+      // For scheduled trips, use the trip's own GTFS terminal. In particular,
+      // do not mistake the last StopTimeUpdate received so far for a terminal:
+      // realtime feeds may omit updates for later stops. Static trip lookup
+      // also identifies short-turn courses by their last populated stop time.
+      if (scheduledTerminalStopId && stopIdsMatch(scheduledTerminalStopId, selectedStopId)) {
+        continue;
+      }
+
       const terminalStopId = (isScheduled && staticInfo?.terminalStopId)
         ? staticInfo.terminalStopId
         : (String(route?.destination_stop_id || '').trim()

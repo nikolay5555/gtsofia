@@ -71,6 +71,30 @@ function createFixture() {
               start_time: '13:30:00',
               stop_sequences: [1, 2, 3],
               times: ['13:30:00', '14:10:00', '14:33:00']
+            },
+            {
+              trip_id: 6,
+              original_trip_id: 'GTFS-PARTIAL-TRIP',
+              service_id: 'SERVICE',
+              start_time: '13:05:00',
+              stop_sequences: [1, 2, 3],
+              times: ['13:05:00', '13:30:00', null]
+            },
+            {
+              trip_id: 7,
+              original_trip_id: 'GTFS-TRIP-AT-LIMIT',
+              service_id: 'SERVICE',
+              start_time: '16:48:00',
+              stop_sequences: [1, 2, 3],
+              times: ['16:48:00', '16:58:00', '17:18:00']
+            },
+            {
+              trip_id: 8,
+              original_trip_id: 'GTFS-TRIP-AFTER-LIMIT',
+              service_id: 'SERVICE',
+              start_time: '16:49:00',
+              stop_sequences: [1, 2, 3],
+              times: ['16:49:00', '16:59:00', '17:19:00']
             }
           ],
           weekend: []
@@ -251,10 +275,76 @@ assert.ok(
   'a different trip on the same line and direction must remain visible'
 );
 
-// Departures at a terminal stop remain visible; terminal hiding was removed.
+// A course is hidden at its own terminal, including a partial course whose
+// last populated GTFS time is an intermediate stop in the full line pattern.
+const boardAtIntermediateStop = service.buildBoard({ routes: [], skipped_trips: [] }, '0200', now);
+const intermediateRows = boardAtIntermediateStop.routes.filter(route => route.route_id === 'TB7');
+assert.ok(intermediateRows.some(route => route.terminal_stop_id === 'END'), 'full courses continuing beyond this stop remain visible');
+assert.ok(
+  !intermediateRows.some(route => route.terminal_stop_id === 'BOARD'),
+  'a short-turn course ending at the selected stop must be hidden'
+);
+
 const terminalBoard = service.buildBoard({ routes: [], skipped_trips: [] }, '0300', now);
-const terminalRow = terminalBoard.routes.find(route => route.route_id === 'TB7');
-assert.ok(terminalRow, 'departures at the route terminal must remain visible');
+assert.ok(
+  !terminalBoard.routes.some(route => route.route_id === 'TB7'),
+  'full courses ending at the selected terminal stop must be hidden'
+);
+
+// The same terminal rule applies to realtime SCHEDULED trips. The GTFS trip
+// record, not the last realtime StopTimeUpdate, determines the true endpoint.
+const realtimeFullTripAtTerminal = service.buildBoard({
+  routes: [{
+    route_id: 'TB7',
+    trip_id: 'GTFS-TRIP-A',
+    schedule_relationship: 0,
+    schedule_relationship_name: 'SCHEDULED',
+    destination_stop_id: 'BOARD',
+    times: [{ timestamp: Date.parse('2026-10-30T14:03:00+02:00') / 1000 }]
+  }],
+  skipped_trips: []
+}, '0300', now);
+assert.ok(
+  !realtimeFullTripAtTerminal.routes.some(route => route.route_id === 'TB7'),
+  'a realtime full trip must be hidden at its GTFS terminal even if realtime only reports an earlier stop'
+);
+
+const realtimePartialTripAtTerminal = service.buildBoard({
+  routes: [{
+    route_id: 'TB7',
+    trip_id: 'GTFS-PARTIAL-TRIP',
+    schedule_relationship: 0,
+    schedule_relationship_name: 'SCHEDULED',
+    destination_stop_id: 'END',
+    times: [{ timestamp: Date.parse('2026-10-30T13:30:00+02:00') / 1000 }]
+  }],
+  skipped_trips: []
+}, '0200', now);
+const partialRealtimeRow = realtimePartialTripAtTerminal.routes.find(route => route.route_id === 'TB7');
+assert.ok(partialRealtimeRow, 'other full-length TB7 courses must remain visible at this intermediate stop');
+assert.ok(
+  !partialRealtimeRow.times.some(time => Math.round(time.timestamp) === Math.round(Date.parse('2026-10-30T13:30:00+02:00') / 1000)),
+  'the realtime short-turn trip must be hidden at its own partial terminal'
+);
+assert.ok(
+  realtimePartialTripAtTerminal.routes.every(route => route.terminal_stop_id !== 'BOARD'),
+  'the API must not return a destination ending at the selected stop'
+);
+
+// Static timetable courses are limited to the next two hours, inclusive of
+// the exact two-hour boundary.
+const twoHourNow = new Date('2026-10-30T14:58:00+02:00');
+const twoHourBoard = service.buildBoard({ routes: [], skipped_trips: [] }, '0200', twoHourNow);
+const twoHourRows = twoHourBoard.routes.filter(route => route.route_id === 'TB7');
+const twoHourTimestamps = twoHourRows.flatMap(route => route.times.map(time => Math.round(time.timestamp)));
+assert.ok(
+  twoHourTimestamps.includes(Math.round(Date.parse('2026-10-30T16:58:00+02:00') / 1000)),
+  'a static course exactly two hours ahead must remain visible'
+);
+assert.ok(
+  !twoHourTimestamps.includes(Math.round(Date.parse('2026-10-30T16:59:00+02:00') / 1000)),
+  'a static course more than two hours ahead must be excluded'
+);
 
 // Metro remains schedule-only and can resolve a station when the public stop
 // code does not contain the M prefix.
@@ -328,5 +418,17 @@ const actualTrolley = actualBoard.routes.find(route =>
 );
 assert.ok(actualTrolley, 'the actual TB7 realtime trip must be present');
 assert.equal(actualTrolley.terminal_stop_id, actualTerminalId, 'the API must replace the intermediate realtime endpoint with the course terminal');
+
+// Production GTFS contains genuine TB7 short-turn trips whose final populated
+// stop time is 0803 (ж.к. Банишора), before the full D1 terminal 0610. Those
+// trips must not be displayed on a board at 0803, while full trips continuing
+// to 0610 must remain visible there.
+const actualShortTurnBoard = actual.buildBoard({ routes: [], skipped_trips: [] }, '0803', new Date('2026-10-30T20:00:00+02:00'));
+const actualShortTurnRows = actualShortTurnBoard.routes.filter(route => route.route_id === 'TB7');
+assert.ok(actualShortTurnRows.some(route => route.terminal_stop_id === '0610'), 'full TB7 trips continuing beyond 0803 must remain visible');
+assert.ok(
+  actualShortTurnRows.every(route => route.terminal_stop_id !== '0803'),
+  'real partial TB7 trips ending at 0803 must be hidden at that stop'
+);
 
 console.log('virtual-board-service: all tests passed');
