@@ -9,7 +9,7 @@ const FEED_TIMEOUT_MS = 15000;
 const FEED_CACHE_TTL_MS = 15000;
 
 const MAX_RESULTS_PER_ROUTE = 3;
-const LOOK_AHEAD_SECONDS = 3 * 60 * 60;
+const LOOK_AHEAD_SECONDS = 12 * 60 * 60;
 // Retain a small tolerance for feed/clock jitter, but not a full minute of stale arrivals.
 const REALTIME_PAST_GRACE_SECONDS = 10;
 
