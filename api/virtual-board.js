@@ -1,4 +1,5 @@
 const { buildVirtualBoard } = require('./virtual-board-service');
+const tripsData = require('../data/trips.json');
 
 const FEED_URL = 'https://gtfs.sofiatraffic.bg/api/v1/trip-updates';
 const FEED_TIMEOUT_MS = 15000;
@@ -11,6 +12,15 @@ const MAX_RESULTS_PER_ROUTE = 3;
 const LOOK_AHEAD_SECONDS = 3 * 60 * 60;
 
 const TEXT_DECODER = new TextDecoder();
+
+const ROUTE_ID_BY_TRIP_ID = new Map();
+for (const trip of tripsData) {
+  const tripId = String(trip?.trip_id ?? '').trim();
+  const routeId = String(trip?.route_id ?? '').trim();
+  if (tripId && routeId && !ROUTE_ID_BY_TRIP_ID.has(tripId)) {
+    ROUTE_ID_BY_TRIP_ID.set(tripId, routeId);
+  }
+}
 
 // Vercel may reuse the same serverless instance between requests.
 // Reuse the decoded feed instead of downloading and decoding it again.
@@ -55,33 +65,34 @@ const STOP_RELATIONSHIP_NAME = Object.freeze(
 
 function readVarint(bytes, state) {
   let value = 0n;
-  let shift = 0n;
+  for (let byteIndex = 0; byteIndex < 10; byteIndex++) {
+    if (state.index >= bytes.length) {
+      throw new Error('Truncated protobuf varint.');
+    }
 
-  while (state.index < bytes.length) {
     const byte = bytes[state.index++];
+    // A protobuf uint64 uses at most ten bytes; only bit 0 may be set in
+    // byte ten. Reject malformed/overflowing values instead of truncating.
+    if (byteIndex === 9 && (byte & 0xfe) !== 0) {
+      throw new Error('Invalid protobuf varint.');
+    }
 
-    value |= BigInt(byte & 0x7f) << shift;
+    value |= BigInt(byte & 0x7f) << BigInt(byteIndex * 7);
 
     if ((byte & 0x80) === 0) {
       return value;
     }
-
-    shift += 7n;
-
-    if (shift > 70n) {
-      throw new Error('Invalid protobuf varint.');
-    }
   }
 
-  throw new Error('Truncated protobuf varint.');
+  throw new Error('Invalid protobuf varint.');
 }
 
 function readField(bytes, state) {
-  const tag = Number(readVarint(bytes, state));
-  const fieldNumber = tag >>> 3;
-  const wireType = tag & 7;
+  const tag = readVarint(bytes, state);
+  const fieldNumber = Number(tag >> 3n);
+  const wireType = Number(tag & 7n);
 
-  if (!fieldNumber) {
+  if (!fieldNumber || fieldNumber > 0x1fffffff) {
     throw new Error('Invalid protobuf field number.');
   }
 
@@ -258,7 +269,8 @@ function decodeStopTimeEvent(bytes) {
   const event = {
     delay: null,
     time: null,
-    scheduledTime: null
+    scheduledTime: null,
+    uncertainty: null
   };
 
   while (state.index < bytes.length) {
@@ -308,6 +320,11 @@ function decodeStopTimeEvent(bytes) {
 
       event.scheduledTime =
         Number(raw);
+    } else if (
+      field.fieldNumber === 4
+      && field.wireType === 0
+    ) {
+      event.uncertainty = Number(field.value);
     }
   }
 
@@ -521,6 +538,10 @@ function decodeGtfsRealtimeFeed(buffer) {
   const updates = [];
 
   let feedTimestamp = null;
+  // This API consumes a complete snapshot and does not keep a stateful
+  // differential-feed accumulator. Fail closed rather than treating a
+  // partial DIFFERENTIAL feed as the full set of active trips.
+  let feedIncrementality = 0;
 
   while (state.index < bytes.length) {
     const field = readField(
@@ -547,6 +568,11 @@ function decodeGtfsRealtimeFeed(buffer) {
           );
 
         if (
+          headerField.fieldNumber === 2
+          && headerField.wireType === 0
+        ) {
+          feedIncrementality = Number(headerField.value);
+        } else if (
           headerField.fieldNumber === 3
           && headerField.wireType === 0
         ) {
@@ -572,14 +598,26 @@ function decodeGtfsRealtimeFeed(buffer) {
           field.value
         );
 
+      // A deleted FeedEntity is a removal instruction, not an active
+      // TripUpdate. Do not let its descriptor suppress a scheduled fallback.
       if (
-        entity.tripUpdate?.trip
+        !entity.isDeleted
+        && (
+          entity.tripUpdate?.trip
+          || entity.tripUpdate?.tripProperties
+        )
       ) {
         updates.push(
           entity.tripUpdate
         );
       }
     }
+  }
+
+  if (feedIncrementality !== 0) {
+    throw new Error(
+      'GTFS-RT differential feeds are not supported by this stateless API.'
+    );
   }
 
   return {
@@ -671,6 +709,60 @@ function eventDelay(update) {
   return null;
 }
 
+function eventScheduledTime(update) {
+  if (Number.isSafeInteger(update?.arrival?.scheduledTime)) {
+    return update.arrival.scheduledTime;
+  }
+  if (Number.isSafeInteger(update?.departure?.scheduledTime)) {
+    return update.departure.scheduledTime;
+  }
+  return null;
+}
+
+function eventUncertainty(update) {
+  if (Number.isSafeInteger(update?.arrival?.uncertainty)) {
+    return update.arrival.uncertainty;
+  }
+  if (Number.isSafeInteger(update?.departure?.uncertainty)) {
+    return update.departure.uncertainty;
+  }
+  return null;
+}
+
+function getTripId(tripUpdate) {
+  return String(
+    tripUpdate?.trip?.tripId
+    || tripUpdate?.tripProperties?.tripId
+    || ''
+  ).trim();
+}
+
+function getTripRouteId(tripUpdate) {
+  const explicitRouteId = String(tripUpdate?.trip?.routeId || '').trim();
+  if (explicitRouteId) return explicitRouteId;
+  return ROUTE_ID_BY_TRIP_ID.get(getTripId(tripUpdate)) || '';
+}
+
+function getTripStartDate(tripUpdate) {
+  return String(
+    tripUpdate?.trip?.startDate
+    || tripUpdate?.tripProperties?.startDate
+    || ''
+  ).trim();
+}
+
+function getTripStartTime(tripUpdate) {
+  return String(
+    tripUpdate?.trip?.startTime
+    || tripUpdate?.tripProperties?.startTime
+    || ''
+  ).trim();
+}
+
+function getTripDirectionId(tripUpdate) {
+  return String(tripUpdate?.trip?.directionId ?? '').trim();
+}
+
 function getTripRelationship(
   trip
 ) {
@@ -699,27 +791,14 @@ function getStopRelationship(
     : STOP_RELATIONSHIP.SCHEDULED;
 }
 
-function getTripKey(
-  tripUpdate
-) {
-  const trip =
-    tripUpdate?.trip;
-
+function getTripKey(tripUpdate) {
   return [
-    trip?.tripId || "",
-    trip?.startDate
-      || tripUpdate
-        ?.tripProperties
-        ?.startDate
-      || "",
-    trip?.startTime
-      || tripUpdate
-        ?.tripProperties
-        ?.startTime
-      || "",
-    trip?.routeId || "",
-    trip?.directionId || ""
-  ].join("|");
+    getTripId(tripUpdate),
+    getTripStartDate(tripUpdate),
+    getTripStartTime(tripUpdate),
+    getTripRouteId(tripUpdate),
+    getTripDirectionId(tripUpdate)
+  ].join('|');
 }
 
 function buildBoard(
@@ -743,19 +822,40 @@ function buildBoard(
   const skippedTrips =
     new Map();
 
+  // Keep every current TripUpdate descriptor, even when it has no usable
+  // StopTimeUpdate for the selected stop. The API service uses this list to
+  // suppress the static fallback for that exact same course only.
+  const realtimeTrips = new Map();
+
   for (
     const tripUpdate
     of updates
   ) {
-    const trip =
-      tripUpdate?.trip;
+    const trip = tripUpdate?.trip;
+    const tripId = getTripId(tripUpdate);
+    const routeId = getTripRouteId(tripUpdate);
+    const startDate = getTripStartDate(tripUpdate);
+    const startTime = getTripStartTime(tripUpdate);
+    const directionId = getTripDirectionId(tripUpdate);
+    const tripRelationship = getTripRelationship(trip);
 
-    if (!trip) {
+    if (!trip && !tripId && !routeId && !startTime) {
       continue;
     }
 
-    const tripRelationship =
-      getTripRelationship(trip);
+    const descriptorKey = [tripId, startDate, startTime, routeId, directionId].join('|');
+    if (!realtimeTrips.has(descriptorKey)) {
+      realtimeTrips.set(descriptorKey, {
+        trip_id: tripId,
+        trip_start_date: startDate,
+        trip_start_time: startTime,
+        route_id: routeId,
+        direction_id: directionId,
+        schedule_relationship: tripRelationship,
+        schedule_relationship_name: TRIP_RELATIONSHIP_NAME[tripRelationship]
+          || `UNKNOWN_${tripRelationship}`
+      });
+    }
 
     if (
       tripRelationship
@@ -792,19 +892,11 @@ function buildBoard(
         }
 
         const skippedKey = [
-          trip.tripId || "",
-          trip.startDate
-            || tripUpdate
-              .tripProperties
-              ?.startDate
-            || "",
-          trip.startTime
-            || tripUpdate
-              .tripProperties
-              ?.startTime
-            || "",
-          trip.routeId || "",
-          trip.directionId || "",
+          tripId,
+          startDate,
+          startTime,
+          routeId,
+          directionId,
           stopUpdate.stopId
             ? normalizeStopKey(
                 stopUpdate.stopId
@@ -831,25 +923,11 @@ function buildBoard(
           skippedTrips.set(
             skippedKey,
             {
-              trip_id:
-                trip.tripId || "",
-              start_date:
-                trip.startDate
-                  || tripUpdate
-                    .tripProperties
-                    ?.startDate
-                  || "",
-              start_time:
-                trip.startTime
-                  || tripUpdate
-                    .tripProperties
-                    ?.startTime
-                  || "",
-              route_id:
-                trip.routeId || "",
-              direction_id:
-                trip.directionId
-                || "",
+              trip_id: tripId,
+              start_date: startDate,
+              start_time: startTime,
+              route_id: routeId,
+              direction_id: directionId,
               stop_id:
                 stopUpdate.stopId
                 || "",
@@ -896,37 +974,20 @@ function buildBoard(
         continue;
       }
 
-      const timestamp =
-        eventTimestamp(
-          stopUpdate
-        );
+      let timestamp = eventTimestamp(stopUpdate);
+      const delay = eventDelay(stopUpdate);
+      const scheduledTime = eventScheduledTime(stopUpdate);
 
-      if (
-        !Number.isFinite(
-          timestamp
-        )
-      ) {
-        continue;
+      // Some producers send scheduled_time + delay but omit absolute time.
+      // Keep the record so the service can calculate a prediction or, at a
+      // minimum, suppress fallback for this same TripUpdate.
+      if (timestamp === null && scheduledTime !== null) {
+        timestamp = delay !== null ? scheduledTime + delay : scheduledTime;
       }
 
-      if (
-        timestamp
-        < now - 60
-      ) {
-        continue;
-      }
-
-      if (
-        timestamp
-        > now + LOOK_AHEAD_SECONDS
-      ) {
-        continue;
-      }
-
-      const delay =
-        eventDelay(
-          stopUpdate
-        );
+      if (timestamp === null && delay === null && scheduledTime === null) continue;
+      if (timestamp !== null && timestamp < now - 60) continue;
+      if (timestamp !== null && timestamp > now + LOOK_AHEAD_SECONDS) continue;
 
       const key =
         getTripKey(
@@ -988,27 +1049,11 @@ function buildBoard(
         grouped.set(
           key,
           {
-            trip_id:
-              trip.tripId
-              || "",
-            trip_start_date:
-              trip.startDate
-                || tripUpdate
-                  .tripProperties
-                  ?.startDate
-                || "",
-            trip_start_time:
-              trip.startTime
-                || tripUpdate
-                  .tripProperties
-                  ?.startTime
-                || "",
-            route_id:
-              trip.routeId
-              || "",
-            direction_id:
-              trip.directionId
-              || "",
+            trip_id: tripId,
+            trip_start_date: startDate,
+            trip_start_time: startTime,
+            route_id: routeId,
+            direction_id: directionId,
             schedule_relationship:
               tripRelationship,
             schedule_relationship_name:
@@ -1030,10 +1075,7 @@ function buildBoard(
         .times
         .push({
           timestamp,
-          delay:
-            Number.isFinite(delay)
-              ? delay
-              : null,
+          delay,
           stop_schedule_relationship:
             stopRelationship,
           stop_schedule_relationship_name:
@@ -1041,32 +1083,8 @@ function buildBoard(
               stopRelationship
             ]
               || `UNKNOWN_${stopRelationship}`,
-          scheduled_time:
-            Number.isFinite(
-              Number(
-                stopUpdate
-                  ?.arrival
-                  ?.scheduledTime
-              )
-            )
-              ? Number(
-                  stopUpdate
-                    .arrival
-                    .scheduledTime
-                )
-              : Number.isFinite(
-                  Number(
-                    stopUpdate
-                      ?.departure
-                      ?.scheduledTime
-                  )
-                )
-                ? Number(
-                    stopUpdate
-                      .departure
-                      .scheduledTime
-                  )
-                : null
+          scheduled_time: scheduledTime,
+          uncertainty: eventUncertainty(stopUpdate)
         });
     }
   }
@@ -1077,10 +1095,12 @@ function buildBoard(
         ...row,
         times:
           row.times
-            .sort(
-              (a, b) =>
-                a.timestamp
-                - b.timestamp
+          .sort(
+              (a, b) => {
+                const aTimestamp = Number.isFinite(a.timestamp) ? a.timestamp : Number.POSITIVE_INFINITY;
+                const bTimestamp = Number.isFinite(b.timestamp) ? b.timestamp : Number.POSITIVE_INFINITY;
+                return aTimestamp - bTimestamp;
+              }
             )
             .slice(
               0,
@@ -1089,7 +1109,7 @@ function buildBoard(
       }))
       .filter(
         row =>
-          row.times.length
+        row.times.length
       )
       .sort(
         (a, b) =>
@@ -1111,6 +1131,9 @@ function buildBoard(
 
     skipped_trips:
       [...skippedTrips.values()],
+
+    realtime_trips:
+      [...realtimeTrips.values()],
 
     routes
   };

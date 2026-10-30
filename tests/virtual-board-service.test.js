@@ -200,10 +200,34 @@ assert.ok(
   'a distinct static trip must not be suppressed by a nearby realtime timestamp when its Trip ID differs'
 );
 
+// A duplicated realtime instance can reuse the same GTFS template Trip ID
+// but carry a different start_time. It must not hide the original scheduled
+// instance when the start times identify different runs.
+const duplicatedTripInstanceBoard = service.buildBoard({
+  routes: [],
+  skipped_trips: [],
+  realtime_trips: [{
+    trip_id: 'GTFS-TRIP-A',
+    route_id: 'TB7',
+    trip_start_date: '20261030',
+    trip_start_time: '13:05:00',
+    schedule_relationship: 6,
+    schedule_relationship_name: 'DUPLICATED'
+  }]
+}, '0200', now);
+const duplicatedTripTimes = duplicatedTripInstanceBoard.routes
+  .filter(route => route.route_id === 'TB7')
+  .flatMap(route => route.times);
+assert.ok(
+  duplicatedTripTimes.some(time => time.scheduled && Math.round(time.timestamp) === Math.round(Date.parse('2026-10-30T13:40:00+02:00') / 1000)),
+  'a DUPLICATED realtime instance with another start_time must not suppress the original static course'
+);
+
 // The time-based fallback remains available for feeds that omit Trip ID.
 const realtimeWithoutTripIdBoard = service.buildBoard({
   routes: [{
     route_id: 'TB7',
+    trip_start_time: '13:00:00',
     destination_stop_id: 'END',
     direction_id: 'D1',
     times: [{
@@ -219,6 +243,54 @@ assert.ok(noIdRow, 'a realtime row without Trip ID must still be displayed');
 assert.ok(
   !noIdRow.times.some(time => time.scheduled && Math.round(time.timestamp) === Math.round(Date.parse('2026-10-30T13:40:00+02:00') / 1000)),
   'the fallback should deduplicate the matching static trip when realtime omits Trip ID'
+);
+
+// An internal numeric schedule grouping ID is not a GTFS Trip ID and must
+// never suppress a static fallback when a realtime feed happens to use the
+// same text value as its actual trip_id.
+const internalIdCollisionBoard = service.buildBoard({
+  routes: [],
+  skipped_trips: [],
+  realtime_trips: [{
+    trip_id: '1',
+    route_id: 'TB7',
+    trip_start_date: '20261030',
+    trip_start_time: '13:00:00'
+  }]
+}, '0200', now);
+const internalIdCollisionTimes = internalIdCollisionBoard.routes
+  .filter(route => route.route_id === 'TB7')
+  .flatMap(route => route.times);
+assert.ok(
+  internalIdCollisionTimes.some(time => time.scheduled && Math.round(time.timestamp) === Math.round(Date.parse('2026-10-30T13:40:00+02:00') / 1000)),
+  'an internal numeric schedule ID must not be mistaken for the original GTFS Trip ID'
+);
+
+// If Trip ID and trip start time are both omitted, an exact scheduled event
+// time at this stop is still a safe identity. The matching fallback is blocked,
+// but a merely nearby scheduled course is not.
+const noIdNoStartTimeBoard = service.buildBoard({
+  routes: [{
+    route_id: 'TB7',
+    destination_stop_id: 'END',
+    times: [{
+      timestamp: Date.parse('2026-10-30T13:42:00+02:00') / 1000,
+      scheduled_time: Date.parse('2026-10-30T13:40:00+02:00') / 1000,
+      delay: 120
+    }]
+  }],
+  skipped_trips: []
+}, '0200', now);
+const noIdNoStartTimes = noIdNoStartTimeBoard.routes
+  .filter(route => route.route_id === 'TB7')
+  .flatMap(route => route.times);
+assert.ok(
+  !noIdNoStartTimes.some(time => time.scheduled && Math.round(time.timestamp) === Math.round(Date.parse('2026-10-30T13:40:00+02:00') / 1000)),
+  'an exact stop-level scheduled event time must suppress its matching fallback even without Trip ID/start_time'
+);
+assert.ok(
+  noIdNoStartTimes.some(time => time.scheduled && Math.round(time.timestamp) === Math.round(Date.parse('2026-10-30T13:50:00+02:00') / 1000)),
+  'the exact-time fallback match must not suppress the next different course'
 );
 
 // A different scheduled time must no longer be merged just because it falls
@@ -241,17 +313,53 @@ assert.ok(
   'a one-minute scheduled-time difference must not suppress a distinct static course'
 );
 
-// An active trip with no arrival at this stop is not a reason to hide a
-// static timetable course. The endpoint receives only stop-specific arrivals.
-const withoutStopPrediction = service.buildBoard({
+// A TripUpdate for the exact course suppresses its static fallback even when
+// the feed has no usable StopTimeUpdate for the selected stop. Other courses
+// on the same line must remain visible.
+const realtimeCourseWithoutStopPrediction = service.buildBoard({
   status: 'empty',
   generated_at: Math.floor(now.getTime() / 1000),
   skipped_trips: [],
-  routes: []
+  routes: [],
+  realtime_trips: [{
+    trip_id: 'GTFS-TRIP-A',
+    route_id: 'TB7',
+    trip_start_date: '20261030',
+    trip_start_time: '13:00:00'
+  }]
 }, '0200', now);
-const staticTrolley = withoutStopPrediction.routes.find(route => route.route_id === 'TB7');
-assert.ok(staticTrolley, 'static TB7 courses remain visible when there is no realtime arrival for this stop');
-assert.equal(staticTrolley.times[0].scheduled, true);
+const noPredictionTimes = realtimeCourseWithoutStopPrediction.routes
+  .filter(route => route.route_id === 'TB7')
+  .flatMap(route => route.times.map(time => Math.round(time.timestamp)));
+assert.ok(
+  !noPredictionTimes.includes(Math.round(Date.parse('2026-10-30T13:40:00+02:00') / 1000)),
+  'the static fallback for the exact course must be suppressed when its TripUpdate exists without a stop prediction'
+);
+assert.ok(
+  noPredictionTimes.includes(Math.round(Date.parse('2026-10-30T13:50:00+02:00') / 1000)),
+  'unrelated static courses on the same line must remain visible'
+);
+
+// A CANCELED TripUpdate also suppresses the static fallback for that exact
+// course; it must not reappear merely because the realtime course is hidden.
+const canceledCourseBoard = service.buildBoard({
+  routes: [],
+  skipped_trips: [],
+  realtime_trips: [{
+    trip_id: 'GTFS-TRIP-A',
+    route_id: 'TB7',
+    trip_start_date: '20261030',
+    schedule_relationship: 3,
+    schedule_relationship_name: 'CANCELED'
+  }]
+}, '0200', now);
+const canceledCourseTimes = canceledCourseBoard.routes
+  .filter(route => route.route_id === 'TB7')
+  .flatMap(route => route.times.map(time => Math.round(time.timestamp)));
+assert.ok(
+  !canceledCourseTimes.includes(Math.round(Date.parse('2026-10-30T13:40:00+02:00') / 1000)),
+  'a canceled realtime course must not reappear through static fallback'
+);
 
 // SKIPPED applies to the specific trip and stop only.
 const skippedBoard = service.buildBoard({

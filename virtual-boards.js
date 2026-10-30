@@ -277,12 +277,23 @@
   async function loadBoardMapData() {
     // The map needs only stop coordinates and the list of stops served by
     // each direction. Timetables and realtime data are now processed by API.
-    const [stops, directions] = await Promise.all([
+    const [rawStops, directions] = await Promise.all([
       fetchStaticJson("data/stops.json"),
       fetchStaticJson("data/directions.json")
     ]);
 
-    return { stops, directions };
+    const stopUtils = window.GTSofiaStopUtils;
+    if (!stopUtils || typeof stopUtils.uniqueStopsById !== "function") {
+      throw new Error("Липсва stop-utils.js.");
+    }
+
+    const indexes = stopUtils.buildStopIndexes(rawStops);
+    return {
+      stops: stopUtils.uniqueStopsById(rawStops),
+      stopById: indexes.byId,
+      stopByCode: indexes.byCode,
+      directions
+    };
   }
 
   async function fetchJsonWithTimeout(
@@ -767,15 +778,10 @@
   function findStopById(
     stopId
   ) {
-    return (
-      transportData?.stops || []
-    ).find(
-      stop =>
-        String(
-          stop.stop_id
-        )
-        === String(stopId)
-    ) || null;
+    const key = String(stopId ?? "").trim();
+    return transportData?.stopById?.get(key)
+      || transportData?.stopByCode?.get(key)
+      || null;
   }
 
   function selectStopOnMap(
