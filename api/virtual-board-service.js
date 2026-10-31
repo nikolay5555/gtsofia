@@ -225,10 +225,20 @@ function createDataContext(data = {}) {
     ).trim();
     if (osmName) return osmName;
 
+    // The direction headsign describes the full route pattern, not necessarily
+    // the terminal of an individual short-turn trip. When the terminal stop has
+    // no OSM name, prefer its GTFS stop name before falling back to that headsign.
+    const stopName = String(
+      stop?.stop_name
+      || directionStop?.name
+      || directionStop?.gtfs_name
+      || ''
+    ).trim();
+    if (stopName) return stopName;
+
     return String(
       direction?.destination
       || direction?.headsign
-      || stop?.stop_name
       || fallback
       || ''
     ).trim();
