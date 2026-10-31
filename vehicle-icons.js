@@ -11,10 +11,12 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
-  const EXTRAS_ENDPOINT = 'https://sft-proxy.onrender.com/virtual-board?stop_code=';
-  const REQUEST_TIMEOUT_MS = 7000;
-  const CACHE_TTL_MS = 12000;
-  const MATCH_TOLERANCE_MINUTES = 1;
+  // Route the upstream request through GTSofia's own API. This avoids
+  // browser CORS restrictions and keeps the upstream host out of the UI.
+  const EXTRAS_ENDPOINT = 'api/vehicle-extras?stop_code=';
+  const REQUEST_TIMEOUT_MS = 11000;
+  const CACHE_TTL_MS = 10000;
+  const MATCH_TOLERANCE_MINUTES = 4;
 
   // The order matches the `extras` array used by Sofiatraffic-schedules:
   // 0 = air conditioning, 1 = wheelchair access, 2 = bike rack.
@@ -84,11 +86,19 @@
   }
 
   function normalizeDestination(value) {
-    return String(value ?? '')
+    const normalized = String(value ?? '')
       .trim()
       .toLocaleLowerCase('bg-BG')
       .replace(/[–—]/g, '-')
       .replace(/[^\p{L}\p{N}]+/gu, '');
+
+    // Some feeds represent the same stop code with and without leading zeros.
+    // Normalize numeric-only identifiers so e.g. 0732 and 732 can match.
+    if (/^\d+$/.test(normalized)) {
+      return String(Number(normalized));
+    }
+
+    return normalized;
   }
 
   function getRouteLine(route) {
@@ -162,34 +172,50 @@
   }
 
   function chooseCandidate(candidates, targetMinutes, targetDestinations, usedIds) {
-    let matches = candidates.filter(candidate =>
-      !usedIds.has(candidate.id)
-      && Math.abs(candidate.minutes - targetMinutes) <= MATCH_TOLERANCE_MINUTES
-    );
+    const available = candidates.filter(candidate => !usedIds.has(candidate.id));
+    if (!available.length) return null;
 
-    if (!matches.length) return null;
+    const targetDestinationSet = new Set(targetDestinations);
+    const directionMatches = targetDestinationSet.size
+      ? available.filter(candidate =>
+          candidate.destinations.some(destination => targetDestinationSet.has(destination))
+        )
+      : [];
 
-    // Destination is the strongest direction signal. If the names differ
-    // between the two projects, only fall back to time when that match is
-    // unambiguous for this line.
-    if (targetDestinations.length) {
-      const targetDestinationSet = new Set(targetDestinations);
-      const sameDestination = matches.filter(candidate =>
-        candidate.destinations.some(destination => targetDestinationSet.has(destination))
+    // A matching terminal stop is a strong direction signal. Allow a slightly
+    // wider time difference for that exact direction because one feed may show
+    // scheduled minutes while the other already includes a realtime delay.
+    if (directionMatches.length) {
+      const withinDirectionTolerance = directionMatches.filter(candidate =>
+        Math.abs(candidate.minutes - targetMinutes) <= MATCH_TOLERANCE_MINUTES * 2
       );
-
-      if (sameDestination.length) {
-        matches = sameDestination;
+      const directionalPool = withinDirectionTolerance.length
+        ? withinDirectionTolerance
+        : directionMatches;
+      const best = getUniqueClosestCandidate(directionalPool, targetMinutes);
+      if (best && Math.abs(best.minutes - targetMinutes) <= MATCH_TOLERANCE_MINUTES * 2) {
+        return best;
       }
     }
 
-    matches.sort((left, right) =>
+    // Without a direction match, only attach equipment when there is a unique
+    // close time match. This conservative fallback prevents same-line buses in
+    // opposite directions from receiving each other's icons.
+    const timeMatches = available.filter(candidate =>
+      Math.abs(candidate.minutes - targetMinutes) <= MATCH_TOLERANCE_MINUTES
+    );
+    return getUniqueClosestCandidate(timeMatches, targetMinutes);
+  }
+
+  function getUniqueClosestCandidate(candidates, targetMinutes) {
+    if (!candidates.length) return null;
+
+    const sorted = [...candidates].sort((left, right) =>
       Math.abs(left.minutes - targetMinutes)
       - Math.abs(right.minutes - targetMinutes)
     );
-
-    const bestDifference = Math.abs(matches[0].minutes - targetMinutes);
-    const bestMatches = matches.filter(candidate =>
+    const bestDifference = Math.abs(sorted[0].minutes - targetMinutes);
+    const bestMatches = sorted.filter(candidate =>
       Math.abs(candidate.minutes - targetMinutes) === bestDifference
     );
 
@@ -254,7 +280,7 @@
       return cached.promise;
     }
 
-    const url = `${EXTRAS_ENDPOINT}${encodeURIComponent(stop.code)}${stop.isMetro ? '&metro' : ''}`;
+    const url = `${EXTRAS_ENDPOINT}${encodeURIComponent(stop.code)}${stop.isMetro ? '&metro=1' : ''}`;
     const promise = (async () => {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -270,12 +296,13 @@
         if (!response.ok) return [];
 
         const data = await response.json();
-        return data?.status === 'ok' && Array.isArray(data?.routes)
+        return (data?.status === 'ok' || data?.status === undefined)
+          && Array.isArray(data?.routes)
           ? data.routes
           : [];
-      } catch {
-        // The virtual board must remain usable when the optional extras source
-        // is unavailable (for example, during a proxy cold start).
+      } catch (error) {
+        // Keep the live board usable, but leave a useful diagnostic in DevTools.
+        console.warn('Vehicle equipment data could not be loaded:', error);
         return [];
       } finally {
         clearTimeout(timeout);

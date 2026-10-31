@@ -51,6 +51,13 @@ const byDestinationId = VehicleIcons.attachExtras(
 );
 assert.deepEqual(byDestinationId[0].times[0].extras, ['1', '0', '0']);
 
+const paddedStopId = VehicleIcons.attachExtras(
+  [{ route_ref: '7', terminal_stop_id: '0732', times: [{ timestamp: nowMs / 1000 + 5 * 60 }] }],
+  [{ route_ref: '7', destination: '732', times: [{ t: 9, extras: ['1', '0', '0'] }] }],
+  nowMs
+);
+assert.deepEqual(paddedStopId[0].times[0].extras, ['1', '0', '0']);
+
 const ambiguousProxyRoutes = [
   {
     route_ref: '7',
@@ -100,7 +107,7 @@ assert.equal(ambiguousWithUnequippedVehicle[0].times[0].extras, undefined);
       }
     }
   );
-  assert.match(requestedUrl, /sft-proxy\.onrender\.com\/virtual-board\?stop_code=TEST-ICON-STOP/);
+  assert.match(requestedUrl, /api\/vehicle-extras\?stop_code=TEST-ICON-STOP/);
   assert.deepEqual(fetched[0].times[0].extras, ['1', '0', '1']);
 
   let metroUrl = '';
@@ -108,7 +115,7 @@ assert.equal(ambiguousWithUnequippedVehicle[0].times[0].extras, undefined);
     metroUrl = url;
     return { ok: true, json: async () => ({ status: 'ok', routes: [] }) };
   });
-  assert.match(metroUrl, /stop_code=1234&metro$/);
+  assert.match(metroUrl, /stop_code=1234&metro=1$/);
 
   console.log('Vehicle icon tests passed.');
 })().catch(error => {
