@@ -10,6 +10,7 @@
   let refreshInFlight = false;
   let lastExpiredPrimaryArrival = null;
   let boardRenderToken = 0;
+  let vehicleIconsRequestToken = 0;
   let stopMarkers = null;
   let selectedStopMarker = null;
   let stopMarkersById = new Map();
@@ -243,6 +244,9 @@
       formatArrivalCountdown(
         timestamp
       );
+    const vehicleIcons =
+      globalThis.VehicleIcons?.renderHtml(arrival?.extras)
+      || "";
 
     return (
       `<div class="vb-arrival-main">`
@@ -255,6 +259,7 @@
       + ` data-arrival-timestamp="${timestamp}">`
       + `${escapeHtml(countdown)}`
       + `</span>`
+      + `${vehicleIcons}`
       + `</div>`
     );
   }
@@ -492,6 +497,46 @@
       ).join("");
   }
 
+  function enrichBoardVehicleIcons(panel, data, stop, requestToken) {
+    const stopId = String(stop?.stop_id ?? "");
+    const currentRequestToken = ++vehicleIconsRequestToken;
+
+    if (
+      !globalThis.VehicleIcons
+      || !Array.isArray(data?.routes)
+      || !data.routes.length
+    ) {
+      return;
+    }
+
+    const stopCode = String(
+      stop?.stop_code || stop?.stop_id || ""
+    ).trim();
+
+    globalThis.VehicleIcons.enrichRoutes(
+      data.routes,
+      stopCode
+    ).then(enrichedRoutes => {
+      if (
+        currentRequestToken !== vehicleIconsRequestToken
+        || requestToken !== boardRenderToken
+        || selectedStopId !== stopId
+        || !Array.isArray(enrichedRoutes)
+        || enrichedRoutes === data.routes
+      ) {
+        return;
+      }
+
+      renderBoardList(panel, {
+        ...data,
+        routes: enrichedRoutes
+      });
+    }).catch(error => {
+      // Equipment icons are optional and must never break the live board.
+      console.debug("Vehicle equipment icons are unavailable:", error);
+    });
+  }
+
   async function renderStopBoard(
     stop,
     boardData = null
@@ -649,6 +694,12 @@
       renderBoardList(
         panel,
         data
+      );
+      enrichBoardVehicleIcons(
+        panel,
+        data,
+        stop,
+        renderToken
       );
     } catch (error) {
       if (
@@ -1645,6 +1696,12 @@
       renderBoardList(
         boardPanel(),
         data
+      );
+      enrichBoardVehicleIcons(
+        boardPanel(),
+        data,
+        stop,
+        requestToken
       );
     } catch (error) {
       if (

@@ -1235,6 +1235,24 @@ VIRTUAL BOARDS
   line-height: 1;
 }
 
+.vb-vehicle-icons {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  margin-left: 2px;
+  vertical-align: middle;
+}
+
+.vb-vehicle-icon {
+  display: block;
+  width: 17px;
+  height: 17px;
+  max-width: none;
+  object-fit: contain;
+  flex: 0 0 auto;
+}
+
 .vb-arrival-minutes {
   color: #6b7280;
   font-size: 15px;
