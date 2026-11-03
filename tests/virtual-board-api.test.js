@@ -41,8 +41,9 @@ function encodeStopTimeUpdate({ stopId = null, stopSequence = null, relationship
     const eventFields = [];
     if (delay != null) eventFields.push(field(1, 0, varint(delay)));
     if (timestamp != null) eventFields.push(field(2, 0, varint(timestamp)));
-    if (scheduledTime != null) eventFields.push(field(3, 0, varint(scheduledTime)));
-    if (uncertainty != null) eventFields.push(field(4, 0, varint(uncertainty)));
+    // GTFS-Realtime StopTimeEvent: uncertainty = field 3, scheduled_time = field 4.
+    if (uncertainty != null) eventFields.push(field(3, 0, varint(uncertainty)));
+    if (scheduledTime != null) eventFields.push(field(4, 0, varint(scheduledTime)));
     fields.push(field(2, 2, Buffer.concat(eventFields)));
   }
 
@@ -163,6 +164,21 @@ const predepartureDelayTrip = encodeTripUpdate({
   delay: 90
 });
 
+// An uncertainty value of zero is valid and must not be mistaken for
+// scheduled_time=0 (which would create a Unix-epoch-sized fake delay).
+const zeroUncertaintyTrip = encodeTripUpdate({
+  trip: {
+    tripId: 'REALTIME-UNCERTAINTY-ZERO',
+    routeId: 'TB2'
+  },
+  stopUpdates: [{
+    stopId: '0605',
+    relationship: 0,
+    timestamp: now + 120,
+    uncertainty: 0
+  }]
+});
+
 const feed = Buffer.concat([
   field(2, 2, encodeEntity('skipped', skippedTrip)),
   field(2, 2, encodeEntity('skipped-sequence', sequenceSkippedTrip)),
@@ -171,6 +187,7 @@ const feed = Buffer.concat([
   // A valid TripUpdate may expose a trip-level delay before a stop-specific
   // prediction exists. It must be propagated to a downstream board stop.
   field(2, 2, encodeEntity('predeparture-trip-level-delay', predepartureDelayTrip)),
+  field(2, 2, encodeEntity('zero-uncertainty', zeroUncertaintyTrip)),
   // Exact live trip with no StopTimeUpdates: suppresses only its static fallback.
   field(2, 2, encodeEntity('realtime-without-stop-prediction', encodeTripUpdate({
     tripProperties: {
@@ -236,6 +253,15 @@ const res = {
       && Number(time.scheduled_time) === now + 75),
     'the protobuf decoder must preserve signed delay, scheduled time and uncertainty'
   );
+
+
+  const zeroUncertaintyTime = payload.routes
+    .flatMap(route => route.times || [])
+    .find(time => Number(time.timestamp) === now + 120);
+  assert.ok(zeroUncertaintyTime, 'a realtime event with zero uncertainty should be retained');
+  assert.equal(zeroUncertaintyTime.uncertainty, 0, 'protobuf field 3 must decode as uncertainty');
+  assert.equal(zeroUncertaintyTime.scheduled_time, null, 'uncertainty=0 must not become scheduled_time=0');
+  assert.equal(zeroUncertaintyTime.delay, null, 'no explicit delay should remain absent');
 
   const deletedFallbackTimes = payload.routes
     .filter(route => route.route_id === 'TB2')

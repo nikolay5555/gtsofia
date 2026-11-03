@@ -1246,6 +1246,12 @@ VIRTUAL BOARDS
   border-color: #fde68a;
 }
 
+.vb-arrival-delay-on-time {
+  color: #166534;
+  background: #dcfce7;
+  border-color: #bbf7d0;
+}
+
 .vb-arrival-live {
   width: 8px;
   height: 8px;

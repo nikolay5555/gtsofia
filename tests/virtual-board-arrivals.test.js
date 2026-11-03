@@ -22,7 +22,8 @@ vm.runInNewContext(source, context, { filename: sourcePath });
 const {
   formatArrivalCountdown,
   getRealtimeDelaySeconds,
-  formatRealtimeDelay
+  formatRealtimeDelay,
+  realtimeDelayBadgeHtml
 } = context.__gtsofiaVirtualBoardTestInternals;
 
 const now = 1_000;
@@ -62,8 +63,9 @@ const delayCases = [
   [-4 * 60, '-4', 'negative delay should use a yellow-badge label'],
   [30, '+1', '30 seconds late should round to one minute'],
   [-30, '-1', '30 seconds early should round to one minute'],
-  [29, '', 'a delay that rounds to zero should not show a badge'],
-  [0, '', 'an on-time realtime arrival should not show a badge'],
+  [29, '±0', 'a positive delay that rounds to zero should show ±0'],
+  [-29, '±0', 'a negative delay that rounds to zero should show ±0'],
+  [0, '±0', 'an on-time realtime arrival should show ±0'],
   [null, '', 'a missing delay should not show a badge']
 ];
 
@@ -81,9 +83,29 @@ assert.equal(
   'delay should be derived from predicted and scheduled timestamps when delay is absent'
 );
 assert.equal(
+  getRealtimeDelaySeconds({ delay: null, timestamp: 1_120, scheduled_time: 0 }),
+  null,
+  'a zero scheduled_time must not be treated as a Unix timestamp'
+);
+assert.equal(
   getRealtimeDelaySeconds({ delay: -180, timestamp: 1_120, scheduled_time: 1_000 }),
   -180,
   'an explicit realtime delay should take precedence over timestamp difference'
+);
+
+
+const onTimeBadge = realtimeDelayBadgeHtml({ delay: 0 });
+assert.match(onTimeBadge, /vb-arrival-delay-on-time/, 'zero-minute delay should use the green style');
+assert.match(onTimeBadge, /±0/, 'zero-minute delay should display ±0');
+assert.match(
+  realtimeDelayBadgeHtml({ delay: 60 }),
+  /vb-arrival-delay-late/,
+  'positive delay should keep the red style'
+);
+assert.match(
+  realtimeDelayBadgeHtml({ delay: -60 }),
+  /vb-arrival-delay-early/,
+  'negative delay should keep the yellow style'
 );
 
 console.log('virtual-board-arrivals: presentation tests passed');

@@ -400,7 +400,7 @@ function createDataContext(data = {}) {
     if (timestamp === null) return null;
 
     const explicitScheduled = optionalFiniteNumber(event?.scheduled_time);
-    if (explicitScheduled !== null) return timestamp - explicitScheduled;
+    if (explicitScheduled !== null && explicitScheduled > 0) return timestamp - explicitScheduled;
 
     const scheduledSeconds = parseGtfsTime(schedule?.times?.[stopIndex]);
     if (scheduledSeconds === null) return null;

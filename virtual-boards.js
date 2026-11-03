@@ -207,7 +207,10 @@
     const scheduledTimestamp = arrival?.scheduled_time == null || arrival.scheduled_time === ""
       ? NaN
       : Number(arrival.scheduled_time);
-    if (Number.isFinite(timestamp) && Number.isFinite(scheduledTimestamp)) {
+    // scheduled_time is an absolute Unix timestamp. Zero is not a valid
+    // scheduled event time; treating it as one would turn the current Unix
+    // timestamp into a fictitious multi-million-minute delay.
+    if (Number.isFinite(timestamp) && Number.isFinite(scheduledTimestamp) && scheduledTimestamp > 0) {
       return timestamp - scheduledTimestamp;
     }
 
@@ -215,11 +218,12 @@
   }
 
   function formatRealtimeDelay(delaySeconds) {
+    if (delaySeconds == null || delaySeconds === "") return "";
     const delay = Number(delaySeconds);
-    if (!Number.isFinite(delay) || delay === 0) return "";
+    if (!Number.isFinite(delay)) return "";
 
     const minutes = Math.round(Math.abs(delay) / 60);
-    if (minutes === 0) return "";
+    if (minutes === 0) return "±0";
 
     return `${delay > 0 ? "+" : "-"}${minutes}`;
   }
@@ -229,15 +233,20 @@
     const label = formatRealtimeDelay(delaySeconds);
     if (!label) return "";
 
-    const isLate = delaySeconds > 0;
+    const isOnTime = label === "±0";
+    const isLate = !isOnTime && delaySeconds > 0;
     const minuteCount = Number(label.slice(1));
     const minuteWord = minuteCount === 1 ? "минута" : "минути";
-    const className = isLate
-      ? "vb-arrival-delay vb-arrival-delay-late"
-      : "vb-arrival-delay vb-arrival-delay-early";
-    const description = isLate
-      ? `Закъснение ${minuteCount} ${minuteWord}`
-      : `Пристига ${minuteCount} ${minuteWord} по-рано`;
+    const className = isOnTime
+      ? "vb-arrival-delay vb-arrival-delay-on-time"
+      : isLate
+        ? "vb-arrival-delay vb-arrival-delay-late"
+        : "vb-arrival-delay vb-arrival-delay-early";
+    const description = isOnTime
+      ? "По разписание"
+      : isLate
+        ? `Закъснение ${minuteCount} ${minuteWord}`
+        : `Пристига ${minuteCount} ${minuteWord} по-рано`;
 
     return (
       `<span class="${className}"`
@@ -1846,6 +1855,7 @@
   globalThis.__gtsofiaVirtualBoardTestInternals = {
     formatArrivalCountdown,
     getRealtimeDelaySeconds,
-    formatRealtimeDelay
+    formatRealtimeDelay,
+    realtimeDelayBadgeHtml
   };
 })();

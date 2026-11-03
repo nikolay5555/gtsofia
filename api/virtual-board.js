@@ -308,6 +308,15 @@ function decodeStopTimeEvent(bytes) {
       field.fieldNumber === 3
       && field.wireType === 0
     ) {
+      // GTFS-Realtime StopTimeEvent.uncertainty is protobuf field 3 (int32).
+      // It is not an absolute timestamp and must never be used to derive delay.
+      event.uncertainty = toSignedInt32(field.value);
+    } else if (
+      field.fieldNumber === 4
+      && field.wireType === 0
+    ) {
+      // scheduled_time is field 4 (int64), and is only used for
+      // NEW/REPLACEMENT/DUPLICATED trips per the GTFS-Realtime specification.
       const raw = field.value;
 
       if (
@@ -320,13 +329,7 @@ function decodeStopTimeEvent(bytes) {
         );
       }
 
-      event.scheduledTime =
-        Number(raw);
-    } else if (
-      field.fieldNumber === 4
-      && field.wireType === 0
-    ) {
-      event.uncertainty = Number(field.value);
+      event.scheduledTime = Number(raw);
     }
   }
 
