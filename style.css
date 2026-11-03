@@ -1218,6 +1218,34 @@ VIRTUAL BOARDS
   font-variant-numeric: tabular-nums;
 }
 
+.vb-arrival-delay {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 22px;
+  padding: 0 4px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  box-sizing: border-box;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.vb-arrival-delay-late {
+  color: #b91c1c;
+  background: #fee2e2;
+  border-color: #fecaca;
+}
+
+.vb-arrival-delay-early {
+  color: #92400e;
+  background: #fef3c7;
+  border-color: #fde68a;
+}
+
 .vb-arrival-live {
   width: 8px;
   height: 8px;

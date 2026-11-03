@@ -19,7 +19,11 @@ const context = {
 context.globalThis = context;
 
 vm.runInNewContext(source, context, { filename: sourcePath });
-const { formatArrivalCountdown } = context.__gtsofiaVirtualBoardTestInternals;
+const {
+  formatArrivalCountdown,
+  getRealtimeDelaySeconds,
+  formatRealtimeDelay
+} = context.__gtsofiaVirtualBoardTestInternals;
 
 const now = 1_000;
 const cases = [
@@ -52,5 +56,34 @@ for (const [offset, expected, label] of cases) {
 }
 
 assert.equal(formatArrivalCountdown('not-a-timestamp', now), '', 'invalid timestamps should render as an empty label');
+
+const delayCases = [
+  [15 * 60, '+15', 'positive delay should use a red-badge label'],
+  [-4 * 60, '-4', 'negative delay should use a yellow-badge label'],
+  [30, '+1', '30 seconds late should round to one minute'],
+  [-30, '-1', '30 seconds early should round to one minute'],
+  [29, '', 'a delay that rounds to zero should not show a badge'],
+  [0, '', 'an on-time realtime arrival should not show a badge'],
+  [null, '', 'a missing delay should not show a badge']
+];
+
+for (const [delaySeconds, expected, label] of delayCases) {
+  assert.equal(
+    formatRealtimeDelay(delaySeconds),
+    expected,
+    label
+  );
+}
+
+assert.equal(
+  getRealtimeDelaySeconds({ delay: null, timestamp: 1_120, scheduled_time: 1_000 }),
+  120,
+  'delay should be derived from predicted and scheduled timestamps when delay is absent'
+);
+assert.equal(
+  getRealtimeDelaySeconds({ delay: -180, timestamp: 1_120, scheduled_time: 1_000 }),
+  -180,
+  'an explicit realtime delay should take precedence over timestamp difference'
+);
 
 console.log('virtual-board-arrivals: presentation tests passed');

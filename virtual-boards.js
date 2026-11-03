@@ -195,6 +195,58 @@
     return `${minutes} мин.`;
   }
 
+  function getRealtimeDelaySeconds(arrival) {
+    const explicitDelay = arrival?.delay == null || arrival.delay === ""
+      ? NaN
+      : Number(arrival.delay);
+    if (Number.isFinite(explicitDelay)) return explicitDelay;
+
+    const timestamp = arrival?.timestamp == null || arrival.timestamp === ""
+      ? NaN
+      : Number(arrival.timestamp);
+    const scheduledTimestamp = arrival?.scheduled_time == null || arrival.scheduled_time === ""
+      ? NaN
+      : Number(arrival.scheduled_time);
+    if (Number.isFinite(timestamp) && Number.isFinite(scheduledTimestamp)) {
+      return timestamp - scheduledTimestamp;
+    }
+
+    return null;
+  }
+
+  function formatRealtimeDelay(delaySeconds) {
+    const delay = Number(delaySeconds);
+    if (!Number.isFinite(delay) || delay === 0) return "";
+
+    const minutes = Math.round(Math.abs(delay) / 60);
+    if (minutes === 0) return "";
+
+    return `${delay > 0 ? "+" : "-"}${minutes}`;
+  }
+
+  function realtimeDelayBadgeHtml(arrival) {
+    const delaySeconds = getRealtimeDelaySeconds(arrival);
+    const label = formatRealtimeDelay(delaySeconds);
+    if (!label) return "";
+
+    const isLate = delaySeconds > 0;
+    const minuteCount = Number(label.slice(1));
+    const minuteWord = minuteCount === 1 ? "минута" : "минути";
+    const className = isLate
+      ? "vb-arrival-delay vb-arrival-delay-late"
+      : "vb-arrival-delay vb-arrival-delay-early";
+    const description = isLate
+      ? `Закъснение ${minuteCount} ${minuteWord}`
+      : `Пристига ${minuteCount} ${minuteWord} по-рано`;
+
+    return (
+      `<span class="${className}"`
+      + ` title="${escapeHtml(description)}"`
+      + ` aria-label="${escapeHtml(description)}">`
+      + `${escapeHtml(label)}</span>`
+    );
+  }
+
   function formatArrivalClock(
     timestamp
   ) {
@@ -236,7 +288,10 @@
 
     const live =
       showLive
-        ? '<span class="vb-arrival-live" aria-hidden="true"></span>'
+        ? (
+          `${realtimeDelayBadgeHtml(arrival)}`
+          + '<span class="vb-arrival-live" aria-hidden="true"></span>'
+        )
         : "";
 
     const countdown =
@@ -1789,6 +1844,8 @@
 
   // Small test seam; production pages do not use this object.
   globalThis.__gtsofiaVirtualBoardTestInternals = {
-    formatArrivalCountdown
+    formatArrivalCountdown,
+    getRealtimeDelaySeconds,
+    formatRealtimeDelay
   };
 })();
