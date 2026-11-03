@@ -223,9 +223,9 @@
     if (!Number.isFinite(delay)) return "";
 
     const minutes = Math.round(Math.abs(delay) / 60);
-    if (minutes === 0) return "±0";
+    if (minutes === 0) return "±0 мин.";
 
-    return `${delay > 0 ? "+" : "-"}${minutes}`;
+    return `${delay > 0 ? "+" : "-"}${minutes} мин.`;
   }
 
   function realtimeDelayBadgeHtml(arrival) {
@@ -233,9 +233,9 @@
     const label = formatRealtimeDelay(delaySeconds);
     if (!label) return "";
 
-    const isOnTime = label === "±0";
+    const isOnTime = label.startsWith("±0");
     const isLate = !isOnTime && delaySeconds > 0;
-    const minuteCount = Number(label.slice(1));
+    const minuteCount = Math.round(Math.abs(delaySeconds) / 60);
     const minuteWord = minuteCount === 1 ? "минута" : "минути";
     const className = isOnTime
       ? "vb-arrival-delay vb-arrival-delay-on-time"
@@ -630,19 +630,8 @@
             null;
 
           if (selectedStopMarker) {
-            selectedStopMarker.setStyle(
-              {
-                fillColor:
-                  "#111827",
-                color:
-                  "#ffffff",
-                fillOpacity:
-                  1
-              }
-            );
-
-            selectedStopMarker =
-              null;
+            selectedStopMarker.closeTooltip();
+            selectedStopMarker = null;
           }
 
           renderEmptyBoard();
@@ -859,16 +848,8 @@
     }
 
     if (selectedStopMarker) {
-      selectedStopMarker.setStyle(
-        {
-          fillColor:
-            "#111827",
-          color:
-            "#ffffff",
-          fillOpacity:
-            1
-        }
-      );
+      selectedStopMarker.closeTooltip();
+      selectedStopMarker = null;
     }
 
     const lat =
@@ -896,22 +877,8 @@
       );
 
     if (marker) {
-      marker.setStyle(
-        {
-          fillColor:
-            "#BE1E2D",
-          color:
-            "#ffffff",
-          fillOpacity:
-            1
-        }
-      );
-
-      selectedStopMarker =
-        marker;
-    } else {
-      selectedStopMarker =
-        null;
+      selectedStopMarker = marker;
+      marker.openTooltip();
     }
 
     renderStopBoard(
@@ -1339,10 +1306,10 @@
       );
 
       const select =
-        () =>
-          selectStopOnMap(
-            stop
-          );
+        () => {
+          clickTarget.closeTooltip();
+          selectStopOnMap(stop);
+        };
 
       clickTarget.on(
         "click",
