@@ -166,6 +166,51 @@ assert.deepEqual(
 );
 assert.equal(trolley.meta.number, '7', 'the API must return display-ready line metadata');
 
+// When the feed supplies an absolute realtime timestamp but no explicit
+// delay/scheduled_time, derive the badge value from the exact matched GTFS trip.
+const timestampOnlyBoard = service.buildBoard({
+  routes: [{
+    trip_id: 'GTFS-TRIP-A',
+    route_id: 'TB7',
+    schedule_relationship: 0,
+    schedule_relationship_name: 'SCHEDULED',
+    times: [{
+      timestamp: Date.parse('2026-10-30T13:43:00+02:00') / 1000
+    }]
+  }],
+  skipped_trips: []
+}, '0200', now);
+const timestampOnlyRealtime = timestampOnlyBoard.routes
+  .find(route => route.route_id === 'TB7' && route.trip_id === 'GTFS-TRIP-A')
+  ?.times.find(time => !time.scheduled);
+assert.ok(timestampOnlyRealtime, 'the timestamp-only realtime course should be retained');
+assert.equal(
+  timestampOnlyRealtime.delay,
+  180,
+  'the service should derive a three-minute delay from the exact matched static stop time'
+);
+assert.equal(
+  Math.round(timestampOnlyRealtime.scheduled_time),
+  Math.round(Date.parse('2026-10-30T13:40:00+02:00') / 1000),
+  'the response should expose the scheduled baseline for the client badge'
+);
+
+const onTimeTimestampBoard = service.buildBoard({
+  routes: [{
+    trip_id: 'GTFS-TRIP-A',
+    route_id: 'TB7',
+    schedule_relationship: 0,
+    schedule_relationship_name: 'SCHEDULED',
+    times: [{ timestamp: Date.parse('2026-10-30T13:40:00+02:00') / 1000 }]
+  }],
+  skipped_trips: []
+}, '0200', now);
+const onTimeRealtime = onTimeTimestampBoard.routes
+  .find(route => route.route_id === 'TB7' && route.trip_id === 'GTFS-TRIP-A')
+  ?.times.find(time => !time.scheduled);
+assert.ok(onTimeRealtime, 'the on-time realtime course should be retained');
+assert.equal(onTimeRealtime.delay, 0, 'an on-time realtime course should carry an explicit zero delay for ±0');
+
 // Manual route overrides are shared by the API metadata builder.
 const routeMetadata = require('../route-metadata');
 const previousOverrides = routeMetadata.getRouteOverrides();
@@ -421,24 +466,7 @@ assert.ok(
   'NO_DATA must stop delay propagation rather than inventing a downstream realtime estimate'
 );
 
-// An expired realtime prediction is retained only for a short ten-second
-// tolerance, not for the previous full minute.
-const staleRealtimeBoard = service.buildBoard({
-  routes: [{
-    trip_id: 'GTFS-TRIP-A',
-    route_id: 'TB7',
-    schedule_relationship: 0,
-    times: [{ timestamp: now.getTime() / 1000 - 11 }]
-  }],
-  skipped_trips: []
-}, '0200', now);
-const staleRealtimeTimes = staleRealtimeBoard.routes
-  .filter(route => route.route_id === 'TB7')
-  .flatMap(route => route.times);
-assert.ok(
-  !staleRealtimeTimes.some(time => Math.round(time.timestamp) === Math.round(now.getTime() / 1000 - 11)),
-  'a realtime course should stop appearing shortly after its predicted arrival'
-);
+// An expired realtime prediction is removed immediately when grace is zero.
 const justPassedRealtimeBoard = service.buildBoard({
   routes: [{
     trip_id: 'GTFS-TRIP-A',
@@ -448,7 +476,6 @@ const justPassedRealtimeBoard = service.buildBoard({
   }],
   skipped_trips: []
 }, '0200', now);
-
 assert.ok(
   !justPassedRealtimeBoard.routes.some(route => route.route_id === 'TB7'
     && route.times.some(time => Math.round(time.timestamp) === Math.round(now.getTime() / 1000 - 1))),

@@ -931,18 +931,35 @@ function createDataContext(data = {}) {
       const scheduledStopSeconds = staticInfo && stopIndex >= 0
         ? parseGtfsTime(staticInfo.schedule?.times?.[stopIndex])
         : null;
+      // For an exactly matched SCHEDULED trip, the static GTFS timetable is
+      // the authoritative baseline for calculating its realtime deviation.
+      // Most GTFS-RT producers send StopTimeEvent.time and delay, but omit the
+      // optional scheduled_time field for ordinary scheduled trips.
+      const matchedScheduledTimestamp = isScheduled && scheduledStopSeconds !== null
+        ? gtfsSecondsToTodayTimestamp(scheduledStopSeconds, now)
+        : null;
       const times = route.times.map(time => {
         let timestamp = optionalFiniteNumber(time?.timestamp);
-        const delay = optionalFiniteNumber(time?.delay);
-        const scheduledTime = optionalFiniteNumber(time?.scheduled_time);
+        let delay = optionalFiniteNumber(time?.delay);
+        const suppliedScheduledTime = optionalFiniteNumber(time?.scheduled_time);
+        const scheduledTime = suppliedScheduledTime !== null && suppliedScheduledTime > 0
+          ? suppliedScheduledTime
+          : matchedScheduledTimestamp;
 
         // If the producer gives delay but no absolute time, derive the
         // prediction from this exact course's scheduled time at this stop.
-        if (timestamp === null && delay !== null && scheduledStopSeconds !== null) {
-          timestamp = gtfsSecondsToTodayTimestamp(scheduledStopSeconds, now) + delay;
+        if (timestamp === null && delay !== null && scheduledTime !== null) {
+          timestamp = scheduledTime + delay;
         }
         if (timestamp === null && scheduledTime !== null) timestamp = scheduledTime;
         if (timestamp === null) return null;
+
+        // When the feed supplies only an absolute realtime timestamp, derive
+        // its deviation from the matched static stop time so the client can
+        // display the +/- delay badge. Do not guess for unmatched trips.
+        if (delay === null && scheduledTime !== null) {
+          delay = timestamp - scheduledTime;
+        }
 
         if (timestamp < now.getTime() / 1000 - REALTIME_PAST_GRACE_SECONDS) return null;
         if (timestamp > now.getTime() / 1000 + MAX_REALTIME_LOOKAHEAD_SECONDS) return null;
