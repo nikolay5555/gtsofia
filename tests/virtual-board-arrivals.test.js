@@ -59,13 +59,13 @@ for (const [offset, expected, label] of cases) {
 assert.equal(formatArrivalCountdown('not-a-timestamp', now), '', 'invalid timestamps should render as an empty label');
 
 const delayCases = [
-  [15 * 60, '+15', 'positive delay should use a red-badge label'],
-  [-4 * 60, '-4', 'negative delay should use a yellow-badge label'],
-  [30, '+1', '30 seconds late should round to one minute'],
-  [-30, '-1', '30 seconds early should round to one minute'],
-  [29, '±0', 'a positive delay that rounds to zero should show ±0'],
-  [-29, '±0', 'a negative delay that rounds to zero should show ±0'],
-  [0, '±0', 'an on-time realtime arrival should show ±0'],
+  [15 * 60, '+15 мин.', 'positive delay should use a red-badge label'],
+  [-4 * 60, '-4 мин.', 'negative delay should use a yellow-badge label'],
+  [30, '+1 мин.', '30 seconds late should round to one minute'],
+  [-30, '-1 мин.', '30 seconds early should round to one minute'],
+  [29, '±0 мин.', 'a positive delay that rounds to zero should show ±0'],
+  [-29, '±0 мин.', 'a negative delay that rounds to zero should show ±0'],
+  [0, '±0 мин.', 'an on-time realtime arrival should show ±0'],
   [null, '', 'a missing delay should not show a badge']
 ];
 
@@ -96,7 +96,12 @@ assert.equal(
 
 const onTimeBadge = realtimeDelayBadgeHtml({ delay: 0 });
 assert.match(onTimeBadge, /vb-arrival-delay-on-time/, 'zero-minute delay should use the green style');
-assert.match(onTimeBadge, /±0/, 'zero-minute delay should display ±0');
+assert.match(onTimeBadge, /±0 мин\./, 'zero-minute delay should display ±0');
+assert.match(
+  realtimeDelayBadgeHtml({ delay: 60 }),
+  /\+1 мин\./,
+  'positive delay badge should include the minutes unit'
+);
 assert.match(
   realtimeDelayBadgeHtml({ delay: 60 }),
   /vb-arrival-delay-late/,
