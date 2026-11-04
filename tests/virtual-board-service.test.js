@@ -439,19 +439,20 @@ assert.ok(
   !staleRealtimeTimes.some(time => Math.round(time.timestamp) === Math.round(now.getTime() / 1000 - 11)),
   'a realtime course should stop appearing shortly after its predicted arrival'
 );
-const recentRealtimeBoard = service.buildBoard({
+const justPassedRealtimeBoard = service.buildBoard({
   routes: [{
     trip_id: 'GTFS-TRIP-A',
     route_id: 'TB7',
     schedule_relationship: 0,
-    times: [{ timestamp: now.getTime() / 1000 - 9 }]
+    times: [{ timestamp: now.getTime() / 1000 - 1 }]
   }],
   skipped_trips: []
 }, '0200', now);
+
 assert.ok(
-  recentRealtimeBoard.routes.some(route => route.route_id === 'TB7'
-    && route.times.some(time => Math.round(time.timestamp) === Math.round(now.getTime() / 1000 - 9))),
-  'a small ten-second tolerance should remain to absorb clock and feed jitter'
+  !justPassedRealtimeBoard.routes.some(route => route.route_id === 'TB7'
+    && route.times.some(time => Math.round(time.timestamp) === Math.round(now.getTime() / 1000 - 1))),
+  'a realtime course should be removed immediately after its predicted arrival'
 );
 
 // A CANCELED TripUpdate also suppresses the static fallback for that exact
