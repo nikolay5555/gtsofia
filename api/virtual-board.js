@@ -316,17 +316,33 @@ function decodeStopTimeEvent(bytes) {
         )
       ) {
         throw new Error(
-          'GTFS-RT scheduled timestamp exceeds JavaScript safe integer range.'
+          'GTFS-RT uncertainty exceeds JavaScript safe integer range.'
         );
       }
 
-      event.scheduledTime =
-        Number(raw);
+      // GTFS-Realtime StopTimeEvent.uncertainty is field 3. Treating this
+      // small value as scheduled_time corrupts inferred delays and can make
+      // an otherwise valid realtime prediction look impossibly far in the
+      // past or future.
+      event.uncertainty = Number(raw);
     } else if (
       field.fieldNumber === 4
       && field.wireType === 0
     ) {
-      event.uncertainty = Number(field.value);
+      const raw = field.value;
+
+      if (
+        raw > BigInt(
+          Number.MAX_SAFE_INTEGER
+        )
+      ) {
+        throw new Error(
+          'GTFS-RT scheduled timestamp exceeds JavaScript safe integer range.'
+        );
+      }
+
+      // scheduled_time is field 4 in the current GTFS-Realtime schema.
+      event.scheduledTime = Number(raw);
     }
   }
 
