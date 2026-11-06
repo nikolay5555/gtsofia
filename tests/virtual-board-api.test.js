@@ -41,8 +41,10 @@ function encodeStopTimeUpdate({ stopId = null, stopSequence = null, relationship
     const eventFields = [];
     if (delay != null) eventFields.push(field(1, 0, varint(delay)));
     if (timestamp != null) eventFields.push(field(2, 0, varint(timestamp)));
-    if (scheduledTime != null) eventFields.push(field(3, 0, varint(scheduledTime)));
-    if (uncertainty != null) eventFields.push(field(4, 0, varint(uncertainty)));
+    // GTFS-Realtime StopTimeEvent uses field 3 for uncertainty and field 4
+    // for scheduled_time.
+    if (uncertainty != null) eventFields.push(field(3, 0, varint(uncertainty)));
+    if (scheduledTime != null) eventFields.push(field(4, 0, varint(scheduledTime)));
     fields.push(field(2, 2, Buffer.concat(eventFields)));
   }
 
@@ -163,6 +165,18 @@ const predepartureDelayTrip = encodeTripUpdate({
   delay: 90
 });
 
+// An active TripUpdate descriptor with no usable timing must leave the static
+// timetable course visible. A deleted copy of the same entity is also present
+// below to check that FeedEntity.is_deleted is still ignored as an active trip.
+const activeTripWithoutPrediction = encodeTripUpdate({
+  trip: {
+    tripId: deletedFallbackCourse.original_trip_id,
+    startTime: deletedFallbackCourse.trip_start_time,
+    startDate: sofiaDate,
+    routeId: 'TB2'
+  }
+});
+
 const feed = Buffer.concat([
   field(2, 2, encodeEntity('skipped', skippedTrip)),
   field(2, 2, encodeEntity('skipped-sequence', sequenceSkippedTrip)),
@@ -171,7 +185,8 @@ const feed = Buffer.concat([
   // A valid TripUpdate may expose a trip-level delay before a stop-specific
   // prediction exists. It must be propagated to a downstream board stop.
   field(2, 2, encodeEntity('predeparture-trip-level-delay', predepartureDelayTrip)),
-  // Exact live trip with no StopTimeUpdates: suppresses only its static fallback.
+  // Exact live trip without a usable prediction at the stop must retain its
+  // static fallback rather than disappear from the board.
   field(2, 2, encodeEntity('realtime-without-stop-prediction', encodeTripUpdate({
     tripProperties: {
       tripId: realtimeOnlyCourse.original_trip_id,
@@ -179,6 +194,7 @@ const feed = Buffer.concat([
       startDate: sofiaDate
     }
   }))),
+  field(2, 2, encodeEntity('active-trip-without-prediction', activeTripWithoutPrediction)),
   // A deleted entity is not an active realtime trip and must not suppress fallback.
   field(2, 2, encodeEntity('deleted-trip', encodeTripUpdate({
     trip: {
@@ -242,7 +258,7 @@ const res = {
     .flatMap(route => route.times.map(time => Number(time.timestamp)));
   assert.ok(
     deletedFallbackTimes.includes(Math.round(deletedFallbackTime)),
-    'a deleted FeedEntity must not suppress the matching static fallback course'
+    'a deleted FeedEntity and an active TripUpdate without a usable stop prediction must not suppress the matching static fallback course'
   );
 
   req.query.stop_code = '2082';
@@ -262,7 +278,7 @@ const res = {
     .flatMap(route => route.times.map(time => Number(time.timestamp)));
   assert.ok(
     !realtimeOnlyTimes.includes(Math.round(realtimeOnlyTime)),
-    'a live TripUpdate without a prediction at the selected stop must suppress its exact static fallback'
+    'a valid realtime prediction inferred from TripUpdate.delay must replace the matching static fallback'
   );
   assert.ok(
     realtimeOnlyTimes.some(time => time > realtimeOnlyTime),

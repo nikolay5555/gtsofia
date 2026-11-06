@@ -313,9 +313,9 @@ assert.ok(
   'a one-minute scheduled-time difference must not suppress a distinct static course'
 );
 
-// A TripUpdate for the exact course suppresses its static fallback even when
-// the feed has no usable StopTimeUpdate for the selected stop. Other courses
-// on the same line must remain visible.
+// A TripUpdate descriptor without a usable prediction at the selected stop
+// must not hide the timetable fallback. Otherwise that course disappears
+// until the producer starts sending a prediction for this stop.
 const realtimeCourseWithoutStopPrediction = service.buildBoard({
   status: 'empty',
   generated_at: Math.floor(now.getTime() / 1000),
@@ -332,8 +332,8 @@ const noPredictionTimes = realtimeCourseWithoutStopPrediction.routes
   .filter(route => route.route_id === 'TB7')
   .flatMap(route => route.times.map(time => Math.round(time.timestamp)));
 assert.ok(
-  !noPredictionTimes.includes(Math.round(Date.parse('2026-10-30T13:40:00+02:00') / 1000)),
-  'the static fallback for the exact course must be suppressed when its TripUpdate exists without a stop prediction'
+  noPredictionTimes.includes(Math.round(Date.parse('2026-10-30T13:40:00+02:00') / 1000)),
+  'the exact static course must remain visible until a valid realtime prediction exists for this stop'
 );
 assert.ok(
   noPredictionTimes.includes(Math.round(Date.parse('2026-10-30T13:50:00+02:00') / 1000)),
@@ -646,12 +646,93 @@ assert.equal(actualTrolley.terminal_stop_id, actualTerminalId, 'the API must rep
 // stop time is 0803 (ж.к. Банишора), before the full D1 terminal 0610. Those
 // trips must not be displayed on a board at 0803, while full trips continuing
 // to 0610 must remain visible there.
-const actualShortTurnBoard = actual.buildBoard({ routes: [], skipped_trips: [] }, '0803', new Date('2026-10-30T20:00:00+02:00'));
+// The checked-in service calendar starts on 2026-11-06; use a covered date so
+// this test checks terminal handling rather than an intentionally inactive day.
+const actualShortTurnBoard = actual.buildBoard({ routes: [], skipped_trips: [] }, '0803', new Date('2026-11-06T20:00:00+02:00'));
 const actualShortTurnRows = actualShortTurnBoard.routes.filter(route => route.route_id === 'TB7');
 assert.ok(actualShortTurnRows.some(route => route.terminal_stop_id === '0610'), 'full TB7 trips continuing beyond 0803 must remain visible');
 assert.ok(
   actualShortTurnRows.every(route => route.terminal_stop_id !== '0803'),
   'real partial TB7 trips ending at 0803 must be hidden at that stop'
+);
+
+// Regression for stop 1411 / bus 190: the 12:27 course reaches the selected
+// stop at 12:33. A realtime descriptor that only has an update for the next
+// stop cannot produce a reliable prediction for 1411, so it must not make
+// the 12:33 timetable course disappear.
+const actual190Route = actualRoutes.find(route => route.route_id === 'A277');
+assert.ok(actual190Route, 'the production data must contain bus 190');
+const actual190Direction = Object.entries(actualDirections.A277 || {}).find(([directionKey, direction]) =>
+  Array.isArray(direction.pattern)
+  && direction.pattern.map(String).includes('1411')
+  && (actualSchedules.A277?.[directionKey]?.weekday || []).some(row => row.start_time === '12:27:00')
+);
+assert.ok(actual190Direction, 'bus 190 must have a weekday direction serving stop 1411');
+const [actual190DirectionKey, actual190DirectionData] = actual190Direction;
+const actual190StopIndex = actual190DirectionData.pattern.map(String).indexOf('1411');
+const actual190Course = actualSchedules.A277[actual190DirectionKey].weekday.find(row => row.start_time === '12:27:00');
+assert.equal(actual190Course.times[actual190StopIndex], '12:33:00');
+const actual190Now = new Date('2026-11-06T12:15:00+02:00');
+const actual190ScheduledTimestamp = Date.parse('2026-11-06T12:33:00+02:00') / 1000;
+const actual190NextStopIndex = actual190StopIndex + 1;
+const actual190LaterStopTime = actual190Course.times[actual190NextStopIndex];
+const actual190LaterStopTimestamp = Date.parse(`2026-11-06T${actual190LaterStopTime}+02:00`) / 1000;
+const actual190BoardWithLaterStopOnly = actual.buildBoard({
+  routes: [],
+  skipped_trips: [],
+  realtime_trips: [{
+    trip_id: actual190Course.original_trip_id,
+    route_id: 'A277',
+    trip_start_date: '20261106',
+    trip_start_time: actual190Course.start_time,
+    schedule_relationship: 0,
+    schedule_relationship_name: 'SCHEDULED',
+    stop_time_updates: [{
+      stop_sequence: actual190Course.stop_sequences[actual190NextStopIndex],
+      arrival: { timestamp: actual190LaterStopTimestamp }
+    }]
+  }]
+}, '1411', actual190Now);
+const actual190StaticRow = actual190BoardWithLaterStopOnly.routes.find(route => route.route_id === 'A277');
+assert.ok(actual190StaticRow, 'bus 190 must remain on the board when its realtime update does not cover stop 1411');
+assert.ok(
+  actual190StaticRow.times.some(time => time.scheduled && Math.round(time.timestamp) === Math.round(actual190ScheduledTimestamp)),
+  'the 12:33 bus 190 timetable course at stop 1411 must remain visible until realtime can replace it'
+);
+
+// A time-only update at the first stop is enough to infer a downstream arrival
+// before the vehicle reaches stop 1411. This is the path affected when the
+// protobuf uncertainty field was previously decoded as scheduled_time.
+const actual190OriginIndex = 0;
+const actual190OriginScheduledTimestamp = Date.parse(`2026-11-06T${actual190Course.times[actual190OriginIndex]}+02:00`) / 1000;
+const actual190OriginEventTimestamp = actual190OriginScheduledTimestamp + 30;
+const actual190BoardWithOriginPrediction = actual.buildBoard({
+  routes: [],
+  skipped_trips: [],
+  realtime_trips: [{
+    trip_id: actual190Course.original_trip_id,
+    route_id: 'A277',
+    trip_start_date: '20261106',
+    trip_start_time: actual190Course.start_time,
+    schedule_relationship: 0,
+    schedule_relationship_name: 'SCHEDULED',
+    stop_time_updates: [{
+      stop_sequence: actual190Course.stop_sequences[actual190OriginIndex],
+      departure: {
+        timestamp: actual190OriginEventTimestamp,
+        uncertainty: 30
+      }
+    }]
+  }]
+}, '1411', actual190Now);
+const actual190RealtimeRow = actual190BoardWithOriginPrediction.routes.find(route =>
+  route.route_id === 'A277'
+  && route.times.some(time => !time.scheduled
+    && Math.round(time.timestamp) === Math.round(actual190ScheduledTimestamp + 30))
+);
+assert.ok(
+  actual190RealtimeRow,
+  'bus 190 must show a realtime prediction at stop 1411 from a time-only update at the origin'
 );
 
 console.log('virtual-board-service: all tests passed');
