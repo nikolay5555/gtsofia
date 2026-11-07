@@ -313,9 +313,9 @@ assert.ok(
   'a one-minute scheduled-time difference must not suppress a distinct static course'
 );
 
-// A TripUpdate descriptor without a usable prediction at the selected stop
-// must not hide the timetable fallback. Otherwise that course disappears
-// until the producer starts sending a prediction for this stop.
+// A matching TripUpdate owns the exact course. Its static fallback must not
+// reappear merely because this stop has no usable prediction; unrelated trips
+// on the same line must remain visible from the timetable.
 const realtimeCourseWithoutStopPrediction = service.buildBoard({
   status: 'empty',
   generated_at: Math.floor(now.getTime() / 1000),
@@ -332,12 +332,38 @@ const noPredictionTimes = realtimeCourseWithoutStopPrediction.routes
   .filter(route => route.route_id === 'TB7')
   .flatMap(route => route.times.map(time => Math.round(time.timestamp)));
 assert.ok(
-  noPredictionTimes.includes(Math.round(Date.parse('2026-10-30T13:40:00+02:00') / 1000)),
-  'the exact static course must remain visible until a valid realtime prediction exists for this stop'
+  !noPredictionTimes.includes(Math.round(Date.parse('2026-10-30T13:40:00+02:00') / 1000)),
+  'a matching TripUpdate must suppress the exact static course even without a usable prediction at this stop'
 );
 assert.ok(
   noPredictionTimes.includes(Math.round(Date.parse('2026-10-30T13:50:00+02:00') / 1000)),
   'unrelated static courses on the same line must remain visible'
+);
+
+// If the realtime arrival has already passed but the timetable time is still
+// in the future, do not resurrect that same course from static data. The next
+// course must become the first visible departure instead.
+const staleRealtimeCourseBoard = service.buildBoard({
+  routes: [{
+    trip_id: 'GTFS-TRIP-A',
+    route_id: 'TB7',
+    trip_start_date: '20261030',
+    trip_start_time: '13:00:00',
+    destination_stop_id: 'END',
+    times: [{ timestamp: Math.floor(now.getTime() / 1000) - 60 }]
+  }],
+  skipped_trips: []
+}, '0200', now);
+const passedCourseTimes = staleRealtimeCourseBoard.routes
+  .filter(route => route.route_id === 'TB7')
+  .flatMap(route => route.times);
+assert.ok(
+  !passedCourseTimes.some(time => time.scheduled && Math.round(time.timestamp) === Math.round(Date.parse('2026-10-30T13:40:00+02:00') / 1000)),
+  'a past realtime arrival must not reappear as its future static timetable time'
+);
+assert.ok(
+  passedCourseTimes.some(time => time.scheduled && Math.round(time.timestamp) === Math.round(Date.parse('2026-10-30T13:50:00+02:00') / 1000)),
+  'the next course must remain visible after the previous realtime course has passed'
 );
 
 // TripUpdate.delay is propagated from the start of a scheduled trip until a
@@ -657,9 +683,8 @@ assert.ok(
 );
 
 // Regression for stop 1411 / bus 190: the 12:27 course reaches the selected
-// stop at 12:33. A realtime descriptor that only has an update for the next
-// stop cannot produce a reliable prediction for 1411, so it must not make
-// the 12:33 timetable course disappear.
+// stop at 12:33. If a TripUpdate exists for that exact course, its static 12:33
+// time must never reappear, even when the update only covers the next stop.
 const actual190Route = actualRoutes.find(route => route.route_id === 'A277');
 assert.ok(actual190Route, 'the production data must contain bus 190');
 const actual190Direction = Object.entries(actualDirections.A277 || {}).find(([directionKey, direction]) =>
@@ -693,11 +718,16 @@ const actual190BoardWithLaterStopOnly = actual.buildBoard({
     }]
   }]
 }, '1411', actual190Now);
-const actual190StaticRow = actual190BoardWithLaterStopOnly.routes.find(route => route.route_id === 'A277');
-assert.ok(actual190StaticRow, 'bus 190 must remain on the board when its realtime update does not cover stop 1411');
+const actual190StaticTimes = actual190BoardWithLaterStopOnly.routes
+  .filter(route => route.route_id === 'A277')
+  .flatMap(route => route.times);
 assert.ok(
-  actual190StaticRow.times.some(time => time.scheduled && Math.round(time.timestamp) === Math.round(actual190ScheduledTimestamp)),
-  'the 12:33 bus 190 timetable course at stop 1411 must remain visible until realtime can replace it'
+  !actual190StaticTimes.some(time => time.scheduled && Math.round(time.timestamp) === Math.round(actual190ScheduledTimestamp)),
+  'the 12:33 bus 190 timetable course must be suppressed when a TripUpdate exists for that exact course'
+);
+assert.ok(
+  actual190StaticTimes.some(time => time.scheduled && time.timestamp > actual190ScheduledTimestamp),
+  'later bus 190 courses must remain available from the timetable'
 );
 
 // A time-only update at the first stop is enough to infer a downstream arrival
