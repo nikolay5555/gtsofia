@@ -2,7 +2,7 @@ name: Update transport data
 
 on:
   schedule:
-    - cron: '11 1 * * *'
+    - cron: '16 0 * * *'
 
   workflow_dispatch:
 
