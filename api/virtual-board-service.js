@@ -792,27 +792,16 @@ function createDataContext(data = {}) {
   function staticArrivalIsCovered(staticArrival, realtimeRoutes, realtimeTrips, now, allStaticArrivals) {
     if (!String(staticArrival?.route_id || '').trim()) return false;
 
+    // A matching TripUpdate owns this exact scheduled course. Never let its
+    // static time reappear later, even when the realtime prediction for this
+    // stop is absent, has already passed, or is marked NO_DATA. Otherwise a
+    // stale timetable time can remain on the board until its scheduled time
+    // and temporarily hide the next actual departure. Other courses remain
+    // eligible for the normal static fallback.
     for (const realtimeTrip of realtimeTrips) {
-      if (!staticArrivalMatchesRealtimeDescriptor(staticArrival, realtimeTrip, now, allStaticArrivals)) {
-        continue;
+      if (staticArrivalMatchesRealtimeDescriptor(staticArrival, realtimeTrip, now, allStaticArrivals)) {
+        return true;
       }
-
-      const relationshipName = String(realtimeTrip?.schedule_relationship_name || '').trim().toUpperCase();
-      const relationship = optionalFiniteNumber(realtimeTrip?.schedule_relationship);
-      const removesScheduledTrip = relationshipName === 'CANCELED'
-        || relationshipName === 'DELETED'
-        || relationshipName === 'REPLACEMENT'
-        || relationship === 3
-        || relationship === 5
-        || relationship === 7;
-
-      // A descriptor alone is not a usable arrival prediction. Do not hide
-      // the timetable course while the feed only has updates for later stops,
-      // NO_DATA, or no timing information for this stop. The matching static
-      // course is suppressed below only after a valid realtime arrival has
-      // actually been built. Canceled/deleted/replaced trips are exceptions:
-      // those must never reappear through the timetable fallback.
-      if (removesScheduledTrip) return true;
     }
 
     // Be defensive for callers that pass only stop-specific realtime routes

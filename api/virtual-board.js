@@ -870,8 +870,9 @@ function buildBoard(
 
   // Keep every current TripUpdate descriptor and its timing updates, even
   // when it has no StopTimeUpdate for the selected stop. The service uses the
-  // trip-level delay and prior stop updates to propagate a prediction forward;
-  // it still suppresses the static fallback for this exact course only.
+  // trip-level delay and prior stop updates to propagate a prediction forward,
+  // and suppresses the static fallback for this exact course so a stale
+  // timetable time cannot reappear after its realtime arrival has passed.
   const realtimeTrips = new Map();
 
   for (
